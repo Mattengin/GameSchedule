@@ -1,0 +1,13 @@
+{
+  "scripts": {
+    "playwright:mcp": "playwright-mcp --headless --browser chromium"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.4"
+  },
+  "devDependencies": {
+    "@playwright/mcp": "^0.0.70",
+    "cypress": "^15.13.0",
+    "playwright": "^1.60.0-alpha-1774999321000"
+  }
+}

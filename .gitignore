@@ -1,0 +1,12 @@
+.idea/
+.vscode/
+node_modules/
+GameSchedule-clone/
+
+*.log
+*.out.log
+*.err.log
+
+GameSchedule/.env
+GameSchedule/node_modules/
+GameSchedule/.expo/
