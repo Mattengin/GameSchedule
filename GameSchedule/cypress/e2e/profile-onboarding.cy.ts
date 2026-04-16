@@ -56,3 +56,5 @@ describe('profile onboarding', () => {
     cy.get('[data-testid="profile-summary-card"]').should('contain.text', username);
   });
 });
+
+export {};

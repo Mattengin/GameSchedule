@@ -224,3 +224,5 @@ describe('schedule and availability', () => {
     cy.get('[data-testid="availability-count-chip"]').should('contain', '1 saved slot');
   });
 });
+
+export {};

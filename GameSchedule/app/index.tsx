@@ -75,6 +75,12 @@ type AvailabilitySlot = {
   slot_label: string;
 };
 
+type RelatedGameSummary = Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform'>;
+type RelatedLobbyGameSummary = Pick<
+  GameRecord,
+  'id' | 'title' | 'genre' | 'platform' | 'player_count'
+>;
+
 type FriendshipRecord = {
   profile_id: string;
   friend_profile_id: string;
@@ -173,6 +179,14 @@ const createDefaultAvailabilitySelection = () =>
     return accumulator;
   }, {});
 
+const unwrapRelation = <T,>(value: T | T[] | null | undefined): T | null => {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value ?? null;
+};
+
 function StatCard({
   label,
   value,
@@ -220,6 +234,14 @@ export default function HomeScreen() {
   const [profileBusy, setProfileBusy] = React.useState(false);
   const [profileError, setProfileError] = React.useState('');
   const [profileMessage, setProfileMessage] = React.useState('');
+  const [accountEmail, setAccountEmail] = React.useState('');
+  const [accountBusy, setAccountBusy] = React.useState(false);
+  const [accountError, setAccountError] = React.useState('');
+  const [accountMessage, setAccountMessage] = React.useState('');
+  const [passwordForm, setPasswordForm] = React.useState({
+    nextPassword: '',
+    confirmPassword: '',
+  });
   const [gamesLoading, setGamesLoading] = React.useState(false);
   const [gamesError, setGamesError] = React.useState('');
   const [libraryGames, setLibraryGames] = React.useState<GameRecord[]>(fallbackGames);
@@ -377,6 +399,10 @@ export default function HomeScreen() {
   }, [profile]);
 
   React.useEffect(() => {
+    setAccountEmail(session?.user.email ?? '');
+  }, [session]);
+
+  React.useEffect(() => {
     const loadGames = async () => {
       if (!session?.user) {
         setLibraryGames(fallbackGames);
@@ -433,7 +459,12 @@ export default function HomeScreen() {
       }
 
       if (!poolError && pool) {
-        setRouletteEntries(pool as RouletteEntry[]);
+        setRouletteEntries(
+          pool.map((entry) => ({
+            game_id: entry.game_id,
+            games: unwrapRelation(entry.games as RelatedGameSummary[] | RelatedGameSummary | null),
+          })),
+        );
       }
     };
 
@@ -573,7 +604,16 @@ export default function HomeScreen() {
       if (error) {
         setLobbiesError(error.message);
       } else {
-        setLobbies((data as LobbyRecord[]) ?? []);
+        setLobbies(
+          ((data ?? []) as (
+            Omit<LobbyRecord, 'games'> & {
+              games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
+            }
+          )[]).map((lobby) => ({
+            ...lobby,
+            games: unwrapRelation(lobby.games),
+          })),
+        );
       }
 
       setLobbiesLoading(false);
@@ -833,9 +873,20 @@ export default function HomeScreen() {
       rsvp_status: 'accepted',
     });
 
+    const normalizedCreatedLobby: LobbyRecord = {
+      ...(createdLobby as Omit<LobbyRecord, 'games'> & {
+        games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
+      }),
+      games: unwrapRelation(
+        (createdLobby as {
+          games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
+        }).games,
+      ),
+    };
+
     setLobbies((current) => [
       {
-        ...(createdLobby as LobbyRecord),
+        ...normalizedCreatedLobby,
         invite_count: selectedLobbyInviteNames.length,
       },
       ...current,
@@ -1006,33 +1057,13 @@ export default function HomeScreen() {
     setFriendError('');
     setFriendMessage('');
 
-    const { error: updateError } = await supabase
-      .from('friend_requests')
-      .update({ status: decision })
-      .eq('id', request.id);
-
-    if (updateError) {
-      setFriendError(updateError.message);
-      setFriendActionBusyId(null);
-      return;
-    }
-
     if (decision === 'accepted') {
-      const { error: insertError } = await supabase.from('friends').upsert([
-        {
-          profile_id: session.user.id,
-          friend_profile_id: otherProfileId,
-          is_favorite: false,
-        },
-        {
-          profile_id: otherProfileId,
-          friend_profile_id: session.user.id,
-          is_favorite: false,
-        },
-      ]);
+      const { error: acceptError } = await supabase.rpc('accept_friend_request', {
+        p_request_id: request.id,
+      });
 
-      if (insertError) {
-        setFriendError(insertError.message);
+      if (acceptError) {
+        setFriendError(acceptError.message);
         setFriendActionBusyId(null);
         return;
       }
@@ -1053,6 +1084,17 @@ export default function HomeScreen() {
       });
       setFriendMessage(`${getFriendRequestLabel(request)} is now in your friends list.`);
     } else {
+      const { error: updateError } = await supabase
+        .from('friend_requests')
+        .update({ status: decision })
+        .eq('id', request.id);
+
+      if (updateError) {
+        setFriendError(updateError.message);
+        setFriendActionBusyId(null);
+        return;
+      }
+
       setFriendMessage(`Friend request from ${getFriendRequestLabel(request)} declined.`);
     }
 
@@ -1805,7 +1847,7 @@ export default function HomeScreen() {
     <>
       <SectionTitle
         title="Profile & settings"
-        subtitle="Connected accounts, favorites, privacy, and app preferences."
+        subtitle="Edit your profile, email, password, favorites, and app preferences."
       />
       <Card style={styles.panel}>
         <Card.Content style={styles.profileHeader}>
@@ -1822,6 +1864,154 @@ export default function HomeScreen() {
               {profile?.username ? `@${profile.username}` : 'Set your username to finish onboarding'}
             </Text>
           </View>
+        </Card.Content>
+      </Card>
+      <Card style={styles.panel}>
+        <Card.Content style={styles.profileSummary}>
+          <Text variant="titleMedium">Profile details</Text>
+          <Text style={styles.friendNote}>
+            Keep your name and username current so invites and lobbies stay recognizable.
+          </Text>
+          <TextInput
+            mode="outlined"
+            label="Username"
+            value={profileForm.username}
+            onChangeText={(value) =>
+              setProfileForm((current) => ({
+                ...current,
+                username: value.replace(/\s+/g, '').toLowerCase(),
+              }))
+            }
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.input}
+            testID="profile-edit-username-input"
+          />
+          <TextInput
+            mode="outlined"
+            label="Display name"
+            value={profileForm.displayName}
+            onChangeText={(value) =>
+              setProfileForm((current) => ({
+                ...current,
+                displayName: value,
+              }))
+            }
+            autoCorrect={false}
+            style={styles.input}
+            testID="profile-edit-display-name-input"
+          />
+          <TextInput
+            mode="outlined"
+            label="Avatar URL (optional)"
+            value={profileForm.avatarUrl}
+            onChangeText={(value) =>
+              setProfileForm((current) => ({
+                ...current,
+                avatarUrl: value,
+              }))
+            }
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.input}
+            testID="profile-edit-avatar-url-input"
+          />
+          {profileError ? (
+            <HelperText type="error" visible>
+              {profileError}
+            </HelperText>
+          ) : null}
+          {profileMessage ? (
+            <HelperText type="info" visible style={styles.successText}>
+              {profileMessage}
+            </HelperText>
+          ) : null}
+          <Button
+            mode="contained"
+            onPress={handleProfileSave}
+            loading={profileBusy}
+            disabled={profileBusy}
+            testID="profile-edit-save-button">
+            Save profile
+          </Button>
+        </Card.Content>
+      </Card>
+      <Card style={styles.panel}>
+        <Card.Content style={styles.profileSummary}>
+          <Text variant="titleMedium">Account & security</Text>
+          <Text style={styles.friendNote}>
+            Update your login email or set a new password for this account.
+          </Text>
+          <TextInput
+            mode="outlined"
+            label="Email"
+            value={accountEmail}
+            onChangeText={setAccountEmail}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            style={styles.input}
+            testID="account-email-input"
+          />
+          <Button
+            mode="outlined"
+            onPress={handleEmailUpdate}
+            loading={accountBusy}
+            disabled={accountBusy}
+            testID="account-email-save-button">
+            Update email
+          </Button>
+          <Divider style={styles.divider} />
+          <TextInput
+            mode="outlined"
+            label="New password"
+            value={passwordForm.nextPassword}
+            onChangeText={(value) =>
+              setPasswordForm((current) => ({
+                ...current,
+                nextPassword: value,
+              }))
+            }
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+            style={styles.input}
+            testID="account-password-input"
+          />
+          <TextInput
+            mode="outlined"
+            label="Confirm new password"
+            value={passwordForm.confirmPassword}
+            onChangeText={(value) =>
+              setPasswordForm((current) => ({
+                ...current,
+                confirmPassword: value,
+              }))
+            }
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+            style={styles.input}
+            testID="account-password-confirm-input"
+          />
+          {accountError ? (
+            <HelperText type="error" visible>
+              {accountError}
+            </HelperText>
+          ) : null}
+          {accountMessage ? (
+            <HelperText type="info" visible style={styles.successText}>
+              {accountMessage}
+            </HelperText>
+          ) : null}
+          <Button
+            mode="contained-tonal"
+            onPress={handlePasswordUpdate}
+            loading={accountBusy}
+            disabled={accountBusy}
+            testID="account-password-save-button">
+            Change password
+          </Button>
         </Card.Content>
       </Card>
       <Card style={styles.panel}>
@@ -1928,7 +2118,7 @@ export default function HomeScreen() {
     setAuthBusy(false);
   };
 
-  const handleProfileSave = async () => {
+  async function handleProfileSave() {
     if (!session?.user || !profile) {
       return;
     }
@@ -1971,7 +2161,85 @@ export default function HomeScreen() {
     }
 
     setProfileBusy(false);
-  };
+  }
+
+  async function handleEmailUpdate() {
+    if (!session?.user) {
+      return;
+    }
+
+    const nextEmail = accountEmail.trim().toLowerCase();
+    if (!nextEmail) {
+      setAccountError('Email is required.');
+      setAccountMessage('');
+      return;
+    }
+
+    if (nextEmail === (session.user.email ?? '').toLowerCase()) {
+      setAccountError('');
+      setAccountMessage('Email is already up to date.');
+      return;
+    }
+
+    setAccountBusy(true);
+    setAccountError('');
+    setAccountMessage('');
+
+    const { error } = await supabase.auth.updateUser({
+      email: nextEmail,
+    });
+
+    if (error) {
+      setAccountError(error.message);
+    } else {
+      setAccountMessage('Email update requested. Check your inbox if Supabase email confirmation is enabled.');
+    }
+
+    setAccountBusy(false);
+  }
+
+  async function handlePasswordUpdate() {
+    const nextPassword = passwordForm.nextPassword.trim();
+    const confirmPassword = passwordForm.confirmPassword.trim();
+
+    if (!nextPassword || !confirmPassword) {
+      setAccountError('Enter and confirm your new password.');
+      setAccountMessage('');
+      return;
+    }
+
+    if (nextPassword.length < 6) {
+      setAccountError('Use a password with at least 6 characters.');
+      setAccountMessage('');
+      return;
+    }
+
+    if (nextPassword !== confirmPassword) {
+      setAccountError('Passwords do not match.');
+      setAccountMessage('');
+      return;
+    }
+
+    setAccountBusy(true);
+    setAccountError('');
+    setAccountMessage('');
+
+    const { error } = await supabase.auth.updateUser({
+      password: nextPassword,
+    });
+
+    if (error) {
+      setAccountError(error.message);
+    } else {
+      setPasswordForm({
+        nextPassword: '',
+        confirmPassword: '',
+      });
+      setAccountMessage('Password updated.');
+    }
+
+    setAccountBusy(false);
+  }
 
   const toggleFavorite = async (gameId: string) => {
     if (!session?.user) {
@@ -2086,7 +2354,6 @@ export default function HomeScreen() {
           <SegmentedButtons
             value={authMode}
             onValueChange={(value) => setAuthMode(value as 'signin' | 'signup')}
-            testID="auth-mode-toggle"
             buttons={[
               { value: 'signin', label: 'Sign in' },
               { value: 'signup', label: 'Sign up' },

@@ -328,3 +328,5 @@ describe('game social persistence', () => {
     cy.contains(/your pool is empty/i).should('be.visible');
   });
 });
+
+export {};

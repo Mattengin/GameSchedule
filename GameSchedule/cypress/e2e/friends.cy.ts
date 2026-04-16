@@ -86,12 +86,14 @@ const makeAuthBody = (account: MockAccount) => {
 };
 
 const getQueryValue = (url: string, key: string) => {
-  const match = new RegExp(`${key}=eq\\.([^&]+)`).exec(url);
+  const decodedUrl = decodeURIComponent(url);
+  const match = new RegExp(`${key}=eq\\.([^&]+)`).exec(decodedUrl);
   return match ? decodeURIComponent(match[1]) : '';
 };
 
 const getInValues = (url: string, key: string) => {
-  const match = new RegExp(`${key}=in\\.\\(([^)]+)\\)`).exec(url);
+  const decodedUrl = decodeURIComponent(url);
+  const match = new RegExp(`${key}=in\\.\\(([^)]+)\\)`).exec(decodedUrl);
   return match ? match[1].split(',').map((value) => decodeURIComponent(value.replace(/\"/g, ''))) : [];
 };
 
@@ -294,6 +296,52 @@ const registerMockFriends = (currentUser: MockAccount, otherUser: MockAccount) =
       body: {},
     });
   }).as('friendRequestsUpdate');
+
+  cy.intercept('POST', '**/rest/v1/rpc/accept_friend_request', (req) => {
+    const requestId = (req.body as { p_request_id: string }).p_request_id;
+    const request = friendRequestsStore.find((entry) => entry.id === requestId);
+
+    if (!request) {
+      req.reply({
+        statusCode: 404,
+        body: { message: 'Friend request not found' },
+      });
+      return;
+    }
+
+    request.status = 'accepted';
+
+    const rows: MockFriendship[] = [
+      {
+        profile_id: request.requester_profile_id,
+        friend_profile_id: request.addressee_profile_id,
+        is_favorite: false,
+      },
+      {
+        profile_id: request.addressee_profile_id,
+        friend_profile_id: request.requester_profile_id,
+        is_favorite: false,
+      },
+    ];
+
+    rows.forEach((row) => {
+      const existingIndex = friendshipsStore.findIndex(
+        (entry) =>
+          entry.profile_id === row.profile_id && entry.friend_profile_id === row.friend_profile_id,
+      );
+
+      if (existingIndex >= 0) {
+        friendshipsStore[existingIndex] = row;
+      } else {
+        friendshipsStore.push(row);
+      }
+    });
+
+    req.reply({
+      statusCode: 200,
+      body: null,
+    });
+  }).as('acceptFriendRequestRpc');
 };
 
 describe('friends flow', () => {
@@ -380,3 +428,5 @@ describe('friends flow', () => {
     cy.contains(/favorite friend/i).should('be.visible');
   });
 });
+
+export {};

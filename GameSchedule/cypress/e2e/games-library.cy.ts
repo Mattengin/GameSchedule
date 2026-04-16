@@ -48,3 +48,5 @@ describe('games library', () => {
     cy.contains(/no games matched your search/i).should('be.visible');
   });
 });
+
+export {};

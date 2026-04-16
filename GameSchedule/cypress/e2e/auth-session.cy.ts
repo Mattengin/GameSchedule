@@ -176,3 +176,5 @@ describe('authenticated session', () => {
     });
   });
 });
+
+export {};

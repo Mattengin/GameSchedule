@@ -18,3 +18,5 @@ describe('auth screen', () => {
     }).should('be.visible');
   });
 });
+
+export {};

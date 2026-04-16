@@ -352,3 +352,5 @@ describe('lobbies flow', () => {
     cy.contains(/no lobbies yet/i).should('be.visible');
   });
 });
+
+export {};
