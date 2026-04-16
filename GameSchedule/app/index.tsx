@@ -173,6 +173,9 @@ const sections: { value: SectionKey; label: string }[] = [
   { value: 'profile', label: 'Profile' },
 ];
 
+const allowSignup = process.env.EXPO_PUBLIC_ALLOW_SIGNUP !== 'false';
+const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
+
 const createDefaultAvailabilitySelection = () =>
   availabilityGrid.reduce<Record<string, string[]>>((accumulator, row) => {
     accumulator[row.day] = [...row.slots];
@@ -282,6 +285,12 @@ export default function HomeScreen() {
   });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
   const [friendFilter, setFriendFilter] = React.useState<'all' | 'favorites' | 'pending'>('all');
+
+  React.useEffect(() => {
+    if (!allowSignup && authMode === 'signup') {
+      setAuthMode('signin');
+    }
+  }, [authMode]);
 
   React.useEffect(() => {
     let active = true;
@@ -2073,6 +2082,10 @@ export default function HomeScreen() {
 
         setAuthMessage('Signed in successfully.');
       } else {
+        if (!allowSignup) {
+          throw new Error('Signup is disabled for this demo. Use a provided account to sign in.');
+        }
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -2343,12 +2356,15 @@ export default function HomeScreen() {
     return (
       <View style={styles.loginScreen}>
         <Surface style={styles.loginCard} elevation={3}>
+          {demoLabel ? <Chip compact style={styles.demoChip}>{demoLabel}</Chip> : null}
           <Text style={styles.eyebrow}>Friend Management App</Text>
           <Text variant="headlineMedium" style={styles.loginTitle}>
             {authMode === 'signin' ? 'Sign in' : 'Create account'}
           </Text>
           <Text style={styles.pageSubtitle}>
-            Supabase email/password auth for the first real app step. Kept minimal for testing.
+            {allowSignup
+              ? 'Supabase email/password auth for the first real app step. Kept minimal for testing.'
+              : 'Public demo access is sign-in only. Use a shared demo account or one we provide for testing.'}
           </Text>
 
           <SegmentedButtons
@@ -2356,7 +2372,7 @@ export default function HomeScreen() {
             onValueChange={(value) => setAuthMode(value as 'signin' | 'signup')}
             buttons={[
               { value: 'signin', label: 'Sign in' },
-              { value: 'signup', label: 'Sign up' },
+              ...(allowSignup ? [{ value: 'signup', label: 'Sign up' }] : []),
             ]}
           />
           <TextInput
@@ -2382,7 +2398,9 @@ export default function HomeScreen() {
             testID="auth-password-input"
           />
           <HelperText type="info" style={styles.helperText}>
-            Use an existing Supabase user to sign in, or create one here for testing.
+            {allowSignup
+              ? 'Use an existing Supabase user to sign in, or create one here for testing.'
+              : 'Self-signup is disabled in this deployment to keep the demo backend under control.'}
           </HelperText>
           {authError ? (
             <HelperText type="error" visible>
@@ -2555,6 +2573,11 @@ const styles = StyleSheet.create({
   loginTitle: {
     color: '#F5F7FF',
     fontWeight: '800',
+  },
+  demoChip: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#252B49',
+    marginBottom: 4,
   },
   input: {
     backgroundColor: '#171A2A',
