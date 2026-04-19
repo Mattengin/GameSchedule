@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
@@ -35,6 +35,10 @@ type Profile = {
   avatar_url: string | null;
   display_name: string | null;
   onboarding_complete: boolean;
+  discord_user_id: string | null;
+  discord_username: string | null;
+  discord_avatar_url: string | null;
+  discord_connected_at: string | null;
 };
 
 type GameRecord = {
@@ -175,6 +179,8 @@ const sections: { value: SectionKey; label: string }[] = [
 
 const allowSignup = process.env.EXPO_PUBLIC_ALLOW_SIGNUP !== 'false';
 const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
+const discordClientId = process.env.EXPO_PUBLIC_DISCORD_CLIENT_ID?.trim() ?? '';
+const discordStateStorageKey = 'gameschedule-discord-oauth-state';
 
 const createDefaultAvailabilitySelection = () =>
   availabilityGrid.reduce<Record<string, string[]>>((accumulator, row) => {
@@ -237,6 +243,8 @@ export default function HomeScreen() {
   const [profileBusy, setProfileBusy] = React.useState(false);
   const [profileError, setProfileError] = React.useState('');
   const [profileMessage, setProfileMessage] = React.useState('');
+  const [discordBusy, setDiscordBusy] = React.useState(false);
+  const [discordMessage, setDiscordMessage] = React.useState('');
   const [accountEmail, setAccountEmail] = React.useState('');
   const [accountBusy, setAccountBusy] = React.useState(false);
   const [accountError, setAccountError] = React.useState('');
@@ -348,7 +356,9 @@ export default function HomeScreen() {
 
       const { data: existingProfile, error: fetchError } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, display_name, onboarding_complete')
+        .select(
+          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
+        )
         .eq('id', user.id)
         .maybeSingle();
 
@@ -370,12 +380,18 @@ export default function HomeScreen() {
         display_name: fallbackName,
         avatar_url: null,
         onboarding_complete: false,
+        discord_user_id: null,
+        discord_username: null,
+        discord_avatar_url: null,
+        discord_connected_at: null,
       };
 
       const { data: insertedProfile, error: insertError } = await supabase
         .from('profiles')
         .insert(newProfile)
-        .select('id, username, avatar_url, display_name, onboarding_complete')
+        .select(
+          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
+        )
         .single();
 
       if (insertError) {
@@ -538,7 +554,9 @@ export default function HomeScreen() {
 
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, display_name, onboarding_complete')
+        .select(
+          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
+        )
         .in('id', profileIds);
 
       if (profilesError) {
@@ -574,7 +592,9 @@ export default function HomeScreen() {
       const query = friendSearch.trim();
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, display_name, onboarding_complete')
+        .select(
+          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
+        )
         .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
         .neq('id', session.user.id)
         .limit(6);
@@ -1856,7 +1876,7 @@ export default function HomeScreen() {
     <>
       <SectionTitle
         title="Profile & settings"
-        subtitle="Edit your profile, email, password, favorites, and app preferences."
+        subtitle="Edit your profile, link Discord, update account security, and keep setup simple."
       />
       <Card style={styles.panel}>
         <Card.Content style={styles.profileHeader}>
@@ -1873,6 +1893,50 @@ export default function HomeScreen() {
               {profile?.username ? `@${profile.username}` : 'Set your username to finish onboarding'}
             </Text>
           </View>
+        </Card.Content>
+      </Card>
+      <Card style={styles.panel}>
+        <Card.Content style={styles.profileSummary}>
+          <Text variant="titleMedium">Discord</Text>
+          <Text style={styles.friendNote}>
+            We are moving toward Discord-first identity so gamers do not have to rebuild a second social graph.
+          </Text>
+          <Chip icon="discord" style={styles.statusChip}>
+            {profile?.discord_user_id
+              ? `Connected as ${profile.discord_username ?? 'Discord account'}`
+              : 'Not connected'}
+          </Chip>
+          <Text style={styles.friendNote}>
+            {profile?.discord_user_id
+              ? 'This linked identity will become the primary social layer for discovery, invites, and presence.'
+              : 'Next step is wiring Discord OAuth so identity and discovery start with the account players already use.'}
+          </Text>
+          <View style={styles.cardActions}>
+            {profile?.discord_user_id ? (
+              <Button
+                mode="outlined"
+                onPress={handleDiscordDisconnect}
+                loading={discordBusy}
+                disabled={discordBusy}
+                testID="discord-disconnect-button">
+                Disconnect Discord
+              </Button>
+            ) : (
+              <Button
+                mode="contained"
+                onPress={handleDiscordConnect}
+                loading={discordBusy}
+                disabled={discordBusy}
+                testID="discord-connect-button">
+                Connect Discord
+              </Button>
+            )}
+          </View>
+          {discordMessage ? (
+            <HelperText type="info" visible style={styles.successText}>
+              {discordMessage}
+            </HelperText>
+          ) : null}
         </Card.Content>
       </Card>
       <Card style={styles.panel}>
@@ -2159,7 +2223,9 @@ export default function HomeScreen() {
         onboarding_complete: true,
       })
       .eq('id', session.user.id)
-      .select('id, username, avatar_url, display_name, onboarding_complete')
+      .select(
+        'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
+      )
       .single();
 
     if (error) {
@@ -2174,6 +2240,87 @@ export default function HomeScreen() {
     }
 
     setProfileBusy(false);
+  }
+
+  async function handleDiscordConnect() {
+    if (!profile) {
+      return;
+    }
+
+    setDiscordBusy(true);
+    setDiscordMessage('');
+
+    if (!discordClientId) {
+      setDiscordMessage(
+        'Discord client setup is not configured yet. Add EXPO_PUBLIC_DISCORD_CLIENT_ID before wiring OAuth.',
+      );
+      setDiscordBusy(false);
+      return;
+    }
+
+    if (Platform.OS !== 'web') {
+      setDiscordMessage(
+        'Discord linking is wired for the web flow first. Native phone linking will come next with the mobile callback setup.',
+      );
+      setDiscordBusy(false);
+      return;
+    }
+
+    const currentLocation = globalThis.window?.location;
+    if (!currentLocation) {
+      setDiscordMessage('Unable to start Discord auth from this environment.');
+      setDiscordBusy(false);
+      return;
+    }
+
+    const basePath = currentLocation.pathname.startsWith('/GameSchedule') ? '/GameSchedule' : '';
+    const redirectUri = `${currentLocation.origin}${basePath}/discord-oauth-callback`;
+    const state = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    globalThis.window.sessionStorage?.setItem(discordStateStorageKey, state);
+
+    const authorizeUrl = new URL('https://discord.com/oauth2/authorize');
+    authorizeUrl.searchParams.set('response_type', 'token');
+    authorizeUrl.searchParams.set('client_id', discordClientId);
+    authorizeUrl.searchParams.set('scope', 'identify');
+    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+    authorizeUrl.searchParams.set('prompt', 'consent');
+    authorizeUrl.searchParams.set('state', state);
+
+    globalThis.window.location.assign(authorizeUrl.toString());
+    setDiscordBusy(false);
+  }
+
+  async function handleDiscordDisconnect() {
+    if (!session?.user || !profile) {
+      return;
+    }
+
+    setDiscordBusy(true);
+    setDiscordMessage('');
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({
+        discord_user_id: null,
+        discord_username: null,
+        discord_avatar_url: null,
+        discord_connected_at: null,
+      })
+      .eq('id', session.user.id)
+      .select(
+        'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
+      )
+      .single();
+
+    if (error) {
+      setDiscordMessage(error.message);
+    } else {
+      setProfile(data);
+      setDiscordMessage('Discord link removed.');
+    }
+
+    setDiscordBusy(false);
   }
 
   async function handleEmailUpdate() {
@@ -2854,6 +3001,10 @@ const styles = StyleSheet.create({
   },
   profileSummary: {
     gap: 6,
+  },
+  statusChip: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#252B49',
   },
   fab: {
     position: 'absolute',

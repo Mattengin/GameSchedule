@@ -49,6 +49,8 @@ Client environment variables currently used:
 ```env
 EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_ANON_KEY=
+EXPO_PUBLIC_ALLOW_SIGNUP=true
+EXPO_PUBLIC_DEMO_LABEL=
 EXPO_PUBLIC_APP_SCHEME=
 EXPO_PUBLIC_APP_ENV=development
 EXPO_PUBLIC_ENABLE_DISCORD_AUTH=false
@@ -80,10 +82,19 @@ Useful scripts:
 ```bash
 npm run lint
 npx tsc --noEmit
+npm run export:web
 npm run cypress:open
 npm run cypress:run
 npm run test:e2e
 ```
+
+Phone development:
+
+```bash
+npm start
+```
+
+Then scan the Expo QR code with Expo Go on the same Wi-Fi network, or switch Expo to `Tunnel` mode if LAN does not work.
 
 ## Supabase Setup
 
@@ -222,8 +233,38 @@ Current SQL scripts:
 
 - profile overview card
 - initials avatar
+- editable profile details:
+  - username
+  - display name
+  - avatar URL
+- editable account/security settings:
+  - email update
+  - password change
 - favorite games section
 - preferences summary
+
+### Public Demo / GitHub Pages
+
+- Expo web export configured for static hosting
+- repo-path hosting configured with Expo Router base path `/GameSchedule`
+- GitHub Pages workflow added at repo root:
+  - [`.github/workflows/deploy-pages.yml`](/c:/Users/matt6/Project/nEVER%20STOP/.github/workflows/deploy-pages.yml)
+- public demo environment variables supported:
+  - `EXPO_PUBLIC_SUPABASE_URL`
+  - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+  - `EXPO_PUBLIC_ALLOW_SIGNUP`
+  - `EXPO_PUBLIC_DEMO_LABEL`
+- public demo mode can disable self-signup so the hosted backend does not get flooded with junk accounts
+- local static export verified successfully with:
+  - `npx expo export --platform web`
+
+### Template Cleanup
+
+Unused Expo starter/template code has been removed:
+
+- unused example app under [`app-example`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app-example)
+- unused themed/template components under [`components`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/components)
+- unused starter theme helpers under [`constants`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/constants) and [`hooks`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/hooks)
 
 ## Database Scripts
 
@@ -280,8 +321,7 @@ Creates:
 Also adds:
 
 - authenticated read access for `public.profiles`
-
-That profile read policy is needed for the current client-side people search flow.
+- `public.accept_friend_request(uuid)` RPC
 
 ## Validation History
 
@@ -393,22 +433,16 @@ Important note:
 Current verification status:
 
 - `npm run lint` passes
-- `npx tsc --noEmit` does **not** currently pass
+- `npx tsc --noEmit` passes
 
-Known TypeScript issues:
+Recent repo-health fixes:
 
-- Supabase join responses in [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx) are cast too loosely for `roulette_pool_entries` and `lobbies`
-- `SegmentedButtons` typing in [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx) does not like the top-level `testID` prop
-- older starter issues still exist in:
-  - [`components/ExternalLink.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/components/ExternalLink.tsx)
-  - [`components/__tests__/ThemedText-test.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/components/__tests__/ThemedText-test.tsx)
-- Cypress spec files are currently treated as global scripts by TypeScript, which causes duplicate identifier errors across shared helper names like `MockAccount`, `authStore`, and `makeAuthBody`
-
-Practical meaning:
-
-- the app is working and has been manually validated
-- lint is green
-- the repo still needs a TypeScript cleanup pass before it can be considered type-clean
+- normalized Supabase join shapes in [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx)
+- removed invalid `SegmentedButtons` `testID` usage
+- fixed older starter TypeScript issues before later removing the unused starter files
+- converted Cypress specs into modules to avoid duplicate global identifier errors
+- updated [`tsconfig.json`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/tsconfig.json) to use `moduleResolution: "bundler"`
+- configured ESLint to ignore generated `dist/**` output in [`.eslintrc.js`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/.eslintrc.js)
 
 ## Supabase Limits Discussion
 
@@ -495,6 +529,61 @@ Suggested future framing:
 
 This means the current friends implementation is useful as a bridge, but the long-term social model should likely become **Discord-first**.
 
+## Friends Flow Safety Update
+
+The first friends version allowed the client to create both friendship rows directly during accept. That was convenient for prototyping, but it was too permissive.
+
+Current state:
+
+- accepting a friend request now uses `public.accept_friend_request(uuid)`
+- the RPC validates:
+  - request exists
+  - request is pending
+  - caller is the addressee
+- mirrored friendship rows are inserted server-side
+- `friends` insert policy is tightened so users can only directly insert their own row
+
+This is still MVP-level, but it is safer than the original client-only accept flow.
+
+## Hosted Demo Notes
+
+GitHub Pages setup now assumes:
+
+- repository is public
+- Pages source is `GitHub Actions`
+- the repo root contains the workflow file
+- the Expo app lives in the `GameSchedule/` subdirectory
+
+Current hosted URL target:
+
+- `https://mattengin.github.io/GameSchedule/`
+
+Important deployment lesson from this session:
+
+- GitHub only detects workflow files placed at the repository root `.github/workflows/`
+- the first Pages workflow version was incorrectly placed under `GameSchedule/.github/workflows/` and therefore did not show up in the Actions tab
+- this was corrected by moving the workflow to:
+  - [`.github/workflows/deploy-pages.yml`](/c:/Users/matt6/Project/nEVER%20STOP/.github/workflows/deploy-pages.yml)
+
+Recommended public demo posture:
+
+- use a second Supabase project for the public demo
+- keep `EXPO_PUBLIC_ALLOW_SIGNUP=false`
+- use a shared demo account rather than open self-signup
+- keep development and public demo data separated
+
+## Running on a Phone
+
+For development on a real phone, the current path is Expo Go:
+
+1. Install Expo Go on the phone.
+2. From [`GameSchedule/package.json`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/package.json), run:
+   - `npm start`
+3. Scan the QR code with Expo Go.
+4. If LAN does not work, switch Expo to `Tunnel`.
+
+This uses the local `.env` values and the existing Supabase client configuration.
+
 ## Weird Testing Overlay
 
 During Playwright validation, an unrelated overlay appeared with messaging like:
@@ -513,9 +602,7 @@ Conclusion:
 
 ## Current Limitations
 
-- friend requests and friendships are client-managed right now
-- accepting a request creates both friendship rows from the client
-- the current `friends` policy is intentionally permissive enough to support that client-side accept flow, which is convenient for now but not ideal long-term
+- GitHub Pages deploy has been prepared, but live availability still depends on the repo Pages/Actions settings and a successful workflow run
 - lobby invite drafts are still local-only
 - real invited `lobby_members` beyond the host are not yet persisted
 - notifications are placeholder-only
@@ -530,6 +617,7 @@ Conclusion:
 Short-term:
 
 - live-validate the new friends flow with two real accounts
+- finish the public demo deployment and verify the hosted URL after the first successful Pages run
 - connect accepted friends to real `lobby_members` invites
 - build notifications from friend requests and lobby actions
 
