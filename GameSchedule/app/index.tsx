@@ -182,6 +182,88 @@ const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
 const discordClientId = process.env.EXPO_PUBLIC_DISCORD_CLIENT_ID?.trim() ?? '';
 const discordStateStorageKey = 'gameschedule-discord-oauth-state';
 
+const profileSelectFields =
+  'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';
+
+const getWebBasePath = () => {
+  if (Platform.OS !== 'web') {
+    return '';
+  }
+
+  const pathname = globalThis.window?.location.pathname ?? '';
+  return pathname.startsWith('/GameSchedule') ? '/GameSchedule' : '';
+};
+
+const getWebRedirectUrl = () => {
+  if (Platform.OS !== 'web') {
+    return undefined;
+  }
+
+  const currentLocation = globalThis.window?.location;
+  if (!currentLocation) {
+    return undefined;
+  }
+
+  return `${currentLocation.origin}${getWebBasePath()}/`;
+};
+
+const getDiscordIdentityFromSession = (session: Session | null) => {
+  const user = session?.user;
+  if (!user) {
+    return null;
+  }
+
+  const discordIdentity = user.identities?.find((identity) => identity.provider === 'discord');
+  const identityData = discordIdentity?.identity_data as
+    | {
+        avatar_url?: string;
+        full_name?: string;
+        name?: string;
+        preferred_username?: string;
+        provider_id?: string;
+        sub?: string;
+        user_name?: string;
+      }
+    | undefined;
+
+  const metadata = user.user_metadata as
+    | {
+        avatar_url?: string;
+        full_name?: string;
+        name?: string;
+        preferred_username?: string;
+        provider_id?: string;
+        sub?: string;
+        user_name?: string;
+      }
+    | undefined;
+
+  const discordUserId =
+    identityData?.provider_id ?? identityData?.sub ?? metadata?.provider_id ?? metadata?.sub ?? null;
+
+  if (!discordUserId) {
+    return null;
+  }
+
+  const discordUsername =
+    identityData?.full_name ??
+    identityData?.name ??
+    identityData?.preferred_username ??
+    identityData?.user_name ??
+    metadata?.full_name ??
+    metadata?.name ??
+    metadata?.preferred_username ??
+    metadata?.user_name ??
+    'Discord user';
+
+  return {
+    discord_user_id: discordUserId,
+    discord_username: discordUsername,
+    discord_avatar_url: identityData?.avatar_url ?? metadata?.avatar_url ?? null,
+    discord_connected_at: new Date().toISOString(),
+  };
+};
+
 const createDefaultAvailabilitySelection = () =>
   availabilityGrid.reduce<Record<string, string[]>>((accumulator, row) => {
     accumulator[row.day] = [...row.slots];
@@ -348,17 +430,19 @@ export default function HomeScreen() {
       setProfileLoading(true);
 
       const user = session.user;
+      const discordIdentity = getDiscordIdentityFromSession(session);
       const fallbackName =
+        discordIdentity?.discord_username ??
         user.user_metadata?.username ??
         user.user_metadata?.display_name ??
+        user.user_metadata?.full_name ??
+        user.user_metadata?.name ??
         user.email?.split('@')[0] ??
         'Player One';
 
       const { data: existingProfile, error: fetchError } = await supabase
         .from('profiles')
-        .select(
-          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
-        )
+        .select(profileSelectFields)
         .eq('id', user.id)
         .maybeSingle();
 
@@ -369,7 +453,28 @@ export default function HomeScreen() {
       }
 
       if (existingProfile) {
-        setProfile(existingProfile);
+        if (discordIdentity && !existingProfile.discord_user_id) {
+          const { data: updatedProfile, error: updateError } = await supabase
+            .from('profiles')
+            .update({
+              ...discordIdentity,
+              avatar_url: existingProfile.avatar_url ?? discordIdentity.discord_avatar_url,
+              display_name: existingProfile.display_name ?? discordIdentity.discord_username,
+            })
+            .eq('id', user.id)
+            .select(profileSelectFields)
+            .single();
+
+          if (updateError) {
+            setAuthError(updateError.message);
+            setProfile(existingProfile);
+          } else {
+            setProfile(updatedProfile);
+          }
+        } else {
+          setProfile(existingProfile);
+        }
+
         setProfileLoading(false);
         return;
       }
@@ -378,20 +483,18 @@ export default function HomeScreen() {
         id: user.id,
         username: fallbackName,
         display_name: fallbackName,
-        avatar_url: null,
-        onboarding_complete: false,
-        discord_user_id: null,
-        discord_username: null,
-        discord_avatar_url: null,
-        discord_connected_at: null,
+        avatar_url: discordIdentity?.discord_avatar_url ?? null,
+        onboarding_complete: Boolean(discordIdentity),
+        discord_user_id: discordIdentity?.discord_user_id ?? null,
+        discord_username: discordIdentity?.discord_username ?? null,
+        discord_avatar_url: discordIdentity?.discord_avatar_url ?? null,
+        discord_connected_at: discordIdentity?.discord_connected_at ?? null,
       };
 
       const { data: insertedProfile, error: insertError } = await supabase
         .from('profiles')
         .insert(newProfile)
-        .select(
-          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
-        )
+        .select(profileSelectFields)
         .single();
 
       if (insertError) {
@@ -2173,6 +2276,27 @@ export default function HomeScreen() {
     }
   };
 
+  const handleDiscordAuth = async () => {
+    setAuthBusy(true);
+    setAuthError('');
+    setAuthMessage('');
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'discord',
+      options: {
+        redirectTo: getWebRedirectUrl(),
+      },
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      setAuthBusy(false);
+      return;
+    }
+
+    setAuthMessage('Redirecting to Discord...');
+  };
+
   const handleLogout = async () => {
     setAuthBusy(true);
     setAuthError('');
@@ -2513,6 +2637,19 @@ export default function HomeScreen() {
               ? 'Supabase email/password auth for the first real app step. Kept minimal for testing.'
               : 'Public demo access is sign-in only. Use a shared demo account or one we provide for testing.'}
           </Text>
+
+          <Button
+            mode="contained"
+            icon="discord"
+            onPress={handleDiscordAuth}
+            loading={authBusy}
+            disabled={authBusy}
+            style={styles.loginButton}
+            testID="discord-login-button">
+            Continue with Discord
+          </Button>
+
+          <Divider style={styles.divider} />
 
           <SegmentedButtons
             value={authMode}

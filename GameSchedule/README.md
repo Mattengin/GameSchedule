@@ -132,6 +132,7 @@ Current SQL scripts:
 
 - real Supabase email/password sign-in
 - real Supabase email/password sign-up
+- Discord login option added through Supabase OAuth
 - session restore on app load
 - auth state listener
 - logout
@@ -528,6 +529,14 @@ Suggested future framing:
 - Invite circles
 
 This means the current friends implementation is useful as a bridge, but the long-term social model should likely become **Discord-first**.
+
+Current Discord auth direction:
+
+- keep email/password available as fallback for now
+- add `Continue with Discord` as a visible login option
+- use Discord identity to reduce profile setup friction
+- Supabase Discord OAuth requires enabling the Discord provider in Supabase Auth
+- the Discord client secret must be stored only in Supabase/provider settings or another server-side secret store, never in Expo client env
 
 ## Friends Flow Safety Update
 
