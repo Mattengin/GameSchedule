@@ -25,6 +25,7 @@ type MockLobby = {
   id: string;
   title: string;
   scheduled_for: string | null;
+  scheduled_until: string | null;
   is_private: boolean;
   status: 'scheduled' | 'open' | 'closed';
   game_id: string;
@@ -132,6 +133,7 @@ const buildLobby = (
   gameId: string,
   title: string,
   scheduledFor: string | null,
+  scheduledUntil: string | null,
   isPrivate: boolean,
   inviteCount = 0,
 ): MockLobby => {
@@ -141,6 +143,7 @@ const buildLobby = (
     id: `lobby-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title,
     scheduled_for: scheduledFor,
+    scheduled_until: scheduledUntil,
     is_private: isPrivate,
     status: 'scheduled',
     game_id: gameId,
@@ -233,6 +236,7 @@ const registerMockLobbies = () => {
       game_id: gameId,
       title,
       scheduled_for: scheduledFor,
+      scheduled_until: scheduledUntil,
       is_private: isPrivate,
       invite_count: inviteCount,
     } = req.body as {
@@ -240,6 +244,7 @@ const registerMockLobbies = () => {
       game_id: string;
       title: string;
       scheduled_for: string | null;
+      scheduled_until: string | null;
       is_private: boolean;
       invite_count?: number;
     };
@@ -254,7 +259,7 @@ const registerMockLobbies = () => {
       return;
     }
 
-    const lobby = buildLobby(account, gameId, title, scheduledFor, isPrivate, inviteCount ?? 0);
+    const lobby = buildLobby(account, gameId, title, scheduledFor, scheduledUntil, isPrivate, inviteCount ?? 0);
     const current = lobbyStore.get(hostProfileId) ?? [];
     lobbyStore.set(hostProfileId, [lobby, ...current]);
 
@@ -302,6 +307,15 @@ describe('lobbies flow', () => {
     cy.contains(/^Lobbies$/).should('be.visible');
     cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Helix Arena Lobby');
     cy.get('[data-testid="create-lobby-button"]').click();
+    cy.wait('@createLobbyRequest')
+      .its('request.body')
+      .should((body) => {
+        expect(body.scheduled_for).to.be.a('string');
+        expect(body.scheduled_until).to.be.a('string');
+        expect(new Date(body.scheduled_until).getTime()).to.be.greaterThan(
+          new Date(body.scheduled_for).getTime(),
+        );
+      });
 
     cy.contains(/lobby created/i).should('be.visible');
     cy.contains('Helix Arena Lobby').should('be.visible');
@@ -314,10 +328,17 @@ describe('lobbies flow', () => {
     cy.contains('Lobbies').click();
     cy.contains('Deep Raid').click();
     cy.get('[data-testid="lobby-title-input"]').clear().type('Deep Raid Friday Run');
-    cy.contains(/^Later$/).click();
-    cy.get('[data-testid="lobby-scheduled-for-input"]').type('2026-04-10 20:30');
+    cy.get('[data-testid="lobby-start-time-picker-button"]').should('contain', 'Start:');
+    cy.get('[data-testid="lobby-end-time-picker-button"]').should('contain', 'End:');
     cy.contains(/^Public$/).click();
     cy.get('[data-testid="create-lobby-button"]').click();
+    cy.wait('@createLobbyRequest')
+      .its('request.body')
+      .should((body) => {
+        expect(body.title).to.equal('Deep Raid Friday Run');
+        expect(body.scheduled_for).to.be.a('string');
+        expect(body.scheduled_until).to.be.a('string');
+      });
 
     cy.contains(/lobby created/i).should('be.visible');
     cy.contains('Deep Raid Friday Run').should('be.visible');
@@ -340,16 +361,14 @@ describe('lobbies flow', () => {
     cy.contains(/prepared for 2 friends/i).should('be.visible');
   });
 
-  it('shows a validation message when later is selected without a valid date', () => {
+  it('shows start and end time controls for scheduled lobbies', () => {
     signIn();
 
     cy.contains('Lobbies').click();
-    cy.contains(/^Later$/).click();
-    cy.get('[data-testid="lobby-scheduled-for-input"]').clear().type('not-a-date');
-    cy.get('[data-testid="create-lobby-button"]').click();
-
-    cy.contains(/enter a valid date and time for later/i).should('be.visible');
-    cy.contains(/no lobbies yet/i).should('be.visible');
+    cy.contains(/^Schedule it$/).click();
+    cy.get('[data-testid="lobby-date-picker-input"]').should('exist');
+    cy.get('[data-testid="lobby-start-time-picker-button"]').should('be.visible');
+    cy.get('[data-testid="lobby-end-time-picker-button"]').should('be.visible');
   });
 });
 

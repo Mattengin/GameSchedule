@@ -17,7 +17,15 @@ import {
   Text,
   TextInput,
 } from 'react-native-paper';
+import {
+  DatePickerInput,
+  TimePickerModal,
+  en,
+  registerTranslation,
+} from 'react-native-paper-dates';
 import { supabase } from '../services/supabaseClient';
+
+registerTranslation('en', en);
 
 type SectionKey =
   | 'dashboard'
@@ -60,6 +68,7 @@ type LobbyRecord = {
   id: string;
   title: string;
   scheduled_for: string | null;
+  scheduled_until: string | null;
   is_private: boolean;
   status: 'scheduled' | 'open' | 'closed';
   game_id: string;
@@ -73,10 +82,13 @@ type AvailabilitySetting = {
   auto_decline_outside_hours: boolean;
 };
 
-type AvailabilitySlot = {
+type AvailabilityWindow = {
+  id?: string;
   profile_id: string;
   day_key: string;
-  slot_label: string;
+  starts_at: string;
+  ends_at: string;
+  created_at?: string;
 };
 
 type RelatedGameSummary = Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform'>;
@@ -145,26 +157,13 @@ const fallbackGames: GameRecord[] = [
   },
 ];
 
-const fallbackUpcomingLobbies = [
-  { title: 'Helix Arena Ranked', time: 'Today | 8:30 PM', attendees: '4/5 locked in' },
-  { title: 'Deep Raid Warmup', time: 'Tomorrow | 7:00 PM', attendees: '3/4 voted yes' },
-];
-
 const notifications = [
   { label: 'Invite', message: 'NovaHex invited you to a Helix Arena lobby.', age: '2m ago' },
   { label: 'Reminder', message: 'Deep Raid Warmup starts in 1 hour.', age: '58m ago' },
   { label: 'System', message: 'Discord sync is ready when you decide to connect it.', age: 'Today' },
 ];
 
-const availabilityGrid = [
-  { day: 'Mon', slots: ['6 PM', '8 PM', '10 PM'] },
-  { day: 'Tue', slots: ['6 PM', '8 PM', '10 PM'] },
-  { day: 'Wed', slots: ['6 PM', '8 PM', '10 PM'] },
-  { day: 'Thu', slots: ['6 PM', '8 PM', '10 PM'] },
-  { day: 'Fri', slots: ['6 PM', '8 PM', '10 PM'] },
-  { day: 'Sat', slots: ['1 PM', '4 PM', '8 PM'] },
-  { day: 'Sun', slots: ['1 PM', '4 PM', '8 PM'] },
-];
+const availabilityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 const sections: { value: SectionKey; label: string }[] = [
   { value: 'dashboard', label: 'Home' },
@@ -205,6 +204,28 @@ const getWebRedirectUrl = () => {
   }
 
   return `${currentLocation.origin}${getWebBasePath()}/`;
+};
+
+const clearOAuthHashFromUrl = () => {
+  if (Platform.OS !== 'web') {
+    return;
+  }
+
+  const currentLocation = globalThis.window?.location;
+  const currentHistory = globalThis.window?.history;
+  if (!currentLocation?.hash || !currentHistory?.replaceState) {
+    return;
+  }
+
+  const hasOAuthToken = /(?:^#|&)(access_token|refresh_token|provider_token|error|error_description)=/.test(
+    currentLocation.hash,
+  );
+
+  if (!hasOAuthToken) {
+    return;
+  }
+
+  currentHistory.replaceState(currentHistory.state, '', `${currentLocation.pathname}${currentLocation.search}`);
 };
 
 const getDiscordIdentityFromSession = (session: Session | null) => {
@@ -264,18 +285,104 @@ const getDiscordIdentityFromSession = (session: Session | null) => {
   };
 };
 
-const createDefaultAvailabilitySelection = () =>
-  availabilityGrid.reduce<Record<string, string[]>>((accumulator, row) => {
-    accumulator[row.day] = [...row.slots];
-    return accumulator;
-  }, {});
-
 const unwrapRelation = <T,>(value: T | T[] | null | undefined): T | null => {
   if (Array.isArray(value)) {
     return value[0] ?? null;
   }
 
   return value ?? null;
+};
+
+const createDefaultLobbyStartDate = () => {
+  const date = new Date();
+  date.setHours(20, 0, 0, 0);
+  return date;
+};
+
+const createDefaultLobbyEndDate = () => {
+  const date = createDefaultLobbyStartDate();
+  date.setHours(date.getHours() + 1);
+  return date;
+};
+
+const getDefaultEndDate = (startDate: Date) => {
+  const endDate = new Date(startDate);
+  endDate.setHours(endDate.getHours() + 1);
+  return endDate;
+};
+
+const formatCalendarDate = (date: Date) =>
+  date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+const formatEventTime = (date: Date) =>
+  date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+const formatEventRange = (startDate: Date, endDate: Date) => {
+  const dateLabel = formatCalendarDate(startDate);
+  const startLabel = formatEventTime(startDate);
+  const endLabel = formatEventTime(endDate);
+
+  return `${dateLabel}, ${startLabel} - ${endLabel}`;
+};
+
+const setDatePart = (currentDate: Date, nextDate: Date) => {
+  const updatedDate = new Date(currentDate);
+  updatedDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate());
+  return updatedDate;
+};
+
+const setTimePart = (currentDate: Date, nextHour: number, nextMinute: number) => {
+  const updatedDate = new Date(currentDate);
+  updatedDate.setHours(nextHour, nextMinute, 0, 0);
+  return updatedDate;
+};
+
+const createTimeDate = (hours: number, minutes: number) => {
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+};
+
+const parseDbTimeToDate = (timeValue: string, fallbackHours: number) => {
+  const [hoursValue, minutesValue] = timeValue.split(':');
+  const hours = Number(hoursValue);
+  const minutes = Number(minutesValue);
+
+  return createTimeDate(
+    Number.isNaN(hours) ? fallbackHours : hours,
+    Number.isNaN(minutes) ? 0 : minutes,
+  );
+};
+
+const formatDbTime = (date: Date) =>
+  `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:00`;
+
+const formatAvailabilityRange = (startTime: string, endTime: string) =>
+  `${formatEventTime(parseDbTimeToDate(startTime, 20))} - ${formatEventTime(parseDbTimeToDate(endTime, 21))}`;
+
+const getLobbyEndDate = (lobby: Pick<LobbyRecord, 'scheduled_for' | 'scheduled_until'>) => {
+  if (lobby.scheduled_until) {
+    const explicitEnd = new Date(lobby.scheduled_until);
+    if (!Number.isNaN(explicitEnd.getTime())) {
+      return explicitEnd;
+    }
+  }
+
+  if (lobby.scheduled_for) {
+    const startDate = new Date(lobby.scheduled_for);
+    if (!Number.isNaN(startDate.getTime())) {
+      return getDefaultEndDate(startDate);
+    }
+  }
+
+  return getDefaultEndDate(createDefaultLobbyStartDate());
 };
 
 function StatCard({
@@ -303,6 +410,171 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
       </Text>
       <Text style={styles.sectionSubtitle}>{subtitle}</Text>
     </View>
+  );
+}
+
+function EventTimePicker({
+  timeMode,
+  startAt,
+  endAt,
+  onSetNow,
+  onSetLater,
+  onStartAtChange,
+  onEndAtChange,
+}: {
+  timeMode: 'now' | 'later';
+  startAt: Date;
+  endAt: Date;
+  onSetNow: () => void;
+  onSetLater: () => void;
+  onStartAtChange: (date: Date) => void;
+  onEndAtChange: (date: Date) => void;
+}) {
+  const [timePickerTarget, setTimePickerTarget] = React.useState<'start' | 'end' | null>(null);
+  const activeTimeDate = timePickerTarget === 'end' ? endAt : startAt;
+
+  return (
+    <Surface style={styles.eventTimePanel} elevation={1}>
+      <View style={styles.eventTimeHeader}>
+        <View>
+          <Text variant="titleSmall" style={styles.eventTimeTitle}>
+            Event time
+          </Text>
+          <Text style={styles.friendNote}>Pick a controlled calendar time. Events default to one hour.</Text>
+        </View>
+        <Chip icon="clock-outline" style={styles.statusChip}>
+          {timeMode === 'now' ? 'Starts now' : formatEventRange(startAt, endAt)}
+        </Chip>
+      </View>
+      <View style={styles.quickPath}>
+        <Chip selected={timeMode === 'now'} onPress={onSetNow} testID="lobby-time-now-chip">
+          Start now
+        </Chip>
+        <Chip selected={timeMode === 'later'} onPress={onSetLater} testID="lobby-time-later-chip">
+          Schedule it
+        </Chip>
+      </View>
+      {timeMode === 'later' ? (
+        <View style={styles.pickerFieldGroup}>
+          <DatePickerInput
+            locale="en"
+            label="Event date"
+            value={startAt}
+            onChange={(nextDate) => {
+              if (nextDate) {
+                onStartAtChange(setDatePart(startAt, nextDate));
+                onEndAtChange(setDatePart(endAt, nextDate));
+              }
+            }}
+            inputMode="start"
+            mode="outlined"
+            withModal
+            style={styles.input}
+            testID="lobby-date-picker-input"
+          />
+          <Button
+            mode="outlined"
+            icon="clock-outline"
+            onPress={() => setTimePickerTarget('start')}
+            testID="lobby-start-time-picker-button">
+            Start: {formatEventTime(startAt)}
+          </Button>
+          <Button
+            mode="outlined"
+            icon="clock-end"
+            onPress={() => setTimePickerTarget('end')}
+            testID="lobby-end-time-picker-button">
+            End: {formatEventTime(endAt)}
+          </Button>
+          <TimePickerModal
+            visible={Boolean(timePickerTarget)}
+            onDismiss={() => setTimePickerTarget(null)}
+            onConfirm={({ hours, minutes }) => {
+              if (timePickerTarget === 'end') {
+                onEndAtChange(setTimePart(endAt, hours, minutes));
+              } else {
+                onStartAtChange(setTimePart(startAt, hours, minutes));
+              }
+
+              setTimePickerTarget(null);
+            }}
+            hours={activeTimeDate.getHours()}
+            minutes={activeTimeDate.getMinutes()}
+            label={timePickerTarget === 'end' ? 'Pick end time' : 'Pick start time'}
+            cancelLabel="Cancel"
+            confirmLabel="OK"
+            locale="en"
+            use24HourClock={false}
+          />
+          <View style={styles.pickerSummary}>
+            <Text variant="titleSmall" style={styles.eventTimeTitle}>
+              Selected event window
+            </Text>
+            <Text style={styles.friendNote}>{formatEventRange(startAt, endAt)}</Text>
+          </View>
+        </View>
+      ) : null}
+    </Surface>
+  );
+}
+
+function TimeRangePicker({
+  startAt,
+  endAt,
+  onStartAtChange,
+  onEndAtChange,
+  startTestID,
+  endTestID,
+}: {
+  startAt: Date;
+  endAt: Date;
+  onStartAtChange: (date: Date) => void;
+  onEndAtChange: (date: Date) => void;
+  startTestID: string;
+  endTestID: string;
+}) {
+  const [timePickerTarget, setTimePickerTarget] = React.useState<'start' | 'end' | null>(null);
+  const activeTimeDate = timePickerTarget === 'end' ? endAt : startAt;
+
+  return (
+    <>
+      <View style={styles.timeRangeButtons}>
+        <Button
+          mode="outlined"
+          icon="clock-outline"
+          onPress={() => setTimePickerTarget('start')}
+          testID={startTestID}>
+          Start: {formatEventTime(startAt)}
+        </Button>
+        <Button
+          mode="outlined"
+          icon="clock-end"
+          onPress={() => setTimePickerTarget('end')}
+          testID={endTestID}>
+          End: {formatEventTime(endAt)}
+        </Button>
+      </View>
+      <TimePickerModal
+        visible={Boolean(timePickerTarget)}
+        onDismiss={() => setTimePickerTarget(null)}
+        onConfirm={({ hours, minutes }) => {
+          if (timePickerTarget === 'end') {
+            onEndAtChange(setTimePart(endAt, hours, minutes));
+          } else {
+            onStartAtChange(setTimePart(startAt, hours, minutes));
+          }
+
+          setTimePickerTarget(null);
+        }}
+        hours={activeTimeDate.getHours()}
+        minutes={activeTimeDate.getMinutes()}
+        label={timePickerTarget === 'end' ? 'Pick end time' : 'Pick start time'}
+        cancelLabel="Cancel"
+        confirmLabel="OK"
+        locale="en"
+        use24HourClock={false}
+      />
+    </>
   );
 }
 
@@ -364,12 +636,23 @@ export default function HomeScreen() {
   const [availabilityBusy, setAvailabilityBusy] = React.useState(false);
   const [availabilityError, setAvailabilityError] = React.useState('');
   const [availabilityMessage, setAvailabilityMessage] = React.useState('');
-  const [availabilitySelection, setAvailabilitySelection] =
-    React.useState<Record<string, string[]>>(createDefaultAvailabilitySelection());
+  const [availabilityWindows, setAvailabilityWindows] = React.useState<AvailabilityWindow[]>([]);
   const [autoDeclineOutsideHours, setAutoDeclineOutsideHours] = React.useState(false);
+  const [availabilityDraft, setAvailabilityDraft] = React.useState({
+    dayKey: 'Mon',
+    startsAt: createTimeDate(20, 0).toISOString(),
+    endsAt: createTimeDate(22, 0).toISOString(),
+  });
+  const [editingLobbyId, setEditingLobbyId] = React.useState<string | null>(null);
+  const [rescheduleDraft, setRescheduleDraft] = React.useState({
+    startAt: createDefaultLobbyStartDate().toISOString(),
+    endAt: createDefaultLobbyEndDate().toISOString(),
+  });
   const [lobbyForm, setLobbyForm] = React.useState({
     title: '',
-    timeMode: 'now' as 'now' | 'later',
+    timeMode: 'later' as 'now' | 'later',
+    startAt: createDefaultLobbyStartDate().toISOString(),
+    endAt: createDefaultLobbyEndDate().toISOString(),
     scheduledFor: '',
     visibility: 'private' as 'private' | 'public',
   });
@@ -399,6 +682,7 @@ export default function HomeScreen() {
         setAuthError(error.message);
       } else {
         setSession(currentSession);
+        clearOAuthHashFromUrl();
       }
 
       setAuthLoading(false);
@@ -410,6 +694,7 @@ export default function HomeScreen() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
+      clearOAuthHashFromUrl();
       setAuthLoading(false);
     });
 
@@ -729,7 +1014,7 @@ export default function HomeScreen() {
       const { data, error } = await supabase
         .from('lobbies')
         .select(
-          'id, title, scheduled_for, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
+          'id, title, scheduled_for, scheduled_until, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
         )
         .order('created_at', { ascending: false });
 
@@ -756,7 +1041,7 @@ export default function HomeScreen() {
 
   React.useEffect(() => {
     if (!session?.user) {
-      setAvailabilitySelection(createDefaultAvailabilitySelection());
+      setAvailabilityWindows([]);
       setAutoDeclineOutsideHours(false);
       setAvailabilityLoading(false);
       return;
@@ -766,7 +1051,7 @@ export default function HomeScreen() {
       setAvailabilityLoading(true);
       setAvailabilityError('');
 
-      const [{ data: settings, error: settingsError }, { data: slots, error: slotsError }] =
+      const [{ data: settings, error: settingsError }, { data: windows, error: windowsError }] =
         await Promise.all([
           supabase
             .from('availability_settings')
@@ -774,31 +1059,20 @@ export default function HomeScreen() {
             .eq('profile_id', session.user.id)
             .maybeSingle(),
           supabase
-            .from('availability_slots')
-            .select('profile_id, day_key, slot_label')
-            .eq('profile_id', session.user.id),
+            .from('availability_windows')
+            .select('id, profile_id, day_key, starts_at, ends_at, created_at')
+            .eq('profile_id', session.user.id)
+            .order('day_key', { ascending: true })
+            .order('starts_at', { ascending: true }),
         ]);
 
-      if (settingsError || slotsError) {
-        setAvailabilityError(settingsError?.message ?? slotsError?.message ?? 'Unable to load availability.');
+      if (settingsError || windowsError) {
+        setAvailabilityError(settingsError?.message ?? windowsError?.message ?? 'Unable to load availability.');
         setAvailabilityLoading(false);
         return;
       }
 
-      const selection = (slots as AvailabilitySlot[] | null)?.reduce<Record<string, string[]>>(
-        (accumulator, slot) => {
-          const current = accumulator[slot.day_key] ?? [];
-          accumulator[slot.day_key] = [...current, slot.slot_label];
-          return accumulator;
-        },
-        {},
-      );
-
-      const hasSavedAvailability = Boolean((slots as AvailabilitySlot[] | null)?.length);
-
-      setAvailabilitySelection(
-        hasSavedAvailability ? selection ?? {} : createDefaultAvailabilitySelection(),
-      );
+      setAvailabilityWindows((windows as AvailabilityWindow[] | null) ?? []);
       setAutoDeclineOutsideHours((settings as AvailabilitySetting | null)?.auto_decline_outside_hours ?? false);
       setAvailabilityLoading(false);
     };
@@ -902,33 +1176,30 @@ export default function HomeScreen() {
       .map((friend) => ({ name: friend.name }));
   }, [acceptedFriends]);
 
-  const selectedAvailabilityCount = React.useMemo(() => {
-    return Object.values(availabilitySelection).reduce((total, slots) => total + slots.length, 0);
-  }, [availabilitySelection]);
-
-  const scheduleCards = React.useMemo(() => {
-    if (lobbies.length === 0) {
-      return fallbackUpcomingLobbies;
-    }
-
-    return lobbies.slice(0, 4).map((lobby) => ({
-      title: lobby.title,
-      time: lobby.scheduled_for
-        ? new Date(lobby.scheduled_for).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          })
-        : 'Starts now',
-      attendees:
-        typeof lobby.invite_count === 'number'
-          ? `${lobby.invite_count + 1} players in draft`
-          : lobby.is_private
-            ? 'Private lobby'
-            : 'Public lobby',
-    }));
-  }, [lobbies]);
+  const availabilityDraftStartAt = React.useMemo(() => {
+    const parsedDate = new Date(availabilityDraft.startsAt);
+    return Number.isNaN(parsedDate.getTime()) ? createTimeDate(20, 0) : parsedDate;
+  }, [availabilityDraft.startsAt]);
+  const availabilityDraftEndAt = React.useMemo(() => {
+    const parsedDate = new Date(availabilityDraft.endsAt);
+    return Number.isNaN(parsedDate.getTime()) ? createTimeDate(22, 0) : parsedDate;
+  }, [availabilityDraft.endsAt]);
+  const selectedLobbyStartAt = React.useMemo(() => {
+    const parsedDate = new Date(lobbyForm.startAt);
+    return Number.isNaN(parsedDate.getTime()) ? createDefaultLobbyStartDate() : parsedDate;
+  }, [lobbyForm.startAt]);
+  const selectedLobbyEndAt = React.useMemo(() => {
+    const parsedDate = new Date(lobbyForm.endAt);
+    return Number.isNaN(parsedDate.getTime()) ? getDefaultEndDate(selectedLobbyStartAt) : parsedDate;
+  }, [lobbyForm.endAt, selectedLobbyStartAt]);
+  const rescheduleStartAt = React.useMemo(() => {
+    const parsedDate = new Date(rescheduleDraft.startAt);
+    return Number.isNaN(parsedDate.getTime()) ? createDefaultLobbyStartDate() : parsedDate;
+  }, [rescheduleDraft.startAt]);
+  const rescheduleEndAt = React.useMemo(() => {
+    const parsedDate = new Date(rescheduleDraft.endAt);
+    return Number.isNaN(parsedDate.getTime()) ? getDefaultEndDate(rescheduleStartAt) : parsedDate;
+  }, [rescheduleDraft.endAt, rescheduleStartAt]);
 
   const prepareLobbyDraft = React.useCallback(
     (gameId: string) => {
@@ -958,19 +1229,30 @@ export default function HomeScreen() {
 
     const title = lobbyForm.title.trim() || `${selectedLobbyGame.title} Lobby`;
     let scheduledFor: string | null = null;
+    let scheduledUntil: string | null = null;
 
     if (lobbyForm.timeMode === 'later') {
-      const parsedDate = new Date(lobbyForm.scheduledFor);
+      const parsedDate = new Date(lobbyForm.startAt);
+      const parsedEndDate = new Date(lobbyForm.endAt);
 
-      if (!lobbyForm.scheduledFor.trim() || Number.isNaN(parsedDate.getTime())) {
-        setLobbiesError('Enter a valid date and time for later.');
+      if (Number.isNaN(parsedDate.getTime()) || Number.isNaN(parsedEndDate.getTime())) {
+        setLobbiesError('Pick a valid event date and time.');
+        setLobbyMessage('');
+        return;
+      }
+
+      if (parsedEndDate <= parsedDate) {
+        setLobbiesError('Pick an end time after the start time.');
         setLobbyMessage('');
         return;
       }
 
       scheduledFor = parsedDate.toISOString();
+      scheduledUntil = parsedEndDate.toISOString();
     } else {
-      scheduledFor = new Date().toISOString();
+      const now = new Date();
+      scheduledFor = now.toISOString();
+      scheduledUntil = getDefaultEndDate(now).toISOString();
     }
 
     setLobbyBusy(true);
@@ -984,11 +1266,12 @@ export default function HomeScreen() {
         host_profile_id: session.user.id,
         title,
         scheduled_for: scheduledFor,
+        scheduled_until: scheduledUntil,
         is_private: lobbyForm.visibility === 'private',
         status: 'scheduled',
       })
       .select(
-        'id, title, scheduled_for, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
+        'id, title, scheduled_for, scheduled_until, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
       )
       .single();
 
@@ -1030,7 +1313,9 @@ export default function HomeScreen() {
     );
     setLobbyForm({
       title: `${selectedLobbyGame.title} Lobby`,
-      timeMode: 'now',
+      timeMode: 'later',
+      startAt: createDefaultLobbyStartDate().toISOString(),
+      endAt: createDefaultLobbyEndDate().toISOString(),
       scheduledFor: '',
       visibility: 'private',
     });
@@ -1038,38 +1323,20 @@ export default function HomeScreen() {
     setLobbyBusy(false);
   };
 
-  const toggleAvailabilitySlot = (dayKey: string, slotLabel: string) => {
-    setAvailabilitySelection((current) => {
-      const currentSlots = current[dayKey] ?? [];
-      const nextSlots = currentSlots.includes(slotLabel)
-        ? currentSlots.filter((slot) => slot !== slotLabel)
-        : [...currentSlots, slotLabel];
-
-      return {
-        ...current,
-        [dayKey]: nextSlots,
-      };
-    });
-    setAvailabilityMessage('');
-    setAvailabilityError('');
-  };
-
-  const handleSaveAvailability = async () => {
+  const handleAddAvailabilityWindow = async () => {
     if (!session?.user) {
+      return;
+    }
+
+    if (availabilityDraftEndAt <= availabilityDraftStartAt) {
+      setAvailabilityError('Pick an availability end time after the start time.');
+      setAvailabilityMessage('');
       return;
     }
 
     setAvailabilityBusy(true);
     setAvailabilityError('');
     setAvailabilityMessage('');
-
-    const slotRows = Object.entries(availabilitySelection).flatMap(([dayKey, slots]) =>
-      slots.map((slotLabel) => ({
-        profile_id: session.user.id,
-        day_key: dayKey,
-        slot_label: slotLabel,
-      })),
-    );
 
     const { error: settingsError } = await supabase.from('availability_settings').upsert({
       profile_id: session.user.id,
@@ -1083,29 +1350,161 @@ export default function HomeScreen() {
       return;
     }
 
-    const { error: deleteError } = await supabase
-      .from('availability_slots')
-      .delete()
-      .eq('profile_id', session.user.id);
+    const nextWindow = {
+      profile_id: session.user.id,
+      day_key: availabilityDraft.dayKey,
+      starts_at: formatDbTime(availabilityDraftStartAt),
+      ends_at: formatDbTime(availabilityDraftEndAt),
+    };
 
-    if (deleteError) {
-      setAvailabilityError(deleteError.message);
+    const { data, error: insertError } = await supabase
+      .from('availability_windows')
+      .insert(nextWindow)
+      .select('id, profile_id, day_key, starts_at, ends_at, created_at')
+      .single();
+
+    if (insertError) {
+      setAvailabilityError(insertError.message);
       setAvailabilityBusy(false);
       return;
     }
 
-    if (slotRows.length > 0) {
-      const { error: insertError } = await supabase.from('availability_slots').insert(slotRows);
+    setAvailabilityWindows((current) => [...current, (data as AvailabilityWindow | null) ?? nextWindow]);
+    setAvailabilityMessage('Availability window added.');
+    setAvailabilityBusy(false);
+  };
 
-      if (insertError) {
-        setAvailabilityError(insertError.message);
-        setAvailabilityBusy(false);
-        return;
-      }
+  const handleDeleteAvailabilityWindow = async (window: AvailabilityWindow) => {
+    if (!session?.user) {
+      return;
     }
 
-    setAvailabilityMessage('Availability saved.');
+    setAvailabilityBusy(true);
+    setAvailabilityError('');
+    setAvailabilityMessage('');
+
+    const deleteQuery = supabase
+      .from('availability_windows')
+      .delete()
+      .eq('profile_id', session.user.id)
+      .eq('day_key', window.day_key)
+      .eq('starts_at', window.starts_at)
+      .eq('ends_at', window.ends_at);
+
+    const { error } = window.id ? await deleteQuery.eq('id', window.id) : await deleteQuery;
+
+    if (error) {
+      setAvailabilityError(error.message);
+    } else {
+      setAvailabilityWindows((current) =>
+        current.filter((item) =>
+          window.id
+            ? item.id !== window.id
+            : !(
+                item.day_key === window.day_key &&
+                item.starts_at === window.starts_at &&
+                item.ends_at === window.ends_at
+              ),
+        ),
+      );
+      setAvailabilityMessage('Availability window removed.');
+    }
+
     setAvailabilityBusy(false);
+  };
+
+  const handleSaveAvailabilitySettings = async () => {
+    if (!session?.user) {
+      return;
+    }
+
+    setAvailabilityBusy(true);
+    setAvailabilityError('');
+    setAvailabilityMessage('');
+
+    const { error } = await supabase.from('availability_settings').upsert({
+      profile_id: session.user.id,
+      auto_decline_outside_hours: autoDeclineOutsideHours,
+      updated_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      setAvailabilityError(error.message);
+    } else {
+      setAvailabilityMessage('Availability settings saved.');
+    }
+
+    setAvailabilityBusy(false);
+  };
+
+  const startLobbyReschedule = (lobby: LobbyRecord) => {
+    const startDate = lobby.scheduled_for ? new Date(lobby.scheduled_for) : createDefaultLobbyStartDate();
+    const safeStartDate = Number.isNaN(startDate.getTime()) ? createDefaultLobbyStartDate() : startDate;
+    const endDate = getLobbyEndDate({
+      scheduled_for: safeStartDate.toISOString(),
+      scheduled_until: lobby.scheduled_until,
+    });
+
+    setEditingLobbyId(lobby.id);
+    setRescheduleDraft({
+      startAt: safeStartDate.toISOString(),
+      endAt: endDate.toISOString(),
+    });
+    setLobbiesError('');
+    setLobbyMessage('');
+    setSection('schedule');
+  };
+
+  const handleSaveLobbyTime = async (lobby: LobbyRecord) => {
+    if (!session?.user) {
+      return;
+    }
+
+    if (rescheduleEndAt <= rescheduleStartAt) {
+      setLobbiesError('Pick an end time after the start time.');
+      setLobbyMessage('');
+      return;
+    }
+
+    setLobbyBusy(true);
+    setLobbiesError('');
+    setLobbyMessage('');
+
+    const { data, error } = await supabase
+      .from('lobbies')
+      .update({
+        scheduled_for: rescheduleStartAt.toISOString(),
+        scheduled_until: rescheduleEndAt.toISOString(),
+      })
+      .eq('id', lobby.id)
+      .select(
+        'id, title, scheduled_for, scheduled_until, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
+      )
+      .single();
+
+    if (error) {
+      setLobbiesError(error.message);
+      setLobbyBusy(false);
+      return;
+    }
+
+    const normalizedLobby: LobbyRecord = {
+      ...(data as Omit<LobbyRecord, 'games'> & {
+        games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
+      }),
+      games: unwrapRelation(
+        (data as {
+          games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
+        }).games,
+      ),
+    };
+
+    setLobbies((current) =>
+      current.map((item) => (item.id === lobby.id ? { ...normalizedLobby, invite_count: item.invite_count } : item)),
+    );
+    setEditingLobbyId(null);
+    setLobbyMessage('Lobby time updated.');
+    setLobbyBusy(false);
   };
 
   const getFriendRequestLabel = (request: FriendRequestRecord) => {
@@ -1669,51 +2068,141 @@ export default function HomeScreen() {
   const renderLobbies = () => (
     <>
       <SectionTitle
-        title="Lobbies"
-        subtitle="Create and track real hosted lobbies from your Supabase data."
+        title="Schedule a game night"
+        subtitle="Simple flow: choose a game, pick the event time, then invite your squad."
       />
       <Card style={styles.panel}>
         <Card.Content>
-          <Text variant="titleMedium">Create lobby</Text>
+          <Text variant="titleMedium">Create event</Text>
           <Text style={styles.friendNote}>
-            Start with one hosted lobby, then we can layer invites and attendance on top.
+            This is the scheduling path we want users to feel immediately: game first, time second,
+            people third.
           </Text>
-          <View style={styles.quickPath}>
-            {libraryGames.slice(0, 6).map((game) => (
-              <Chip
-                key={game.id}
-                selected={selectedLobbyGameId === game.id}
-                onPress={() => prepareLobbyDraft(game.id)}>
-                {game.title}
-              </Chip>
-            ))}
+          <View style={styles.schedulerStep}>
+            <View style={styles.schedulerStepHeader}>
+              <Text style={styles.stepBadge}>1</Text>
+              <View style={styles.friendMeta}>
+                <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                  Select a game
+                </Text>
+                <Text style={styles.friendNote}>Choose from the library or start from a game card.</Text>
+              </View>
+            </View>
+            <View style={styles.gamePickGrid}>
+              {libraryGames.slice(0, 6).map((game) => (
+                <Surface
+                  key={game.id}
+                  style={[
+                    styles.gamePickCard,
+                    selectedLobbyGameId === game.id ? styles.gamePickCardSelected : null,
+                  ]}
+                  elevation={selectedLobbyGameId === game.id ? 2 : 0}>
+                  <Text variant="titleSmall" style={styles.gamePickTitle}>
+                    {game.title}
+                  </Text>
+                  <Text style={styles.friendNote}>
+                    {game.genre} - {game.player_count}
+                  </Text>
+                  <Button
+                    mode={selectedLobbyGameId === game.id ? 'contained' : 'outlined'}
+                    compact
+                    onPress={() => {
+                      setSelectedLobbyGameId(game.id);
+                      setLobbyForm((current) => ({
+                        ...current,
+                        title: `${game.title} Lobby`,
+                      }));
+                      setLobbyMessage('');
+                    }}
+                    testID={`lobby-game-${game.id}`}>
+                    {selectedLobbyGameId === game.id ? 'Selected' : 'Pick game'}
+                  </Button>
+                </Surface>
+              ))}
+            </View>
           </View>
-          <Text variant="titleSmall" style={styles.subsectionTitle}>
-            Invite draft
-          </Text>
-          <Text style={styles.friendNote}>
-            These picks stay local for now. We will persist real invitees once the friends graph is in Supabase.
-          </Text>
-          <View style={styles.quickPath}>
-            {inviteReadyFriends.map((friend) => (
-              <Chip
-                key={friend.name}
-                selected={selectedLobbyInviteNames.includes(friend.name)}
-                onPress={() =>
-                  setSelectedLobbyInviteNames((current) =>
-                    current.includes(friend.name)
-                      ? current.filter((name) => name !== friend.name)
-                      : [...current, friend.name],
-                  )
-                }
-                testID={`lobby-invite-chip-${friend.name.toLowerCase()}`}>
-                {friend.name}
-              </Chip>
-            ))}
+          <View style={styles.schedulerStep}>
+            <View style={styles.schedulerStepHeader}>
+              <Text style={styles.stepBadge}>2</Text>
+              <View style={styles.friendMeta}>
+                <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                  Pick the time
+                </Text>
+                <Text style={styles.friendNote}>No raw date strings. Tap the day and time block.</Text>
+              </View>
+            </View>
+            <EventTimePicker
+              timeMode={lobbyForm.timeMode}
+              startAt={selectedLobbyStartAt}
+              endAt={selectedLobbyEndAt}
+              onSetNow={() =>
+                setLobbyForm((current) => ({
+                  ...current,
+                  timeMode: 'now',
+                }))
+              }
+              onSetLater={() =>
+                setLobbyForm((current) => ({
+                  ...current,
+                  timeMode: 'later',
+                }))
+              }
+              onStartAtChange={(startAt) => {
+                const currentDurationMs = Math.max(
+                  selectedLobbyEndAt.getTime() - selectedLobbyStartAt.getTime(),
+                  60 * 60 * 1000,
+                );
+                const nextEndAt = new Date(startAt.getTime() + currentDurationMs);
+
+                setLobbyForm((current) => ({
+                  ...current,
+                  startAt: startAt.toISOString(),
+                  endAt: nextEndAt.toISOString(),
+                  timeMode: 'later',
+                }));
+              }}
+              onEndAtChange={(endAt) =>
+                setLobbyForm((current) => ({
+                  ...current,
+                  endAt: endAt.toISOString(),
+                  timeMode: 'later',
+                }))
+              }
+            />
+          </View>
+          <View style={styles.schedulerStep}>
+            <View style={styles.schedulerStepHeader}>
+              <Text style={styles.stepBadge}>3</Text>
+              <View style={styles.friendMeta}>
+                <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                  Invite people
+                </Text>
+                <Text style={styles.friendNote}>
+                  Pick friends for the invite draft. Persisted invite rows come next.
+                </Text>
+              </View>
+            </View>
+            <View style={styles.quickPath}>
+              {inviteReadyFriends.map((friend) => (
+                <Chip
+                  key={friend.name}
+                  selected={selectedLobbyInviteNames.includes(friend.name)}
+                  onPress={() =>
+                    setSelectedLobbyInviteNames((current) =>
+                      current.includes(friend.name)
+                        ? current.filter((name) => name !== friend.name)
+                        : [...current, friend.name],
+                    )
+                  }
+                  testID={`lobby-invite-chip-${friend.name.toLowerCase()}`}>
+                  {friend.name}
+                </Chip>
+              ))}
+            </View>
           </View>
           <TextInput
             mode="outlined"
-            label="Lobby title"
+            label="Event title"
             value={lobbyForm.title}
             onChangeText={(value) =>
               setLobbyForm((current) => ({
@@ -1724,36 +2213,6 @@ export default function HomeScreen() {
             style={styles.input}
             testID="lobby-title-input"
           />
-          <SegmentedButtons
-            value={lobbyForm.timeMode}
-            onValueChange={(value) =>
-              setLobbyForm((current) => ({
-                ...current,
-                timeMode: value as 'now' | 'later',
-              }))
-            }
-            style={styles.segmented}
-            buttons={[
-              { value: 'now', label: 'Now' },
-              { value: 'later', label: 'Later' },
-            ]}
-          />
-          {lobbyForm.timeMode === 'later' ? (
-            <TextInput
-              mode="outlined"
-              label="Scheduled for"
-              placeholder="2026-04-08 20:30"
-              value={lobbyForm.scheduledFor}
-              onChangeText={(value) =>
-                setLobbyForm((current) => ({
-                  ...current,
-                  scheduledFor: value,
-                }))
-              }
-              style={styles.input}
-              testID="lobby-scheduled-for-input"
-            />
-          ) : null}
           <SegmentedButtons
             value={lobbyForm.visibility}
             onValueChange={(value) =>
@@ -1771,6 +2230,11 @@ export default function HomeScreen() {
           <View style={styles.quickPath}>
             <Chip icon="controller">
               {selectedLobbyGame ? selectedLobbyGame.title : 'Pick a game'}
+            </Chip>
+            <Chip icon="clock-outline">
+              {lobbyForm.timeMode === 'now'
+                ? 'Starts now'
+                : formatEventRange(selectedLobbyStartAt, selectedLobbyEndAt)}
             </Chip>
             <Chip icon="account">
               Host: {profile?.display_name ?? profile?.username ?? 'You'}
@@ -1819,12 +2283,7 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.friendNote}>
               {lobby.scheduled_for
-                ? new Date(lobby.scheduled_for).toLocaleString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })
+                ? formatEventRange(new Date(lobby.scheduled_for), getLobbyEndDate(lobby))
                 : 'Starts now'}
             </Text>
             {typeof lobby.invite_count === 'number' && lobby.invite_count > 0 ? (
@@ -1833,7 +2292,7 @@ export default function HomeScreen() {
               </Text>
             ) : null}
             <View style={styles.cardActions}>
-              <Button mode="contained-tonal" onPress={() => setSection('schedule')}>
+              <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
                 Reschedule
               </Button>
               <Button mode="text" onPress={() => setSection('inbox')}>
@@ -1858,13 +2317,114 @@ export default function HomeScreen() {
     <>
       <SectionTitle
         title="Scheduling"
-        subtitle="Save your weekly availability and keep upcoming lobby timing visible."
+        subtitle="Reschedule game nights and manage recurring weekly availability windows."
       />
+      <Card style={styles.panel}>
+        <Card.Content>
+          <Text variant="titleMedium">Upcoming games</Text>
+          <Text style={styles.friendNote}>
+            Edit the start and end time for scheduled lobbies without rebuilding the event.
+          </Text>
+          {lobbies.length === 0 ? (
+            <Text style={styles.friendNote}>No scheduled lobbies yet. Create one from the Lobbies tab.</Text>
+          ) : null}
+          {lobbies.map((lobby) => {
+            const startDate = lobby.scheduled_for ? new Date(lobby.scheduled_for) : createDefaultLobbyStartDate();
+            const safeStartDate = Number.isNaN(startDate.getTime()) ? createDefaultLobbyStartDate() : startDate;
+            const endDate = getLobbyEndDate(lobby);
+            const isEditing = editingLobbyId === lobby.id;
+
+            return (
+              <Surface key={`${lobby.id}-schedule`} style={styles.scheduleEventCard} elevation={1}>
+                <View style={styles.eventTimeHeader}>
+                  <View style={styles.friendMeta}>
+                    <Text variant="titleMedium">{lobby.title}</Text>
+                    <Text style={styles.friendNote}>
+                      {lobby.games?.title ?? 'Game unavailable'} | {formatEventRange(safeStartDate, endDate)}
+                    </Text>
+                  </View>
+                  <Button
+                    mode={isEditing ? 'text' : 'contained-tonal'}
+                    compact
+                    onPress={() => (isEditing ? setEditingLobbyId(null) : startLobbyReschedule(lobby))}
+                    testID={`schedule-edit-lobby-${lobby.id}`}>
+                    {isEditing ? 'Cancel' : 'Edit time'}
+                  </Button>
+                </View>
+                {isEditing ? (
+                  <View style={styles.pickerFieldGroup}>
+                    <DatePickerInput
+                      locale="en"
+                      label="Event date"
+                      value={rescheduleStartAt}
+                      onChange={(nextDate) => {
+                        if (nextDate) {
+                          setRescheduleDraft((current) => ({
+                            startAt: setDatePart(rescheduleStartAt, nextDate).toISOString(),
+                            endAt: setDatePart(rescheduleEndAt, nextDate).toISOString(),
+                          }));
+                        }
+                      }}
+                      inputMode="start"
+                      mode="outlined"
+                      withModal
+                      style={styles.input}
+                      testID={`schedule-lobby-date-${lobby.id}`}
+                    />
+                    <TimeRangePicker
+                      startAt={rescheduleStartAt}
+                      endAt={rescheduleEndAt}
+                      onStartAtChange={(startAt) => {
+                        const currentDurationMs = Math.max(
+                          rescheduleEndAt.getTime() - rescheduleStartAt.getTime(),
+                          60 * 60 * 1000,
+                        );
+                        const nextEndAt = new Date(startAt.getTime() + currentDurationMs);
+
+                        setRescheduleDraft({
+                          startAt: startAt.toISOString(),
+                          endAt: nextEndAt.toISOString(),
+                        });
+                      }}
+                      onEndAtChange={(endAt) =>
+                        setRescheduleDraft((current) => ({
+                          ...current,
+                          endAt: endAt.toISOString(),
+                        }))
+                      }
+                      startTestID={`schedule-lobby-start-${lobby.id}`}
+                      endTestID={`schedule-lobby-end-${lobby.id}`}
+                    />
+                    <Button
+                      mode="contained"
+                      onPress={() => handleSaveLobbyTime(lobby)}
+                      loading={lobbyBusy}
+                      disabled={lobbyBusy}
+                      testID={`schedule-save-lobby-${lobby.id}`}>
+                      Save time
+                    </Button>
+                  </View>
+                ) : null}
+              </Surface>
+            );
+          })}
+          {lobbiesError ? (
+            <HelperText type="error" visible>
+              {lobbiesError}
+            </HelperText>
+          ) : null}
+          {lobbyMessage ? (
+            <HelperText type="info" visible style={styles.successText}>
+              {lobbyMessage}
+            </HelperText>
+          ) : null}
+        </Card.Content>
+      </Card>
       <Card style={styles.panel}>
         <Card.Content>
           <Text variant="titleMedium">Weekly availability</Text>
           <Text style={styles.friendNote}>
-            Select the slots when you usually want game invites. We persist this to Supabase now.
+            Add recurring windows when friends are allowed to send game invites.
           </Text>
           <SegmentedButtons
             value={autoDeclineOutsideHours ? 'on' : 'off'}
@@ -1875,44 +2435,57 @@ export default function HomeScreen() {
               { value: 'on', label: 'Auto-decline outside hours' },
             ]}
           />
-          <View style={styles.quickPath}>
-            <Chip icon="calendar-clock" testID="availability-count-chip">
-              {selectedAvailabilityCount} saved slot{selectedAvailabilityCount === 1 ? '' : 's'}
-            </Chip>
-            {availabilityLoading ? <Chip icon="loading">Loading</Chip> : null}
+          <View style={styles.dayPicker}>
+            {availabilityDays.map((day) => (
+              <Chip
+                key={day}
+                selected={availabilityDraft.dayKey === day}
+                onPress={() =>
+                  setAvailabilityDraft((current) => ({
+                    ...current,
+                    dayKey: day,
+                  }))
+                }
+                style={availabilityDraft.dayKey === day ? styles.selectedDayChip : styles.dayChip}
+                testID={`availability-day-${day.toLowerCase()}`}>
+                {day}
+              </Chip>
+            ))}
           </View>
-          <View style={styles.scheduleLegend}>
-            <Chip compact icon="check-circle" style={styles.availableLegendChip} textStyle={styles.availableLegendText}>
-              Available
-            </Chip>
-            <Chip compact icon="close-circle" style={styles.unavailableLegendChip} textStyle={styles.unavailableLegendText}>
-              Not available
-            </Chip>
-          </View>
-          {availabilityGrid.map((row) => (
-            <View key={row.day} style={styles.availabilityRow}>
-              <Text style={styles.availabilityDay}>{row.day}</Text>
-              <View style={styles.slotRow}>
-                {row.slots.map((slot) => {
-                  const isSelected = (availabilitySelection[row.day] ?? []).includes(slot);
+          <TimeRangePicker
+            startAt={availabilityDraftStartAt}
+            endAt={availabilityDraftEndAt}
+            onStartAtChange={(startsAt) => {
+              const currentDurationMs = Math.max(
+                availabilityDraftEndAt.getTime() - availabilityDraftStartAt.getTime(),
+                60 * 60 * 1000,
+              );
+              const nextEndAt = new Date(startsAt.getTime() + currentDurationMs);
 
-                  return (
-                    <Chip
-                      key={slot}
-                      compact
-                      selected={isSelected}
-                      icon={isSelected ? 'check-circle' : 'close-circle'}
-                      style={isSelected ? styles.availableSlotChip : styles.unavailableSlotChip}
-                      textStyle={isSelected ? styles.availableSlotText : styles.unavailableSlotText}
-                      onPress={() => toggleAvailabilitySlot(row.day, slot)}
-                      testID={`availability-slot-${row.day.toLowerCase()}-${slot.toLowerCase().replace(/\s+/g, '-')}`}>
-                      {slot}
-                    </Chip>
-                  );
-                })}
-              </View>
-            </View>
-          ))}
+              setAvailabilityDraft((current) => ({
+                ...current,
+                startsAt: startsAt.toISOString(),
+                endsAt: nextEndAt.toISOString(),
+              }));
+            }}
+            onEndAtChange={(endsAt) =>
+              setAvailabilityDraft((current) => ({
+                ...current,
+                endsAt: endsAt.toISOString(),
+              }))
+            }
+            startTestID="availability-start-time-button"
+            endTestID="availability-end-time-button"
+          />
+          <View style={styles.pickerSummary}>
+            <Text variant="titleSmall" style={styles.eventTimeTitle}>
+              New weekly window
+            </Text>
+            <Text style={styles.friendNote}>
+              {availabilityDraft.dayKey}, {formatEventTime(availabilityDraftStartAt)} -{' '}
+              {formatEventTime(availabilityDraftEndAt)}
+            </Text>
+          </View>
           {availabilityError ? (
             <HelperText type="error" visible>
               {availabilityError}
@@ -1923,27 +2496,57 @@ export default function HomeScreen() {
               {availabilityMessage}
             </HelperText>
           ) : null}
-          <Button
-            mode="contained"
-            onPress={handleSaveAvailability}
-            loading={availabilityBusy}
-            disabled={availabilityBusy}
-            style={styles.loginButton}
-            testID="save-availability-button">
-            Save availability
-          </Button>
+          <View style={styles.cardActions}>
+            <Button
+              mode="contained"
+              onPress={handleAddAvailabilityWindow}
+              loading={availabilityBusy}
+              disabled={availabilityBusy}
+              testID="add-availability-window-button">
+              Add availability
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={handleSaveAvailabilitySettings}
+              loading={availabilityBusy}
+              disabled={availabilityBusy}
+              testID="save-availability-settings-button">
+              Save settings
+            </Button>
+          </View>
+          <Divider style={styles.divider} />
+          <Text variant="titleSmall" style={styles.eventTimeTitle}>
+            Saved windows
+          </Text>
+          {availabilityLoading ? <Text style={styles.friendNote}>Loading availability...</Text> : null}
+          {!availabilityLoading && availabilityWindows.length === 0 ? (
+            <Text style={styles.friendNote}>No availability windows yet.</Text>
+          ) : null}
+          {availabilityWindows.map((window, index) => (
+            <Surface
+              key={window.id ?? `${window.day_key}-${window.starts_at}-${window.ends_at}-${index}`}
+              style={styles.availabilityWindowCard}
+              elevation={1}>
+              <View style={styles.eventTimeHeader}>
+                <View>
+                  <Text variant="titleSmall">{window.day_key}</Text>
+                  <Text style={styles.friendNote}>
+                    {formatAvailabilityRange(window.starts_at, window.ends_at)}
+                  </Text>
+                </View>
+                <Button
+                  mode="text"
+                  compact
+                  onPress={() => handleDeleteAvailabilityWindow(window)}
+                  disabled={availabilityBusy}
+                  testID={`delete-availability-window-${index}`}>
+                  Delete
+                </Button>
+              </View>
+            </Surface>
+          ))}
         </Card.Content>
       </Card>
-      {scheduleCards.map((lobby) => (
-        <Card key={`${lobby.title}-countdown`} style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">{lobby.title}</Text>
-            <Chip icon="timer-sand" style={styles.countdownChip}>
-              Starts in 2h
-            </Chip>
-          </Card.Content>
-        </Card>
-      ))}
     </>
   );
 
@@ -3045,6 +3648,54 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 14,
   },
+  schedulerStep: {
+    backgroundColor: '#10162A',
+    borderColor: '#28335F',
+    borderRadius: 22,
+    borderWidth: 1,
+    gap: 12,
+    marginTop: 14,
+    padding: 14,
+  },
+  schedulerStepHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  stepBadge: {
+    backgroundColor: '#7DFFB3',
+    borderRadius: 999,
+    color: '#07140F',
+    fontSize: 16,
+    fontWeight: '900',
+    height: 34,
+    lineHeight: 34,
+    textAlign: 'center',
+    width: 34,
+  },
+  gamePickGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  gamePickCard: {
+    backgroundColor: '#171D35',
+    borderColor: '#2C3560',
+    borderRadius: 18,
+    borderWidth: 1,
+    flexGrow: 1,
+    gap: 8,
+    minWidth: 150,
+    padding: 12,
+  },
+  gamePickCardSelected: {
+    backgroundColor: '#1E3143',
+    borderColor: '#7DFFB3',
+  },
+  gamePickTitle: {
+    color: '#F5F7FF',
+    fontWeight: '800',
+  },
   rouletteHero: {
     alignItems: 'center',
     backgroundColor: '#1A2040',
@@ -3064,6 +3715,114 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginTop: 12,
+  },
+  availabilitySummaryCard: {
+    alignItems: 'center',
+    backgroundColor: '#10162A',
+    borderColor: '#28335F',
+    borderRadius: 20,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    marginTop: 12,
+    padding: 14,
+  },
+  availabilitySummaryValue: {
+    color: '#F5F7FF',
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  dayPicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  dayChip: {
+    backgroundColor: '#20263F',
+  },
+  selectedDayChip: {
+    backgroundColor: '#32417E',
+  },
+  eventTimePanel: {
+    backgroundColor: '#151B31',
+    borderColor: '#2C3560',
+    borderRadius: 22,
+    borderWidth: 1,
+    gap: 12,
+    padding: 14,
+  },
+  eventTimeHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'space-between',
+  },
+  eventTimeTitle: {
+    color: '#F5F7FF',
+    fontWeight: '800',
+  },
+  pickerFieldGroup: {
+    gap: 12,
+    marginTop: 4,
+  },
+  timeRangeButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  pickerSummary: {
+    backgroundColor: '#10162A',
+    borderColor: '#28335F',
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 4,
+    padding: 12,
+  },
+  scheduleEventCard: {
+    backgroundColor: '#10162A',
+    borderColor: '#28335F',
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 12,
+    marginTop: 12,
+    padding: 14,
+  },
+  availabilityWindowCard: {
+    backgroundColor: '#10162A',
+    borderColor: '#1F8F5F',
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 12,
+  },
+  timeBlockPanel: {
+    backgroundColor: '#10162A',
+    borderColor: '#2C3560',
+    borderRadius: 24,
+    borderWidth: 1,
+    gap: 14,
+    marginTop: 14,
+    padding: 16,
+  },
+  timeBlockHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'space-between',
+  },
+  timeBlockTitle: {
+    color: '#F5F7FF',
+    fontSize: 30,
+    fontWeight: '900',
+  },
+  timeBlockGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
   },
   availabilityDay: {
     color: '#F5F7FF',
@@ -3116,6 +3875,42 @@ const styles = StyleSheet.create({
   unavailableSlotText: {
     color: '#FFD8DE',
     fontWeight: '700',
+  },
+  availabilityWeekOverview: {
+    backgroundColor: '#10162A',
+    borderRadius: 18,
+    gap: 8,
+    marginTop: 14,
+    padding: 12,
+  },
+  availabilityMiniRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  availabilityMiniDay: {
+    color: '#F5F7FF',
+    fontSize: 12,
+    fontWeight: '800',
+    width: 34,
+  },
+  availabilityMiniSlots: {
+    flexDirection: 'row',
+    flex: 1,
+    gap: 6,
+  },
+  availabilityMiniOn: {
+    backgroundColor: '#2BE38D',
+    borderRadius: 999,
+    flex: 1,
+    height: 8,
+  },
+  availabilityMiniOff: {
+    backgroundColor: '#B84A5A',
+    borderRadius: 999,
+    flex: 1,
+    height: 8,
+    opacity: 0.75,
   },
   countdownChip: {
     alignSelf: 'flex-start',

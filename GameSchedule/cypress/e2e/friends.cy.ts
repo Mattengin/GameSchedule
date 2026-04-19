@@ -197,10 +197,10 @@ const registerMockFriends = (currentUser: MockAccount, otherUser: MockAccount) =
     body: null,
   }).as('availabilitySettingsRequest');
 
-  cy.intercept('GET', '**/rest/v1/availability_slots*', {
+  cy.intercept('GET', '**/rest/v1/availability_windows*', {
     statusCode: 200,
     body: [],
-  }).as('availabilitySlotsRequest');
+  }).as('availabilityWindowsRequest');
 
   cy.intercept('GET', '**/rest/v1/friends*', (req) => {
     const userId = getQueryValue(req.url, 'profile_id');

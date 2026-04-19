@@ -16,15 +16,37 @@ type MockAvailabilitySetting = {
   auto_decline_outside_hours: boolean;
 };
 
-type MockAvailabilitySlot = {
+type MockAvailabilityWindow = {
+  id: string;
   profile_id: string;
   day_key: string;
-  slot_label: string;
+  starts_at: string;
+  ends_at: string;
+  created_at: string;
+};
+
+type MockLobby = {
+  id: string;
+  title: string;
+  scheduled_for: string | null;
+  scheduled_until: string | null;
+  is_private: boolean;
+  status: 'scheduled' | 'open' | 'closed';
+  game_id: string;
+  host_profile_id: string;
+  games: {
+    id: string;
+    title: string;
+    genre: string;
+    platform: string;
+    player_count: string;
+  } | null;
 };
 
 const authStore = new Map<string, MockAccount>();
 const availabilitySettingsStore = new Map<string, MockAvailabilitySetting>();
-const availabilitySlotsStore = new Map<string, MockAvailabilitySlot[]>();
+const availabilityWindowsStore = new Map<string, MockAvailabilityWindow[]>();
+const lobbyStore = new Map<string, MockLobby[]>();
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
@@ -81,7 +103,32 @@ const getQueryValue = (url: string, key: string) => {
   return match ? decodeURIComponent(match[1]) : '';
 };
 
-const registerMockSchedule = () => {
+const makeLobby = (account: MockAccount, endBeforeStart = false): MockLobby => {
+  const startDate = new Date();
+  startDate.setHours(20, 0, 0, 0);
+  const endDate = new Date(startDate);
+  endDate.setHours(endBeforeStart ? 19 : 22, 0, 0, 0);
+
+  return {
+    id: endBeforeStart ? 'lobby-invalid-time' : 'lobby-schedule-1',
+    title: endBeforeStart ? 'Invalid Time Lobby' : 'Helix Arena Ranked',
+    scheduled_for: startDate.toISOString(),
+    scheduled_until: endDate.toISOString(),
+    is_private: true,
+    status: 'scheduled',
+    game_id: 'helix-arena',
+    host_profile_id: account.userId,
+    games: {
+      id: 'helix-arena',
+      title: 'Helix Arena',
+      genre: 'Hero Shooter',
+      platform: 'PC / Console',
+      player_count: '3-5 players',
+    },
+  };
+};
+
+const registerMockSchedule = (options: { invalidLobbyTime?: boolean } = {}) => {
   cy.intercept('POST', '**/auth/v1/signup', (req) => {
     const { email, password } = req.body as { email: string; password: string };
     const account = makeAccount(email, password);
@@ -91,7 +138,8 @@ const registerMockSchedule = () => {
       profile_id: account.userId,
       auto_decline_outside_hours: false,
     });
-    availabilitySlotsStore.set(account.userId, []);
+    availabilityWindowsStore.set(account.userId, []);
+    lobbyStore.set(account.userId, [makeLobby(account, options.invalidLobbyTime)]);
 
     req.reply({
       statusCode: 200,
@@ -129,10 +177,42 @@ const registerMockSchedule = () => {
     body: [],
   }).as('rouletteRequest');
 
-  cy.intercept('GET', '**/rest/v1/lobbies*', {
-    statusCode: 200,
-    body: [],
+  cy.intercept('GET', '**/rest/v1/lobbies*', (req) => {
+    const account = Array.from(authStore.values())[0];
+    const userId = account?.userId ?? '';
+
+    req.reply({
+      statusCode: 200,
+      body: lobbyStore.get(userId) ?? [],
+    });
   }).as('lobbiesRequest');
+
+  cy.intercept('PATCH', '**/rest/v1/lobbies*', (req) => {
+    const account = Array.from(authStore.values())[0];
+    const userId = account?.userId ?? '';
+    const lobbyId = getQueryValue(req.url, 'id');
+    const body = req.body as {
+      scheduled_for: string;
+      scheduled_until: string;
+    };
+    const current = lobbyStore.get(userId) ?? [];
+    const updated = current.map((lobby) =>
+      lobby.id === lobbyId
+        ? {
+            ...lobby,
+            scheduled_for: body.scheduled_for,
+            scheduled_until: body.scheduled_until,
+          }
+        : lobby,
+    );
+
+    lobbyStore.set(userId, updated);
+
+    req.reply({
+      statusCode: 200,
+      body: updated.find((lobby) => lobby.id === lobbyId) ?? updated[0],
+    });
+  }).as('rescheduleLobbyRequest');
 
   cy.intercept('GET', '**/rest/v1/availability_settings*', (req) => {
     const userId = getQueryValue(req.url, 'profile_id');
@@ -142,13 +222,13 @@ const registerMockSchedule = () => {
     });
   }).as('availabilitySettingsRequest');
 
-  cy.intercept('GET', '**/rest/v1/availability_slots*', (req) => {
+  cy.intercept('GET', '**/rest/v1/availability_windows*', (req) => {
     const userId = getQueryValue(req.url, 'profile_id');
     req.reply({
       statusCode: 200,
-      body: availabilitySlotsStore.get(userId) ?? [],
+      body: availabilityWindowsStore.get(userId) ?? [],
     });
-  }).as('availabilitySlotsRequest');
+  }).as('availabilityWindowsRequest');
 
   cy.intercept('POST', '**/rest/v1/availability_settings*', (req) => {
     const body = req.body as MockAvailabilitySetting & { updated_at?: string };
@@ -158,28 +238,31 @@ const registerMockSchedule = () => {
     });
     req.reply({
       statusCode: 201,
-      body: body,
+      body,
     });
   }).as('availabilitySettingsUpsert');
 
-  cy.intercept('DELETE', '**/rest/v1/availability_slots*', (req) => {
-    const userId = getQueryValue(req.url, 'profile_id');
-    availabilitySlotsStore.set(userId, []);
-    req.reply({
-      statusCode: 204,
-      body: {},
-    });
-  }).as('availabilitySlotsDelete');
+  cy.intercept('POST', '**/rest/v1/availability_windows*', (req) => {
+    const body = req.body as Omit<MockAvailabilityWindow, 'id' | 'created_at'>;
+    const window: MockAvailabilityWindow = {
+      ...body,
+      id: `availability-window-${Date.now()}`,
+      created_at: new Date().toISOString(),
+    };
+    const current = availabilityWindowsStore.get(body.profile_id) ?? [];
 
-  cy.intercept('POST', '**/rest/v1/availability_slots*', (req) => {
-    const body = req.body as MockAvailabilitySlot[];
-    const userId = body[0]?.profile_id ?? '';
-    availabilitySlotsStore.set(userId, body);
+    availabilityWindowsStore.set(body.profile_id, [...current, window]);
+
     req.reply({
       statusCode: 201,
-      body,
+      body: window,
     });
-  }).as('availabilitySlotsInsert');
+  }).as('availabilityWindowsInsert');
+
+  cy.intercept('DELETE', '**/rest/v1/availability_windows*', {
+    statusCode: 204,
+    body: {},
+  }).as('availabilityWindowsDelete');
 };
 
 describe('schedule and availability', () => {
@@ -189,39 +272,72 @@ describe('schedule and availability', () => {
   before(() => {
     authStore.clear();
     availabilitySettingsStore.clear();
-    availabilitySlotsStore.clear();
+    availabilityWindowsStore.clear();
+    lobbyStore.clear();
   });
 
   beforeEach(() => {
     registerMockSchedule();
   });
 
-  it('saves selected availability slots and the auto-decline preference', () => {
+  it('reschedules a lobby with a persisted end time', () => {
     cy.visit('/');
     cy.signupUi(email, password);
 
     cy.contains('Schedule').click();
-    cy.get('[data-testid="availability-slot-mon-6-pm"]').click();
-    cy.get('[data-testid="availability-slot-wed-8-pm"]').click();
-    cy.contains(/^Auto-decline outside hours$/).click();
-    cy.get('[data-testid="availability-count-chip"]').should('contain', '2 saved slots');
-    cy.get('[data-testid="save-availability-button"]').click();
+    cy.contains('Helix Arena Ranked').should('be.visible');
+    cy.get('[data-testid="schedule-edit-lobby-lobby-schedule-1"]').click();
+    cy.get('[data-testid="schedule-lobby-start-lobby-schedule-1"]').should('contain', 'Start:');
+    cy.get('[data-testid="schedule-lobby-end-lobby-schedule-1"]').should('contain', 'End:');
+    cy.get('[data-testid="schedule-save-lobby-lobby-schedule-1"]').click();
 
-    cy.contains(/availability saved/i).should('be.visible');
+    cy.wait('@rescheduleLobbyRequest')
+      .its('request.body')
+      .should((body) => {
+        expect(body.scheduled_for).to.be.a('string');
+        expect(body.scheduled_until).to.be.a('string');
+        expect(new Date(body.scheduled_until).getTime()).to.be.greaterThan(
+          new Date(body.scheduled_for).getTime(),
+        );
+      });
+    cy.contains(/lobby time updated/i).should('be.visible');
   });
 
-  it('loads saved availability from the mocked backend on refresh', () => {
+  it('adds and deletes a recurring availability window', () => {
     cy.visit('/');
     cy.signupUi(email, password);
 
     cy.contains('Schedule').click();
-    cy.get('[data-testid="availability-slot-fri-10-pm"]').click();
-    cy.get('[data-testid="save-availability-button"]').click();
-    cy.contains(/availability saved/i).should('be.visible');
+    cy.contains(/^Mon$/).click();
+    cy.get('[data-testid="availability-start-time-button"]').should('contain', 'Start:');
+    cy.get('[data-testid="availability-end-time-button"]').should('contain', 'End:');
+    cy.get('[data-testid="add-availability-window-button"]').click();
 
-    cy.reload();
+    cy.wait('@availabilityWindowsInsert')
+      .its('request.body')
+      .should((body) => {
+        expect(body.day_key).to.equal('Mon');
+        expect(body.starts_at).to.equal('20:00:00');
+        expect(body.ends_at).to.equal('22:00:00');
+      });
+    cy.contains(/availability window added/i).should('be.visible');
+    cy.contains('8:00 PM - 10:00 PM').should('be.visible');
+
+    cy.get('[data-testid="delete-availability-window-0"]').click();
+    cy.wait('@availabilityWindowsDelete');
+    cy.contains(/availability window removed/i).should('be.visible');
+  });
+
+  it('validates that a lobby end time must be after its start time', () => {
+    registerMockSchedule({ invalidLobbyTime: true });
+    cy.visit('/');
+    cy.signupUi(email, password);
+    cy.wait('@lobbiesRequest');
     cy.contains('Schedule').click();
-    cy.get('[data-testid="availability-count-chip"]').should('contain', '1 saved slot');
+    cy.get('[data-testid="schedule-edit-lobby-lobby-invalid-time"]').click();
+    cy.get('[data-testid="schedule-save-lobby-lobby-invalid-time"]').click();
+
+    cy.contains(/pick an end time after the start time/i).should('be.visible');
   });
 });
 

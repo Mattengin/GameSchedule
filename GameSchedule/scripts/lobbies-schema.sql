@@ -4,10 +4,23 @@ create table if not exists public.lobbies (
   game_id text not null references public.games(id) on delete cascade,
   title text not null,
   scheduled_for timestamptz,
+  scheduled_until timestamptz,
   is_private boolean not null default true,
   status text not null default 'scheduled' check (status in ('scheduled', 'open', 'closed')),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint lobbies_scheduled_until_after_start
+    check (scheduled_until is null or scheduled_for is null or scheduled_until > scheduled_for)
 );
+
+alter table public.lobbies
+add column if not exists scheduled_until timestamptz;
+
+alter table public.lobbies
+drop constraint if exists lobbies_scheduled_until_after_start;
+
+alter table public.lobbies
+add constraint lobbies_scheduled_until_after_start
+check (scheduled_until is null or scheduled_for is null or scheduled_until > scheduled_for);
 
 create table if not exists public.lobby_members (
   lobby_id uuid not null references public.lobbies(id) on delete cascade,

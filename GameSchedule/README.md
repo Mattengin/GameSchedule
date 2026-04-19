@@ -4,6 +4,21 @@ Mobile-first social gaming coordination app for streamers and gamers. This repo 
 
 This README is meant to preserve the working context from the build session: product direction, architecture decisions, implementation status, validation notes, limitations, and next steps.
 
+## Current Working Context
+
+- repository root: `C:\Users\matt6\Project\nEVER STOP`
+- Expo app folder: `C:\Users\matt6\Project\nEVER STOP\GameSchedule`
+- active branch during this checkpoint: `main`
+- primary app file: [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx)
+- hosted demo: `https://mattengin.github.io/GameSchedule/`
+- GitHub Pages workflow location: [`.github/workflows/deploy-pages.yml`](/c:/Users/matt6/Project/nEVER%20STOP/.github/workflows/deploy-pages.yml)
+
+Important repo-shape lesson:
+
+- GitHub Actions workflows must live under the repository root `.github/workflows/`
+- this repo's Git root is the parent `nEVER STOP` folder, not the `GameSchedule` app folder
+- the workflow builds from the `GameSchedule/` subdirectory and deploys `GameSchedule/dist`
+
 ## Product Direction
 
 Original concept:
@@ -32,6 +47,27 @@ Current product conclusion:
   - lobby membership
 - long-term, this should become **Discord-first**, not a standalone social network first
 
+## Session Timeline / Decisions
+
+This is the practical chat history condensed into a handoff:
+
+- started from a Figma-style blueprint for onboarding, friends, games, roulette, lobbies, scheduling, notifications, and profile/settings
+- agreed to use placeholder game data first and avoid external game APIs until the core app worked
+- wired Supabase for auth, profiles, games, favorites, roulette pool, lobbies, availability, and friends
+- added Cypress coverage as each major feature landed
+- used Playwright/manual validation for real browser checks when needed
+- hit Supabase hosted email rate limits during repeated signup testing, so Cypress tests mostly mock auth/backend calls
+- fixed the lobby RLS infinite-recursion issue by simplifying policies for the current MVP phase
+- tightened friend acceptance by moving mirrored friendship-row creation into the `accept_friend_request` RPC
+- discussed IGDB/Twitch and decided future game API work should go through a backend layer, not direct Expo client calls
+- shifted social strategy toward Discord-first because streamers/gamers already have Discord communities
+- set up GitHub Pages public hosting with a separate demo Supabase project and repo variables
+- added Discord login as an option while keeping email/password fallback
+- cleaned up Expo starter noise, while leaving some empty folder stubs in place
+- paused new feature work to improve scheduling UX with picker-based event start/end times and cleaner recurring availability ranges
+- redesigned lobby creation into a low-friction scheduler path: select game, pick event time, invite people
+- replaced the brittle fixed availability block UI with recurring windows like `Mon 8:00 PM - 10:00 PM`
+
 ## Tech Stack
 
 - Expo
@@ -44,24 +80,31 @@ Current product conclusion:
 
 ## Environment
 
-Client environment variables currently used:
+Client environment variables currently used by the app:
 
 ```env
 EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_ANON_KEY=
+EXPO_PUBLIC_DISCORD_CLIENT_ID=
 EXPO_PUBLIC_ALLOW_SIGNUP=true
 EXPO_PUBLIC_DEMO_LABEL=
-EXPO_PUBLIC_APP_SCHEME=
-EXPO_PUBLIC_APP_ENV=development
-EXPO_PUBLIC_ENABLE_DISCORD_AUTH=false
-EXPO_PUBLIC_ENABLE_GOOGLE_AUTH=false
-EXPO_PUBLIC_ENABLE_TWITCH_CONNECT=false
 ```
 
 Important:
 
 - never put `SUPABASE_SERVICE_ROLE_KEY` in this Expo app
 - only the public Supabase URL and anon key belong in the client `.env`
+- never use an `EXPO_PUBLIC_*` variable for private secrets
+- Discord client secret belongs only in Supabase Auth provider settings or another server-side secret store
+- `EXPO_PUBLIC_DISCORD_CLIENT_ID` is safe because it is public
+
+Variables discussed earlier but not active in the current code:
+
+- `EXPO_PUBLIC_APP_SCHEME`
+- `EXPO_PUBLIC_APP_ENV`
+- `EXPO_PUBLIC_ENABLE_DISCORD_AUTH`
+- `EXPO_PUBLIC_ENABLE_GOOGLE_AUTH`
+- `EXPO_PUBLIC_ENABLE_TWITCH_CONNECT`
 
 ## Commands
 
@@ -111,6 +154,7 @@ Current SQL scripts:
 - [`scripts/lobbies-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/lobbies-schema.sql)
 - [`scripts/availability-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/availability-schema.sql)
 - [`scripts/friends-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/friends-schema.sql)
+- [`scripts/discord-profile-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/discord-profile-schema.sql)
 
 ## What Has Been Built
 
@@ -178,14 +222,23 @@ Current SQL scripts:
 - `lobbies` table
 - `lobby_members` table
 - load lobbies from Supabase
-- create lobby form in the Lobbies tab
+- create event scheduler in the Lobbies tab
+- three-step creation flow:
+  - select a game
+  - pick event timing
+  - invite people
 - create lobby from game card
 - create lobby from roulette result
 - fields implemented:
   - game
   - title
-  - now/later scheduling
   - private/public toggle
+- now/later scheduling with a controlled calendar/time picker
+- event date input and time modal use `react-native-paper-dates`
+- separate start and end time controls
+- `scheduled_for` stores the event start time
+- `scheduled_until` stores the event end time
+- validates that end time is after start time
 - host membership insertion on create
 - lobbies shown in both Lobbies and Schedule tabs
 - invite draft UI in the lobby form
@@ -195,18 +248,18 @@ Current SQL scripts:
 ### Step 6: Scheduling + Availability
 
 - `availability_settings` table
-- `availability_slots` table
-- live load/save availability flow
-- weekly slot grid
+- `availability_slots` table remains as harmless legacy/backward-compatible data
+- `availability_windows` table is the new active recurring availability model
+- live load/save/delete availability window flow
+- schedule tab is now picker-based and lower clutter
+- upcoming games show game, date, start/end range, and an `Edit time` action
+- rescheduling uses the same event date picker plus start/end time modal pattern
+- recurring availability uses weekday + start time + end time
+- supports multiple custom availability windows per weekday
+- validates that availability end time is after start time
 - auto-decline preference
-- availability save action
-- selected slot count
-- default state changed to available-by-default
-- green/red slot styling:
-  - green = available
-  - red = not available
-- schedule legend
-- schedule view shows upcoming lobby countdown cards
+- compact availability summary cards
+- schedule view shows upcoming lobby cards
 
 ### Friends System: First Real Pass
 
@@ -243,6 +296,8 @@ Current SQL scripts:
   - password change
 - favorite games section
 - preferences summary
+- Discord connection status card
+- Discord connect/disconnect controls
 
 ### Public Demo / GitHub Pages
 
@@ -253,19 +308,24 @@ Current SQL scripts:
 - public demo environment variables supported:
   - `EXPO_PUBLIC_SUPABASE_URL`
   - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+  - `EXPO_PUBLIC_DISCORD_CLIENT_ID`
   - `EXPO_PUBLIC_ALLOW_SIGNUP`
   - `EXPO_PUBLIC_DEMO_LABEL`
 - public demo mode can disable self-signup so the hosted backend does not get flooded with junk accounts
 - local static export verified successfully with:
   - `npx expo export --platform web`
+- hosted GitHub Pages deployment verified live:
+  - `https://mattengin.github.io/GameSchedule/`
+- Discord callback route verified live:
+  - `https://mattengin.github.io/GameSchedule/discord-oauth-callback`
 
 ### Template Cleanup
 
-Unused Expo starter/template code has been removed:
+Unused Expo starter/template code has been trimmed back:
 
-- unused example app under [`app-example`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app-example)
-- unused themed/template components under [`components`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/components)
-- unused starter theme helpers under [`constants`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/constants) and [`hooks`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/hooks)
+- old starter files were removed from `app-example`, `components`, `constants`, and `hooks`
+- some empty directory stubs still exist locally, but they are not part of the active app surface
+- the active UI is concentrated in [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx) and [`app/_layout.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/_layout.tsx)
 
 ## Database Scripts
 
@@ -300,6 +360,12 @@ Creates:
 - `public.lobbies`
 - `public.lobby_members`
 
+Important fields:
+
+- `scheduled_for` stores the start timestamp
+- `scheduled_until` stores the end timestamp
+- `lobbies_scheduled_until_after_start` prevents end times before start times
+
 Important note:
 
 - the first lobby RLS version created an infinite recursion problem because `lobbies` and `lobby_members` policies referenced each other
@@ -311,6 +377,14 @@ Creates:
 
 - `public.availability_settings`
 - `public.availability_slots`
+- `public.availability_windows`
+
+Current model:
+
+- `availability_windows` is active for new saves
+- `availability_slots` is retained for backward compatibility
+- each window stores `profile_id`, `day_key`, `starts_at`, `ends_at`, and `created_at`
+- RLS allows authenticated users to read/insert/update/delete only their own availability windows
 
 ### `friends-schema.sql`
 
@@ -323,6 +397,25 @@ Also adds:
 
 - authenticated read access for `public.profiles`
 - `public.accept_friend_request(uuid)` RPC
+
+### `discord-profile-schema.sql`
+
+Adds Discord identity fields to `public.profiles`:
+
+- `discord_user_id`
+- `discord_username`
+- `discord_avatar_url`
+- `discord_connected_at`
+
+Also adds:
+
+- unique partial index on `discord_user_id`
+
+Purpose:
+
+- support Discord-first identity
+- let Discord OAuth sessions bootstrap profile data
+- prepare the app to reduce manual friend/profile setup friction
 
 ## Validation History
 
@@ -338,6 +431,7 @@ The following tables were confirmed reachable from the client and returned `200`
 - `lobby_members`
 - `availability_settings`
 - `availability_slots`
+- `availability_windows`
 - `friend_requests`
 - `friends`
 
@@ -366,6 +460,63 @@ Specific observed results:
 - lobby creation worked
 - schedule availability bug was found, fixed, and revalidated
 
+### Discord Auth Validation
+
+Discord login was tested with Playwright/local static export.
+
+Initial failure:
+
+- Supabase returned:
+  - `Unsupported provider: provider is not enabled`
+
+Fix:
+
+- Discord provider was enabled in Supabase Auth
+- Discord client ID and secret were entered in Supabase provider settings
+- Discord redirect URLs were corrected
+
+Current observed behavior:
+
+- clicking `Continue with Discord` now redirects to Discord
+- Discord page shows:
+  - `Discord App Launched`
+  - `Continue to Discord`
+- OAuth scopes observed:
+  - `email`
+  - `identify`
+
+Important redirect URLs:
+
+- Supabase callback for dev/test:
+  - `https://ujsguoktdnrjxqlcrwge.supabase.co/auth/v1/callback`
+- Supabase callback for demo:
+  - `https://utvqkxdhxonuxwrogda.supabase.co/auth/v1/callback`
+- custom app callback:
+  - `https://mattengin.github.io/GameSchedule/discord-oauth-callback`
+- local custom app callback:
+  - `http://localhost:8082/discord-oauth-callback`
+
+Important lesson:
+
+- the Discord OAuth URL generator invite link is not needed for our app flow
+- the app/Supabase generate OAuth URLs automatically
+
+### Secret Cleanup
+
+During testing, a local variable named `EXPO_PUBLIC_DISCORD_CLIENT_SECRET` was found in `.env`.
+
+Action taken:
+
+- removed it from local `.env`
+- verified Expo export no longer loads it
+- confirmed `.env` is ignored by git
+
+Rule:
+
+- never place Discord client secret in `EXPO_PUBLIC_*`
+- never place Discord client secret in repo variables
+- keep it only in Supabase provider settings or server-side secrets
+
 ### Availability Bug Found and Fixed
 
 Problem:
@@ -390,6 +541,21 @@ Result after live revalidation:
 - slots displayed as green/available
 - toggling a slot off turned it red
 - saving persisted correctly
+
+### Schedule Picker Redesign
+
+The older availability-block scheduler was replaced with a lower-clutter picker flow.
+
+Current behavior:
+
+- lobby creation uses `DatePickerInput` and `TimePickerModal`
+- lobby creation persists `scheduled_for` and `scheduled_until`
+- old lobbies without `scheduled_until` display as a default one-hour event
+- Schedule tab upcoming games can be rescheduled with date, start time, and end time
+- weekly availability is saved as recurring windows such as `Mon 8:00 PM - 10:00 PM`
+- users can add multiple availability windows per weekday
+- users can delete individual availability windows
+- invalid end-before-start ranges show an error and do not save
 
 ## Testing
 
@@ -418,7 +584,10 @@ Covered behavior:
 - roulette persistence
 - lobby creation
 - lobby invite-draft behavior
-- availability save/reload
+- lobby start/end time persistence
+- schedule-page lobby rescheduling
+- availability window add/delete behavior
+- availability range validation
 - friend search
 - send request
 - accept request
@@ -435,6 +604,8 @@ Current verification status:
 
 - `npm run lint` passes
 - `npx tsc --noEmit` passes
+- targeted Cypress schedule/lobby run passes:
+  - `npm run cypress:run -- --spec "cypress/e2e/lobbies.cy.ts,cypress/e2e/schedule-availability.cy.ts"`
 
 Recent repo-health fixes:
 
@@ -537,6 +708,8 @@ Current Discord auth direction:
 - use Discord identity to reduce profile setup friction
 - Supabase Discord OAuth requires enabling the Discord provider in Supabase Auth
 - the Discord client secret must be stored only in Supabase/provider settings or another server-side secret store, never in Expo client env
+- profile bootstrap now reads Discord identities from Supabase sessions when available
+- profiles can store linked Discord identity data
 
 ## Friends Flow Safety Update
 
@@ -566,6 +739,12 @@ GitHub Pages setup now assumes:
 Current hosted URL target:
 
 - `https://mattengin.github.io/GameSchedule/`
+
+Current hosted status:
+
+- GitHub Pages workflow runs successfully
+- public site returns `200`
+- Discord callback route returns `200`
 
 Important deployment lesson from this session:
 
@@ -611,12 +790,12 @@ Conclusion:
 
 ## Current Limitations
 
-- GitHub Pages deploy has been prepared, but live availability still depends on the repo Pages/Actions settings and a successful workflow run
 - lobby invite drafts are still local-only
 - real invited `lobby_members` beyond the host are not yet persisted
 - notifications are placeholder-only
 - chat is placeholder-only
-- Discord integration is not implemented
+- Discord login is started and redirects correctly, but full end-to-end manual confirmation after Discord approval should still be validated
+- Discord relationship/friend import is not implemented
 - Twitch integration is not implemented
 - IGDB integration is not implemented
 - the app is still largely a single-screen prototype shell rather than full routed screens
@@ -625,10 +804,12 @@ Conclusion:
 
 Short-term:
 
+- manually finish the Discord authorization flow and confirm the app session/profile bootstrap after return
 - live-validate the new friends flow with two real accounts
-- finish the public demo deployment and verify the hosted URL after the first successful Pages run
+- run the updated `lobbies-schema.sql` and `availability-schema.sql` in the demo Supabase project before publishing the new scheduler live
 - connect accepted friends to real `lobby_members` invites
 - build notifications from friend requests and lobby actions
+- manually validate the new schedule picker flow against real Supabase data after the SQL is applied
 
 Medium-term:
 
@@ -655,6 +836,7 @@ Long-term:
 - [`scripts/lobbies-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/lobbies-schema.sql)
 - [`scripts/availability-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/availability-schema.sql)
 - [`scripts/friends-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/friends-schema.sql)
+- [`scripts/discord-profile-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/discord-profile-schema.sql)
 - [`cypress/e2e/auth-smoke.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-smoke.cy.ts)
 - [`cypress/e2e/auth-session.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-session.cy.ts)
 - [`cypress/e2e/profile-onboarding.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/profile-onboarding.cy.ts)
@@ -676,6 +858,7 @@ This repo has been moved from a starter template into a functioning Supabase-bac
 - lobbies
 - scheduling
 - availability
+- Discord login/profile identity groundwork
 - the first real friends/request flow
 - test coverage
 - manual live validation
