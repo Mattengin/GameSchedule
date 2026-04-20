@@ -738,14 +738,40 @@ export default function HomeScreen() {
       }
 
       if (existingProfile) {
-        if (discordIdentity && !existingProfile.discord_user_id) {
+        const hasDiscordAvatar = Boolean(discordIdentity?.discord_avatar_url);
+        const hasDiscordUsername = Boolean(discordIdentity?.discord_username);
+        const needsDiscordBackfill =
+          Boolean(discordIdentity) &&
+          (!existingProfile.discord_user_id ||
+            (!existingProfile.discord_avatar_url && hasDiscordAvatar) ||
+            (!existingProfile.avatar_url && hasDiscordAvatar) ||
+            (!existingProfile.display_name && hasDiscordUsername));
+
+        if (needsDiscordBackfill && discordIdentity) {
+          const updatePayload: Partial<Profile> = {};
+
+          if (!existingProfile.discord_user_id) {
+            updatePayload.discord_user_id = discordIdentity.discord_user_id;
+          }
+          if (!existingProfile.discord_username && hasDiscordUsername) {
+            updatePayload.discord_username = discordIdentity.discord_username;
+          }
+          if (!existingProfile.discord_avatar_url && hasDiscordAvatar) {
+            updatePayload.discord_avatar_url = discordIdentity.discord_avatar_url;
+          }
+          if (!existingProfile.discord_connected_at) {
+            updatePayload.discord_connected_at = discordIdentity.discord_connected_at;
+          }
+          if (!existingProfile.avatar_url && hasDiscordAvatar) {
+            updatePayload.avatar_url = discordIdentity.discord_avatar_url;
+          }
+          if (!existingProfile.display_name && hasDiscordUsername) {
+            updatePayload.display_name = discordIdentity.discord_username;
+          }
+
           const { data: updatedProfile, error: updateError } = await supabase
             .from('profiles')
-            .update({
-              ...discordIdentity,
-              avatar_url: existingProfile.avatar_url ?? discordIdentity.discord_avatar_url,
-              display_name: existingProfile.display_name ?? discordIdentity.discord_username,
-            })
+            .update(updatePayload)
             .eq('id', user.id)
             .select(profileSelectFields)
             .single();
