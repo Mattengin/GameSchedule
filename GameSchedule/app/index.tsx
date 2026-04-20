@@ -311,6 +311,18 @@ const getDefaultEndDate = (startDate: Date) => {
   return endDate;
 };
 
+const resolveAvatarUrl = (
+  record: Pick<Profile, 'avatar_url' | 'discord_avatar_url'> | null | undefined,
+) => {
+  const directAvatarUrl = record?.avatar_url?.trim();
+  if (directAvatarUrl) {
+    return directAvatarUrl;
+  }
+
+  const discordAvatarUrl = record?.discord_avatar_url?.trim();
+  return discordAvatarUrl || '';
+};
+
 const formatCalendarDate = (date: Date) =>
   date.toLocaleDateString('en-US', {
     weekday: 'short',
@@ -1818,14 +1830,19 @@ export default function HomeScreen() {
             {friendSearchResults.map((candidate) => {
               const status = getFriendSearchStatus(candidate.id);
               const candidateName = candidate.display_name ?? candidate.username ?? 'Player';
+              const resolvedAvatarUrl = resolveAvatarUrl(candidate);
 
               return (
                 <View key={candidate.id} style={styles.friendRow}>
-                  <Avatar.Text
-                    size={42}
-                    label={candidateName.slice(0, 2).toUpperCase()}
-                    style={styles.avatar}
-                  />
+                  {resolvedAvatarUrl ? (
+                    <Avatar.Image size={42} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
+                  ) : (
+                    <Avatar.Text
+                      size={42}
+                      label={candidateName.slice(0, 2).toUpperCase()}
+                      style={styles.avatar}
+                    />
+                  )}
                   <View style={styles.friendMeta}>
                     <Text variant="titleMedium">{candidateName}</Text>
                     <Text style={styles.friendNote}>
@@ -1898,15 +1915,20 @@ export default function HomeScreen() {
 
       {visibleFriends.map((friend) => {
         const friendName = friend.display_name ?? friend.username ?? 'Player';
+        const resolvedAvatarUrl = resolveAvatarUrl(friend);
 
         return (
           <Card key={friend.id} style={styles.panel}>
             <Card.Content style={styles.friendCard}>
-              <Avatar.Text
-                size={46}
-                label={friendName.slice(0, 2).toUpperCase()}
-                style={styles.avatar}
-              />
+              {resolvedAvatarUrl ? (
+                <Avatar.Image size={46} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
+              ) : (
+                <Avatar.Text
+                  size={46}
+                  label={friendName.slice(0, 2).toUpperCase()}
+                  style={styles.avatar}
+                />
+              )}
               <View style={styles.friendMeta}>
                 <Text variant="titleMedium">{friendName}</Text>
                 <Text style={styles.friendStatus}>{friend.is_favorite ? 'Favorite friend' : 'Friend'}</Text>
@@ -2578,19 +2600,26 @@ export default function HomeScreen() {
     </>
   );
 
-  const renderProfile = () => (
-    <>
+  const renderProfile = () => {
+    const resolvedAvatarUrl = resolveAvatarUrl(profile);
+
+    return (
+      <>
       <SectionTitle
         title="Profile & settings"
         subtitle="Edit your profile, link Discord, update account security, and keep setup simple."
       />
       <Card style={styles.panel}>
         <Card.Content style={styles.profileHeader}>
-          <Avatar.Text
-            size={68}
-            label={(profile?.display_name ?? profile?.username ?? 'MX').slice(0, 2).toUpperCase()}
-            style={styles.avatarLarge}
-          />
+          {resolvedAvatarUrl ? (
+            <Avatar.Image size={68} source={{ uri: resolvedAvatarUrl }} style={styles.avatarLarge} />
+          ) : (
+            <Avatar.Text
+              size={68}
+              label={(profile?.display_name ?? profile?.username ?? 'MX').slice(0, 2).toUpperCase()}
+              style={styles.avatarLarge}
+            />
+          )}
           <View style={styles.friendMeta}>
             <Text variant="headlineSmall">
               {profile?.display_name ?? profile?.username ?? 'Player'}
@@ -2815,8 +2844,9 @@ export default function HomeScreen() {
           <Text style={styles.listText}>Anonymous decline and do-not-invite lists pending backend</Text>
         </Card.Content>
       </Card>
-    </>
-  );
+      </>
+    );
+  };
 
   const content = {
     dashboard: renderDashboard(),
