@@ -103,14 +103,38 @@ export default function DiscordOauthCallbackScreen() {
         ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
         : null;
 
+      const { data: currentProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('avatar_url')
+        .eq('id', session.user.id)
+        .single();
+
+      if (profileError) {
+        setStatus('error');
+        setMessage(profileError.message);
+        return;
+      }
+
+      const updatePayload: {
+        discord_user_id: string;
+        discord_username: string;
+        discord_avatar_url: string | null;
+        discord_connected_at: string;
+        avatar_url?: string | null;
+      } = {
+        discord_user_id: discordUser.id,
+        discord_username: discordUser.global_name ?? discordUser.username,
+        discord_avatar_url: avatarUrl,
+        discord_connected_at: new Date().toISOString(),
+      };
+
+      if (!currentProfile?.avatar_url) {
+        updatePayload.avatar_url = avatarUrl;
+      }
+
       const { error: updateError } = await supabase
         .from('profiles')
-        .update({
-          discord_user_id: discordUser.id,
-          discord_username: discordUser.global_name ?? discordUser.username,
-          discord_avatar_url: avatarUrl,
-          discord_connected_at: new Date().toISOString(),
-        })
+        .update(updatePayload)
         .eq('id', session.user.id);
 
       if (updateError) {
