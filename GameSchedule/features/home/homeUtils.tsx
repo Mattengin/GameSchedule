@@ -1,0 +1,413 @@
+import * as React from 'react';
+import { Platform, View } from 'react-native';
+import type { Session } from '@supabase/supabase-js';
+import { Button, Chip, Surface, Text } from 'react-native-paper';
+import { DatePickerInput, TimePickerModal } from 'react-native-paper-dates';
+import { styles } from './homeStyles';
+import type { LobbyRecord, Profile } from './homeTypes';
+
+export const getWebBasePath = () => {
+  if (Platform.OS !== 'web') {
+    return '';
+  }
+
+  const pathname = globalThis.window?.location.pathname ?? '';
+  return pathname.startsWith('/GameSchedule') ? '/GameSchedule' : '';
+};
+
+export const getWebRedirectUrl = () => {
+  if (Platform.OS !== 'web') {
+    return undefined;
+  }
+
+  const currentLocation = globalThis.window?.location;
+  if (!currentLocation) {
+    return undefined;
+  }
+
+  return `${currentLocation.origin}${getWebBasePath()}/`;
+};
+
+export const clearOAuthHashFromUrl = () => {
+  if (Platform.OS !== 'web') {
+    return;
+  }
+
+  const currentLocation = globalThis.window?.location;
+  const currentHistory = globalThis.window?.history;
+  if (!currentLocation?.hash || !currentHistory?.replaceState) {
+    return;
+  }
+
+  const hasOAuthToken = /(?:^#|&)(access_token|refresh_token|provider_token|error|error_description)=/.test(
+    currentLocation.hash,
+  );
+
+  if (!hasOAuthToken) {
+    return;
+  }
+
+  currentHistory.replaceState(currentHistory.state, '', `${currentLocation.pathname}${currentLocation.search}`);
+};
+
+export const getDiscordIdentityFromSession = (session: Session | null) => {
+  const user = session?.user;
+  if (!user) {
+    return null;
+  }
+
+  const discordIdentity = user.identities?.find((identity) => identity.provider === 'discord');
+  const identityData = discordIdentity?.identity_data as
+    | {
+        avatar_url?: string;
+        full_name?: string;
+        name?: string;
+        preferred_username?: string;
+        provider_id?: string;
+        sub?: string;
+        user_name?: string;
+      }
+    | undefined;
+
+  const metadata = user.user_metadata as
+    | {
+        avatar_url?: string;
+        full_name?: string;
+        name?: string;
+        preferred_username?: string;
+        provider_id?: string;
+        sub?: string;
+        user_name?: string;
+      }
+    | undefined;
+
+  const discordUserId =
+    identityData?.provider_id ?? identityData?.sub ?? metadata?.provider_id ?? metadata?.sub ?? null;
+
+  if (!discordUserId) {
+    return null;
+  }
+
+  const discordUsername =
+    identityData?.full_name ??
+    identityData?.name ??
+    identityData?.preferred_username ??
+    identityData?.user_name ??
+    metadata?.full_name ??
+    metadata?.name ??
+    metadata?.preferred_username ??
+    metadata?.user_name ??
+    'Discord user';
+
+  return {
+    discord_user_id: discordUserId,
+    discord_username: discordUsername,
+    discord_avatar_url: identityData?.avatar_url ?? metadata?.avatar_url ?? null,
+    discord_connected_at: new Date().toISOString(),
+  };
+};
+
+export const unwrapRelation = <T,>(value: T | T[] | null | undefined): T | null => {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value ?? null;
+};
+
+export const createDefaultLobbyStartDate = () => {
+  const date = new Date();
+  date.setHours(20, 0, 0, 0);
+  return date;
+};
+
+export const createDefaultLobbyEndDate = () => {
+  const date = createDefaultLobbyStartDate();
+  date.setHours(date.getHours() + 1);
+  return date;
+};
+
+export const getDefaultEndDate = (startDate: Date) => {
+  const endDate = new Date(startDate);
+  endDate.setHours(endDate.getHours() + 1);
+  return endDate;
+};
+
+export const resolveAvatarUrl = (
+  record: Pick<Profile, 'avatar_url' | 'discord_avatar_url'> | null | undefined,
+) => {
+  const directAvatarUrl = record?.avatar_url?.trim();
+  if (directAvatarUrl) {
+    return directAvatarUrl;
+  }
+
+  const discordAvatarUrl = record?.discord_avatar_url?.trim();
+  return discordAvatarUrl || '';
+};
+
+export const formatCalendarDate = (date: Date) =>
+  date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+export const formatEventTime = (date: Date) =>
+  date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+export const formatEventRange = (startDate: Date, endDate: Date) => {
+  const dateLabel = formatCalendarDate(startDate);
+  const startLabel = formatEventTime(startDate);
+  const endLabel = formatEventTime(endDate);
+
+  return `${dateLabel}, ${startLabel} - ${endLabel}`;
+};
+
+export const setDatePart = (currentDate: Date, nextDate: Date) => {
+  const updatedDate = new Date(currentDate);
+  updatedDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate());
+  return updatedDate;
+};
+
+export const setTimePart = (currentDate: Date, nextHour: number, nextMinute: number) => {
+  const updatedDate = new Date(currentDate);
+  updatedDate.setHours(nextHour, nextMinute, 0, 0);
+  return updatedDate;
+};
+
+export const createTimeDate = (hours: number, minutes: number) => {
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+};
+
+export const parseDbTimeToDate = (timeValue: string, fallbackHours: number) => {
+  const [hoursValue, minutesValue] = timeValue.split(':');
+  const hours = Number(hoursValue);
+  const minutes = Number(minutesValue);
+
+  return createTimeDate(
+    Number.isNaN(hours) ? fallbackHours : hours,
+    Number.isNaN(minutes) ? 0 : minutes,
+  );
+};
+
+export const formatDbTime = (date: Date) =>
+  `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:00`;
+
+export const formatAvailabilityRange = (startTime: string, endTime: string) =>
+  `${formatEventTime(parseDbTimeToDate(startTime, 20))} - ${formatEventTime(parseDbTimeToDate(endTime, 21))}`;
+
+export const getLobbyEndDate = (lobby: Pick<LobbyRecord, 'scheduled_for' | 'scheduled_until'>) => {
+  if (lobby.scheduled_until) {
+    const explicitEnd = new Date(lobby.scheduled_until);
+    if (!Number.isNaN(explicitEnd.getTime())) {
+      return explicitEnd;
+    }
+  }
+
+  if (lobby.scheduled_for) {
+    const startDate = new Date(lobby.scheduled_for);
+    if (!Number.isNaN(startDate.getTime())) {
+      return getDefaultEndDate(startDate);
+    }
+  }
+
+  return getDefaultEndDate(createDefaultLobbyStartDate());
+};
+
+export function StatCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent: string;
+}) {
+  return (
+    <Surface style={[styles.statCard, { borderColor: accent }]} elevation={1}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </Surface>
+  );
+}
+
+export function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text variant="headlineSmall" style={styles.sectionTitle}>
+        {title}
+      </Text>
+      <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+    </View>
+  );
+}
+
+export function EventTimePicker({
+  timeMode,
+  startAt,
+  endAt,
+  onSetNow,
+  onSetLater,
+  onStartAtChange,
+  onEndAtChange,
+}: {
+  timeMode: 'now' | 'later';
+  startAt: Date;
+  endAt: Date;
+  onSetNow: () => void;
+  onSetLater: () => void;
+  onStartAtChange: (date: Date) => void;
+  onEndAtChange: (date: Date) => void;
+}) {
+  const [timePickerTarget, setTimePickerTarget] = React.useState<'start' | 'end' | null>(null);
+  const activeTimeDate = timePickerTarget === 'end' ? endAt : startAt;
+
+  return (
+    <Surface style={styles.eventTimePanel} elevation={1}>
+      <View style={styles.eventTimeHeader}>
+        <View>
+          <Text variant="titleSmall" style={styles.eventTimeTitle}>
+            Event time
+          </Text>
+          <Text style={styles.friendNote}>Pick a controlled calendar time. Events default to one hour.</Text>
+        </View>
+        <Chip icon="clock-outline" style={styles.statusChip}>
+          {timeMode === 'now' ? 'Starts now' : formatEventRange(startAt, endAt)}
+        </Chip>
+      </View>
+      <View style={styles.quickPath}>
+        <Chip selected={timeMode === 'now'} onPress={onSetNow} testID="lobby-time-now-chip">
+          Start now
+        </Chip>
+        <Chip selected={timeMode === 'later'} onPress={onSetLater} testID="lobby-time-later-chip">
+          Schedule it
+        </Chip>
+      </View>
+      {timeMode === 'later' ? (
+        <View style={styles.pickerFieldGroup}>
+          <DatePickerInput
+            locale="en"
+            label="Event date"
+            value={startAt}
+            onChange={(nextDate) => {
+              if (nextDate) {
+                onStartAtChange(setDatePart(startAt, nextDate));
+                onEndAtChange(setDatePart(endAt, nextDate));
+              }
+            }}
+            inputMode="start"
+            mode="outlined"
+            withModal
+            style={styles.input}
+            testID="lobby-date-picker-input"
+          />
+          <Button
+            mode="outlined"
+            icon="clock-outline"
+            onPress={() => setTimePickerTarget('start')}
+            testID="lobby-start-time-picker-button">
+            Start: {formatEventTime(startAt)}
+          </Button>
+          <Button
+            mode="outlined"
+            icon="clock-end"
+            onPress={() => setTimePickerTarget('end')}
+            testID="lobby-end-time-picker-button">
+            End: {formatEventTime(endAt)}
+          </Button>
+          <TimePickerModal
+            visible={Boolean(timePickerTarget)}
+            onDismiss={() => setTimePickerTarget(null)}
+            onConfirm={({ hours, minutes }) => {
+              if (timePickerTarget === 'end') {
+                onEndAtChange(setTimePart(endAt, hours, minutes));
+              } else {
+                onStartAtChange(setTimePart(startAt, hours, minutes));
+              }
+
+              setTimePickerTarget(null);
+            }}
+            hours={activeTimeDate.getHours()}
+            minutes={activeTimeDate.getMinutes()}
+            label={timePickerTarget === 'end' ? 'Pick end time' : 'Pick start time'}
+            cancelLabel="Cancel"
+            confirmLabel="OK"
+            locale="en"
+            use24HourClock={false}
+          />
+          <View style={styles.pickerSummary}>
+            <Text variant="titleSmall" style={styles.eventTimeTitle}>
+              Selected event window
+            </Text>
+            <Text style={styles.friendNote}>{formatEventRange(startAt, endAt)}</Text>
+          </View>
+        </View>
+      ) : null}
+    </Surface>
+  );
+}
+
+export function TimeRangePicker({
+  startAt,
+  endAt,
+  onStartAtChange,
+  onEndAtChange,
+  startTestID,
+  endTestID,
+}: {
+  startAt: Date;
+  endAt: Date;
+  onStartAtChange: (date: Date) => void;
+  onEndAtChange: (date: Date) => void;
+  startTestID: string;
+  endTestID: string;
+}) {
+  const [timePickerTarget, setTimePickerTarget] = React.useState<'start' | 'end' | null>(null);
+  const activeTimeDate = timePickerTarget === 'end' ? endAt : startAt;
+
+  return (
+    <>
+      <View style={styles.timeRangeButtons}>
+        <Button
+          mode="outlined"
+          icon="clock-outline"
+          onPress={() => setTimePickerTarget('start')}
+          testID={startTestID}>
+          Start: {formatEventTime(startAt)}
+        </Button>
+        <Button
+          mode="outlined"
+          icon="clock-end"
+          onPress={() => setTimePickerTarget('end')}
+          testID={endTestID}>
+          End: {formatEventTime(endAt)}
+        </Button>
+      </View>
+      <TimePickerModal
+        visible={Boolean(timePickerTarget)}
+        onDismiss={() => setTimePickerTarget(null)}
+        onConfirm={({ hours, minutes }) => {
+          if (timePickerTarget === 'end') {
+            onEndAtChange(setTimePart(endAt, hours, minutes));
+          } else {
+            onStartAtChange(setTimePart(startAt, hours, minutes));
+          }
+
+          setTimePickerTarget(null);
+        }}
+        hours={activeTimeDate.getHours()}
+        minutes={activeTimeDate.getMinutes()}
+        label={timePickerTarget === 'end' ? 'Pick end time' : 'Pick start time'}
+        cancelLabel="Cancel"
+        confirmLabel="OK"
+        locale="en"
+        use24HourClock={false}
+      />
+    </>
+  );
+}

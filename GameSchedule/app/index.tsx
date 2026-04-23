@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
@@ -10,606 +10,62 @@ import {
   Divider,
   FAB,
   HelperText,
-  ProgressBar,
   Searchbar,
   SegmentedButtons,
   Surface,
   Text,
   TextInput,
 } from 'react-native-paper';
+import { DatePickerInput, en, registerTranslation } from 'react-native-paper-dates';
 import {
-  DatePickerInput,
-  TimePickerModal,
-  en,
-  registerTranslation,
-} from 'react-native-paper-dates';
+  allowSignup,
+  availabilityDays,
+  demoLabel,
+  discordClientId,
+  discordStateStorageKey,
+  notifications,
+  profileSelectFields,
+  sections,
+} from '../features/home/homeConstants';
+import { useAvailabilityState } from '../features/home/homeAvailabilityHooks';
+import { useGamesState } from '../features/home/homeGameHooks';
+import { useLobbyState } from '../features/home/homeLobbyHooks';
+import { DashboardSection, GamesSection, InboxSection, RouletteSection } from '../features/home/homeSections';
+import { useSocialState } from '../features/home/homeSocialHooks';
+import { styles } from '../features/home/homeStyles';
+import type {
+  AvailabilityWindow,
+  CommunityRecord,
+  FriendRequestRecord,
+  LobbyInviteHistoryRecord,
+  LobbyInviteStatus,
+  LobbyMemberRecord,
+  LobbyRecord,
+  Profile,
+  SectionKey,
+} from '../features/home/homeTypes';
+import {
+  EventTimePicker,
+  SectionTitle,
+  TimeRangePicker,
+  clearOAuthHashFromUrl,
+  createDefaultLobbyEndDate,
+  createDefaultLobbyStartDate,
+  formatAvailabilityRange,
+  formatDbTime,
+  formatEventRange,
+  formatEventTime,
+  getDefaultEndDate,
+  getDiscordIdentityFromSession,
+  getLobbyEndDate,
+  getWebRedirectUrl,
+  resolveAvatarUrl,
+  setDatePart,
+  unwrapRelation,
+} from '../features/home/homeUtils';
 import { supabase } from '../services/supabaseClient';
 
 registerTranslation('en', en);
-
-type SectionKey =
-  | 'dashboard'
-  | 'friends'
-  | 'games'
-  | 'roulette'
-  | 'lobbies'
-  | 'schedule'
-  | 'inbox'
-  | 'profile';
-
-type Profile = {
-  id: string;
-  username: string | null;
-  avatar_url: string | null;
-  display_name: string | null;
-  onboarding_complete: boolean;
-  primary_community_id: string | null;
-  discord_user_id: string | null;
-  discord_username: string | null;
-  discord_avatar_url: string | null;
-  discord_connected_at: string | null;
-};
-
-type CommunityRecord = {
-  id: string;
-  name: string;
-  invite_code: string;
-  discord_guild_id: string | null;
-  created_by_profile_id: string;
-  created_at: string;
-};
-
-type CommunityMemberRecord = {
-  community_id: string;
-  profile_id: string;
-  role: 'owner' | 'member';
-  created_at: string;
-};
-
-type SuggestedFriendRecord = Profile & {
-  community_role: 'owner' | 'member';
-};
-
-type GameRecord = {
-  id: string;
-  title: string;
-  genre: string;
-  platform: string;
-  player_count: string;
-  description: string | null;
-  is_featured: boolean;
-};
-
-type RouletteEntry = {
-  game_id: string;
-  games: Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform'> | null;
-};
-
-type LobbyRecord = {
-  id: string;
-  title: string;
-  scheduled_for: string | null;
-  scheduled_until: string | null;
-  is_private: boolean;
-  status: 'scheduled' | 'open' | 'closed';
-  game_id: string;
-  host_profile_id: string;
-  games: Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform' | 'player_count'> | null;
-  invite_count?: number;
-};
-
-type AvailabilitySetting = {
-  profile_id: string;
-  auto_decline_outside_hours: boolean;
-};
-
-type AvailabilityWindow = {
-  id?: string;
-  profile_id: string;
-  day_key: string;
-  starts_at: string;
-  ends_at: string;
-  created_at?: string;
-};
-
-type RelatedGameSummary = Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform'>;
-type RelatedLobbyGameSummary = Pick<
-  GameRecord,
-  'id' | 'title' | 'genre' | 'platform' | 'player_count'
->;
-
-type FriendshipRecord = {
-  profile_id: string;
-  friend_profile_id: string;
-  is_favorite: boolean;
-};
-
-type FriendRequestRecord = {
-  id: string;
-  requester_profile_id: string;
-  addressee_profile_id: string;
-  status: 'pending' | 'accepted' | 'declined' | 'canceled';
-  created_at: string;
-};
-
-const fallbackInviteFriends = [
-  { name: 'NovaHex', status: 'Online', note: 'Ready for co-op in 20m', favorite: true },
-  { name: 'PixelMoth', status: 'In lobby', note: 'Queued for two rounds', favorite: true },
-  { name: 'EchoVale', status: 'Offline', note: 'Last online 2h ago', favorite: false },
-  { name: 'LumaByte', status: 'Pending', note: 'Sent friend code yesterday', favorite: false },
-];
-
-const fallbackGames: GameRecord[] = [
-  {
-    id: 'helix-arena',
-    title: 'Helix Arena',
-    genre: 'Hero Shooter',
-    platform: 'PC / Console',
-    player_count: '3-5 players',
-    description: 'Fast team-based matches with hero abilities and short queue times.',
-    is_featured: true,
-  },
-  {
-    id: 'drift-legends-x',
-    title: 'Drift Legends X',
-    genre: 'Racing',
-    platform: 'PC / Console',
-    player_count: '2-8 players',
-    description: 'Arcade racing nights with custom lobbies and private party queues.',
-    is_featured: false,
-  },
-  {
-    id: 'deep-raid',
-    title: 'Deep Raid',
-    genre: 'Extraction',
-    platform: 'PC',
-    player_count: '2-4 players',
-    description: 'High-risk co-op missions with short planning sessions and long-term loot.',
-    is_featured: true,
-  },
-  {
-    id: 'skyforge-party',
-    title: 'Skyforge Party',
-    genre: 'MMO',
-    platform: 'Cross-platform',
-    player_count: '4-6 players',
-    description: 'Dungeon runs and weekly guild goals for a repeat squad.',
-    is_featured: false,
-  },
-];
-
-const notifications = [
-  { label: 'Invite', message: 'NovaHex invited you to a Helix Arena lobby.', age: '2m ago' },
-  { label: 'Reminder', message: 'Deep Raid Warmup starts in 1 hour.', age: '58m ago' },
-  { label: 'System', message: 'Discord sync is ready when you decide to connect it.', age: 'Today' },
-];
-
-const availabilityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-const sections: { value: SectionKey; label: string }[] = [
-  { value: 'dashboard', label: 'Home' },
-  { value: 'friends', label: 'Friends' },
-  { value: 'games', label: 'Games' },
-  { value: 'roulette', label: 'Roulette' },
-  { value: 'lobbies', label: 'Lobbies' },
-  { value: 'schedule', label: 'Schedule' },
-  { value: 'inbox', label: 'Inbox' },
-  { value: 'profile', label: 'Profile' },
-];
-
-const allowSignup = process.env.EXPO_PUBLIC_ALLOW_SIGNUP !== 'false';
-const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
-const discordClientId = process.env.EXPO_PUBLIC_DISCORD_CLIENT_ID?.trim() ?? '';
-const discordStateStorageKey = 'gameschedule-discord-oauth-state';
-
-const profileSelectFields =
-  'id, username, avatar_url, display_name, onboarding_complete, primary_community_id, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';
-
-const getWebBasePath = () => {
-  if (Platform.OS !== 'web') {
-    return '';
-  }
-
-  const pathname = globalThis.window?.location.pathname ?? '';
-  return pathname.startsWith('/GameSchedule') ? '/GameSchedule' : '';
-};
-
-const getWebRedirectUrl = () => {
-  if (Platform.OS !== 'web') {
-    return undefined;
-  }
-
-  const currentLocation = globalThis.window?.location;
-  if (!currentLocation) {
-    return undefined;
-  }
-
-  return `${currentLocation.origin}${getWebBasePath()}/`;
-};
-
-const clearOAuthHashFromUrl = () => {
-  if (Platform.OS !== 'web') {
-    return;
-  }
-
-  const currentLocation = globalThis.window?.location;
-  const currentHistory = globalThis.window?.history;
-  if (!currentLocation?.hash || !currentHistory?.replaceState) {
-    return;
-  }
-
-  const hasOAuthToken = /(?:^#|&)(access_token|refresh_token|provider_token|error|error_description)=/.test(
-    currentLocation.hash,
-  );
-
-  if (!hasOAuthToken) {
-    return;
-  }
-
-  currentHistory.replaceState(currentHistory.state, '', `${currentLocation.pathname}${currentLocation.search}`);
-};
-
-const getDiscordIdentityFromSession = (session: Session | null) => {
-  const user = session?.user;
-  if (!user) {
-    return null;
-  }
-
-  const discordIdentity = user.identities?.find((identity) => identity.provider === 'discord');
-  const identityData = discordIdentity?.identity_data as
-    | {
-        avatar_url?: string;
-        full_name?: string;
-        name?: string;
-        preferred_username?: string;
-        provider_id?: string;
-        sub?: string;
-        user_name?: string;
-      }
-    | undefined;
-
-  const metadata = user.user_metadata as
-    | {
-        avatar_url?: string;
-        full_name?: string;
-        name?: string;
-        preferred_username?: string;
-        provider_id?: string;
-        sub?: string;
-        user_name?: string;
-      }
-    | undefined;
-
-  const discordUserId =
-    identityData?.provider_id ?? identityData?.sub ?? metadata?.provider_id ?? metadata?.sub ?? null;
-
-  if (!discordUserId) {
-    return null;
-  }
-
-  const discordUsername =
-    identityData?.full_name ??
-    identityData?.name ??
-    identityData?.preferred_username ??
-    identityData?.user_name ??
-    metadata?.full_name ??
-    metadata?.name ??
-    metadata?.preferred_username ??
-    metadata?.user_name ??
-    'Discord user';
-
-  return {
-    discord_user_id: discordUserId,
-    discord_username: discordUsername,
-    discord_avatar_url: identityData?.avatar_url ?? metadata?.avatar_url ?? null,
-    discord_connected_at: new Date().toISOString(),
-  };
-};
-
-const unwrapRelation = <T,>(value: T | T[] | null | undefined): T | null => {
-  if (Array.isArray(value)) {
-    return value[0] ?? null;
-  }
-
-  return value ?? null;
-};
-
-const createDefaultLobbyStartDate = () => {
-  const date = new Date();
-  date.setHours(20, 0, 0, 0);
-  return date;
-};
-
-const createDefaultLobbyEndDate = () => {
-  const date = createDefaultLobbyStartDate();
-  date.setHours(date.getHours() + 1);
-  return date;
-};
-
-const getDefaultEndDate = (startDate: Date) => {
-  const endDate = new Date(startDate);
-  endDate.setHours(endDate.getHours() + 1);
-  return endDate;
-};
-
-const resolveAvatarUrl = (
-  record: Pick<Profile, 'avatar_url' | 'discord_avatar_url'> | null | undefined,
-) => {
-  const directAvatarUrl = record?.avatar_url?.trim();
-  if (directAvatarUrl) {
-    return directAvatarUrl;
-  }
-
-  const discordAvatarUrl = record?.discord_avatar_url?.trim();
-  return discordAvatarUrl || '';
-};
-
-const formatCalendarDate = (date: Date) =>
-  date.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
-
-const formatEventTime = (date: Date) =>
-  date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-
-const formatEventRange = (startDate: Date, endDate: Date) => {
-  const dateLabel = formatCalendarDate(startDate);
-  const startLabel = formatEventTime(startDate);
-  const endLabel = formatEventTime(endDate);
-
-  return `${dateLabel}, ${startLabel} - ${endLabel}`;
-};
-
-const setDatePart = (currentDate: Date, nextDate: Date) => {
-  const updatedDate = new Date(currentDate);
-  updatedDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate());
-  return updatedDate;
-};
-
-const setTimePart = (currentDate: Date, nextHour: number, nextMinute: number) => {
-  const updatedDate = new Date(currentDate);
-  updatedDate.setHours(nextHour, nextMinute, 0, 0);
-  return updatedDate;
-};
-
-const createTimeDate = (hours: number, minutes: number) => {
-  const date = new Date();
-  date.setHours(hours, minutes, 0, 0);
-  return date;
-};
-
-const parseDbTimeToDate = (timeValue: string, fallbackHours: number) => {
-  const [hoursValue, minutesValue] = timeValue.split(':');
-  const hours = Number(hoursValue);
-  const minutes = Number(minutesValue);
-
-  return createTimeDate(
-    Number.isNaN(hours) ? fallbackHours : hours,
-    Number.isNaN(minutes) ? 0 : minutes,
-  );
-};
-
-const formatDbTime = (date: Date) =>
-  `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:00`;
-
-const formatAvailabilityRange = (startTime: string, endTime: string) =>
-  `${formatEventTime(parseDbTimeToDate(startTime, 20))} - ${formatEventTime(parseDbTimeToDate(endTime, 21))}`;
-
-const getLobbyEndDate = (lobby: Pick<LobbyRecord, 'scheduled_for' | 'scheduled_until'>) => {
-  if (lobby.scheduled_until) {
-    const explicitEnd = new Date(lobby.scheduled_until);
-    if (!Number.isNaN(explicitEnd.getTime())) {
-      return explicitEnd;
-    }
-  }
-
-  if (lobby.scheduled_for) {
-    const startDate = new Date(lobby.scheduled_for);
-    if (!Number.isNaN(startDate.getTime())) {
-      return getDefaultEndDate(startDate);
-    }
-  }
-
-  return getDefaultEndDate(createDefaultLobbyStartDate());
-};
-
-function StatCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: string;
-}) {
-  return (
-    <Surface style={[styles.statCard, { borderColor: accent }]} elevation={1}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </Surface>
-  );
-}
-
-function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text variant="headlineSmall" style={styles.sectionTitle}>
-        {title}
-      </Text>
-      <Text style={styles.sectionSubtitle}>{subtitle}</Text>
-    </View>
-  );
-}
-
-function EventTimePicker({
-  timeMode,
-  startAt,
-  endAt,
-  onSetNow,
-  onSetLater,
-  onStartAtChange,
-  onEndAtChange,
-}: {
-  timeMode: 'now' | 'later';
-  startAt: Date;
-  endAt: Date;
-  onSetNow: () => void;
-  onSetLater: () => void;
-  onStartAtChange: (date: Date) => void;
-  onEndAtChange: (date: Date) => void;
-}) {
-  const [timePickerTarget, setTimePickerTarget] = React.useState<'start' | 'end' | null>(null);
-  const activeTimeDate = timePickerTarget === 'end' ? endAt : startAt;
-
-  return (
-    <Surface style={styles.eventTimePanel} elevation={1}>
-      <View style={styles.eventTimeHeader}>
-        <View>
-          <Text variant="titleSmall" style={styles.eventTimeTitle}>
-            Event time
-          </Text>
-          <Text style={styles.friendNote}>Pick a controlled calendar time. Events default to one hour.</Text>
-        </View>
-        <Chip icon="clock-outline" style={styles.statusChip}>
-          {timeMode === 'now' ? 'Starts now' : formatEventRange(startAt, endAt)}
-        </Chip>
-      </View>
-      <View style={styles.quickPath}>
-        <Chip selected={timeMode === 'now'} onPress={onSetNow} testID="lobby-time-now-chip">
-          Start now
-        </Chip>
-        <Chip selected={timeMode === 'later'} onPress={onSetLater} testID="lobby-time-later-chip">
-          Schedule it
-        </Chip>
-      </View>
-      {timeMode === 'later' ? (
-        <View style={styles.pickerFieldGroup}>
-          <DatePickerInput
-            locale="en"
-            label="Event date"
-            value={startAt}
-            onChange={(nextDate) => {
-              if (nextDate) {
-                onStartAtChange(setDatePart(startAt, nextDate));
-                onEndAtChange(setDatePart(endAt, nextDate));
-              }
-            }}
-            inputMode="start"
-            mode="outlined"
-            withModal
-            style={styles.input}
-            testID="lobby-date-picker-input"
-          />
-          <Button
-            mode="outlined"
-            icon="clock-outline"
-            onPress={() => setTimePickerTarget('start')}
-            testID="lobby-start-time-picker-button">
-            Start: {formatEventTime(startAt)}
-          </Button>
-          <Button
-            mode="outlined"
-            icon="clock-end"
-            onPress={() => setTimePickerTarget('end')}
-            testID="lobby-end-time-picker-button">
-            End: {formatEventTime(endAt)}
-          </Button>
-          <TimePickerModal
-            visible={Boolean(timePickerTarget)}
-            onDismiss={() => setTimePickerTarget(null)}
-            onConfirm={({ hours, minutes }) => {
-              if (timePickerTarget === 'end') {
-                onEndAtChange(setTimePart(endAt, hours, minutes));
-              } else {
-                onStartAtChange(setTimePart(startAt, hours, minutes));
-              }
-
-              setTimePickerTarget(null);
-            }}
-            hours={activeTimeDate.getHours()}
-            minutes={activeTimeDate.getMinutes()}
-            label={timePickerTarget === 'end' ? 'Pick end time' : 'Pick start time'}
-            cancelLabel="Cancel"
-            confirmLabel="OK"
-            locale="en"
-            use24HourClock={false}
-          />
-          <View style={styles.pickerSummary}>
-            <Text variant="titleSmall" style={styles.eventTimeTitle}>
-              Selected event window
-            </Text>
-            <Text style={styles.friendNote}>{formatEventRange(startAt, endAt)}</Text>
-          </View>
-        </View>
-      ) : null}
-    </Surface>
-  );
-}
-
-function TimeRangePicker({
-  startAt,
-  endAt,
-  onStartAtChange,
-  onEndAtChange,
-  startTestID,
-  endTestID,
-}: {
-  startAt: Date;
-  endAt: Date;
-  onStartAtChange: (date: Date) => void;
-  onEndAtChange: (date: Date) => void;
-  startTestID: string;
-  endTestID: string;
-}) {
-  const [timePickerTarget, setTimePickerTarget] = React.useState<'start' | 'end' | null>(null);
-  const activeTimeDate = timePickerTarget === 'end' ? endAt : startAt;
-
-  return (
-    <>
-      <View style={styles.timeRangeButtons}>
-        <Button
-          mode="outlined"
-          icon="clock-outline"
-          onPress={() => setTimePickerTarget('start')}
-          testID={startTestID}>
-          Start: {formatEventTime(startAt)}
-        </Button>
-        <Button
-          mode="outlined"
-          icon="clock-end"
-          onPress={() => setTimePickerTarget('end')}
-          testID={endTestID}>
-          End: {formatEventTime(endAt)}
-        </Button>
-      </View>
-      <TimePickerModal
-        visible={Boolean(timePickerTarget)}
-        onDismiss={() => setTimePickerTarget(null)}
-        onConfirm={({ hours, minutes }) => {
-          if (timePickerTarget === 'end') {
-            onEndAtChange(setTimePart(endAt, hours, minutes));
-          } else {
-            onStartAtChange(setTimePart(startAt, hours, minutes));
-          }
-
-          setTimePickerTarget(null);
-        }}
-        hours={activeTimeDate.getHours()}
-        minutes={activeTimeDate.getMinutes()}
-        label={timePickerTarget === 'end' ? 'Pick end time' : 'Pick start time'}
-        cancelLabel="Cancel"
-        confirmLabel="OK"
-        locale="en"
-        use24HourClock={false}
-      />
-    </>
-  );
-}
 
 export default function HomeScreen() {
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
@@ -640,66 +96,134 @@ export default function HomeScreen() {
     nextPassword: '',
     confirmPassword: '',
   });
-  const [gamesLoading, setGamesLoading] = React.useState(false);
-  const [gamesError, setGamesError] = React.useState('');
-  const [libraryGames, setLibraryGames] = React.useState<GameRecord[]>(fallbackGames);
-  const [gameSearch, setGameSearch] = React.useState('');
-  const [favoriteGameIds, setFavoriteGameIds] = React.useState<string[]>([]);
-  const [rouletteEntries, setRouletteEntries] = React.useState<RouletteEntry[]>([]);
-  const [gameActionBusyId, setGameActionBusyId] = React.useState<string | null>(null);
-  const [gameActionMessage, setGameActionMessage] = React.useState('');
-  const [friendSearch, setFriendSearch] = React.useState('');
-  const [friendLoading, setFriendLoading] = React.useState(false);
-  const [friendSearchLoading, setFriendSearchLoading] = React.useState(false);
-  const [friendError, setFriendError] = React.useState('');
-  const [friendMessage, setFriendMessage] = React.useState('');
-  const [friendActionBusyId, setFriendActionBusyId] = React.useState<string | null>(null);
-  const [friendships, setFriendships] = React.useState<FriendshipRecord[]>([]);
-  const [friendRequests, setFriendRequests] = React.useState<FriendRequestRecord[]>([]);
-  const [friendDirectory, setFriendDirectory] = React.useState<Record<string, Profile>>({});
-  const [friendSearchResults, setFriendSearchResults] = React.useState<Profile[]>([]);
-  const [currentCommunity, setCurrentCommunity] = React.useState<CommunityRecord | null>(null);
-  const [communityMembers, setCommunityMembers] = React.useState<CommunityMemberRecord[]>([]);
-  const [communityProfiles, setCommunityProfiles] = React.useState<Profile[]>([]);
-  const [communityLoading, setCommunityLoading] = React.useState(false);
-  const [communityBusy, setCommunityBusy] = React.useState(false);
-  const [communityError, setCommunityError] = React.useState('');
-  const [communityMessage, setCommunityMessage] = React.useState('');
-  const [communityInviteCode, setCommunityInviteCode] = React.useState('');
-  const [communityName, setCommunityName] = React.useState('');
-  const [lobbiesLoading, setLobbiesLoading] = React.useState(false);
-  const [lobbiesError, setLobbiesError] = React.useState('');
-  const [lobbyBusy, setLobbyBusy] = React.useState(false);
-  const [lobbyMessage, setLobbyMessage] = React.useState('');
-  const [lobbies, setLobbies] = React.useState<LobbyRecord[]>([]);
-  const [selectedLobbyGameId, setSelectedLobbyGameId] = React.useState('');
-  const [selectedLobbyInviteNames, setSelectedLobbyInviteNames] = React.useState<string[]>([]);
-  const [availabilityLoading, setAvailabilityLoading] = React.useState(false);
-  const [availabilityBusy, setAvailabilityBusy] = React.useState(false);
-  const [availabilityError, setAvailabilityError] = React.useState('');
-  const [availabilityMessage, setAvailabilityMessage] = React.useState('');
-  const [availabilityWindows, setAvailabilityWindows] = React.useState<AvailabilityWindow[]>([]);
-  const [autoDeclineOutsideHours, setAutoDeclineOutsideHours] = React.useState(false);
-  const [availabilityDraft, setAvailabilityDraft] = React.useState({
-    dayKey: 'Mon',
-    startsAt: createTimeDate(20, 0).toISOString(),
-    endsAt: createTimeDate(22, 0).toISOString(),
-  });
-  const [editingLobbyId, setEditingLobbyId] = React.useState<string | null>(null);
-  const [rescheduleDraft, setRescheduleDraft] = React.useState({
-    startAt: createDefaultLobbyStartDate().toISOString(),
-    endAt: createDefaultLobbyEndDate().toISOString(),
-  });
-  const [lobbyForm, setLobbyForm] = React.useState({
-    title: '',
-    timeMode: 'later' as 'now' | 'later',
-    startAt: createDefaultLobbyStartDate().toISOString(),
-    endAt: createDefaultLobbyEndDate().toISOString(),
-    scheduledFor: '',
-    visibility: 'private' as 'private' | 'public',
-  });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
   const [friendFilter, setFriendFilter] = React.useState<'all' | 'favorites' | 'pending'>('all');
+
+  const {
+    favoriteGameIds,
+    filteredGames,
+    gameActionBusyId,
+    gameActionMessage,
+    gameSearch,
+    gamesError,
+    gamesLoading,
+    libraryGames,
+    rouletteEntries,
+    roulettePoolGames,
+    setFavoriteGameIds,
+    setGameActionBusyId,
+    setGameActionMessage,
+    setGameSearch,
+    setRouletteEntries,
+  } = useGamesState(session);
+
+  const {
+    acceptedFriends,
+    communityBusy,
+    communityError,
+    communityInviteCode,
+    communityLoading,
+    communityMessage,
+    communityName,
+    currentCommunity,
+    friendActionBusyId,
+    friendError,
+    friendLoading,
+    friendMessage,
+    friendSearch,
+    friendSearchLoading,
+    friendSearchResults,
+    friendships,
+    getFriendRequestLabel,
+    getFriendSearchStatus,
+    incomingFriendRequests,
+    outgoingFriendRequests,
+    setCommunityBusy,
+    setCommunityError,
+    setCommunityInviteCode,
+    setCommunityMembers,
+    setCommunityMessage,
+    setCommunityName,
+    setCommunityProfiles,
+    setCurrentCommunity,
+    setFriendActionBusyId,
+    setFriendDirectory,
+    setFriendError,
+    setFriendMessage,
+    setFriendRequests,
+    setFriendSearch,
+    setFriendships,
+    suggestedFriends,
+  } = useSocialState({
+    primaryCommunityId: profile?.primary_community_id,
+    session,
+  });
+
+  const {
+    editingLobbyId,
+    incomingLobbies,
+    inviteReadyFriends,
+    loadLobbies,
+    lobbyInviteHistory,
+    lobbies,
+    lobbiesError,
+    lobbiesLoading,
+    lobbyMembers,
+    lobbyBusy,
+    lobbyForm,
+    lobbyMessage,
+    lobbyProfileDirectory,
+    hostedLobbies,
+    rescheduleEndAt,
+    rescheduleStartAt,
+    selectedLobbyEndAt,
+    selectedLobbyGame,
+    selectedLobbyGameId,
+    selectedLobbyInviteProfileIds,
+    selectedLobbyStartAt,
+    setEditingLobbyId,
+    setLobbiesError,
+    setLobbyBusy,
+    setLobbyForm,
+    setLobbyMessage,
+    setRescheduleDraft,
+    setSelectedLobbyGameId,
+    setSelectedLobbyInviteProfileIds,
+  } = useLobbyState({
+    acceptedFriends,
+    libraryGames,
+    session,
+  });
+
+  const {
+    autoDeclineOutsideHours,
+    availabilityBusy,
+    availabilityDraft,
+    availabilityDraftEndAt,
+    availabilityDraftStartAt,
+    availabilityError,
+    availabilityLoading,
+    availabilityMessage,
+    availabilityWindows,
+    setAutoDeclineOutsideHours,
+    setAvailabilityBusy,
+    setAvailabilityDraft,
+    setAvailabilityError,
+    setAvailabilityMessage,
+    setAvailabilityWindows,
+  } = useAvailabilityState(session);
+
+  const [inviteResponseDrafts, setInviteResponseDrafts] = React.useState<
+    Record<
+      string,
+      {
+        decision: Exclude<LobbyInviteStatus, 'pending'>;
+        comment: string;
+        startAt: string;
+        endAt: string;
+      }
+    >
+  >({});
 
   React.useEffect(() => {
     if (!allowSignup && authMode === 'signup') {
@@ -885,384 +409,10 @@ export default function HomeScreen() {
   }, [session]);
 
   React.useEffect(() => {
-    const loadGames = async () => {
-      if (!session?.user) {
-        setLibraryGames(fallbackGames);
-        setGamesLoading(false);
-        return;
-      }
-
-      setGamesLoading(true);
-      setGamesError('');
-
-      const { data, error } = await supabase
-        .from('games')
-        .select('id, title, genre, platform, player_count, description, is_featured')
-        .order('is_featured', { ascending: false })
-        .order('title', { ascending: true });
-
-      if (error) {
-        setGamesError(error.message);
-        setLibraryGames(fallbackGames);
-      } else if (data && data.length > 0) {
-        setLibraryGames(data);
-      } else {
-        setLibraryGames(fallbackGames);
-      }
-
-      setGamesLoading(false);
-    };
-
-    loadGames();
-  }, [session]);
-
-  React.useEffect(() => {
-    const loadGameRelations = async () => {
-      if (!session?.user) {
-        setFavoriteGameIds([]);
-        setRouletteEntries([]);
-        return;
-      }
-
-      const [{ data: favorites, error: favoritesError }, { data: pool, error: poolError }] =
-        await Promise.all([
-          supabase
-            .from('favorite_games')
-            .select('game_id')
-            .eq('profile_id', session.user.id),
-          supabase
-            .from('roulette_pool_entries')
-            .select('game_id, games(id, title, genre, platform)')
-            .eq('profile_id', session.user.id),
-        ]);
-
-      if (!favoritesError && favorites) {
-        setFavoriteGameIds(favorites.map((entry) => entry.game_id));
-      }
-
-      if (!poolError && pool) {
-        setRouletteEntries(
-          pool.map((entry) => ({
-            game_id: entry.game_id,
-            games: unwrapRelation(entry.games as RelatedGameSummary[] | RelatedGameSummary | null),
-          })),
-        );
-      }
-    };
-
-    loadGameRelations();
-  }, [session]);
-
-  React.useEffect(() => {
-    if (!session?.user) {
-      setFriendships([]);
-      setFriendRequests([]);
-      setFriendDirectory({});
-      setFriendSearchResults([]);
-      return;
-    }
-
-    const loadFriendsData = async () => {
-      setFriendLoading(true);
-      setFriendError('');
-
-      const [{ data: friendshipsData, error: friendshipsError }, { data: requestsData, error: requestsError }] =
-        await Promise.all([
-          supabase
-            .from('friends')
-            .select('profile_id, friend_profile_id, is_favorite')
-            .eq('profile_id', session.user.id),
-          supabase
-            .from('friend_requests')
-            .select('id, requester_profile_id, addressee_profile_id, status, created_at')
-            .or(`requester_profile_id.eq.${session.user.id},addressee_profile_id.eq.${session.user.id}`)
-            .order('created_at', { ascending: false }),
-        ]);
-
-      if (friendshipsError || requestsError) {
-        setFriendError(friendshipsError?.message ?? requestsError?.message ?? 'Unable to load friends.');
-        setFriendLoading(false);
-        return;
-      }
-
-      const nextFriendships = (friendshipsData as FriendshipRecord[] | null) ?? [];
-      const nextRequests = (requestsData as FriendRequestRecord[] | null) ?? [];
-      const profileIds = Array.from(
-        new Set(
-          [
-            ...nextFriendships.map((friendship) => friendship.friend_profile_id),
-            ...nextRequests.map((request) =>
-              request.requester_profile_id === session.user?.id
-                ? request.addressee_profile_id
-                : request.requester_profile_id,
-            ),
-          ].filter(Boolean),
-        ),
-      );
-
-      setFriendships(nextFriendships);
-      setFriendRequests(nextRequests);
-
-      if (profileIds.length === 0) {
-        setFriendDirectory({});
-        setFriendLoading(false);
-        return;
-      }
-
-      const { data: profilesData, error: profilesError } = await supabase
-        .from('profiles')
-        .select(profileSelectFields)
-        .in('id', profileIds);
-
-      if (profilesError) {
-        setFriendError(profilesError.message);
-      } else {
-        const nextDirectory = ((profilesData as Profile[] | null) ?? []).reduce<Record<string, Profile>>(
-          (accumulator, currentProfile) => {
-            accumulator[currentProfile.id] = currentProfile;
-            return accumulator;
-          },
-          {},
-        );
-
-        setFriendDirectory(nextDirectory);
-      }
-
-      setFriendLoading(false);
-    };
-
-    loadFriendsData();
-  }, [session]);
-
-  React.useEffect(() => {
-    if (!session?.user || !profile?.primary_community_id) {
-      setCurrentCommunity(null);
-      setCommunityMembers([]);
-      setCommunityProfiles([]);
-      setCommunityLoading(false);
-      return;
-    }
-
-    const loadCommunityData = async () => {
-      setCommunityLoading(true);
-      setCommunityError('');
-
-      const [{ data: communityData, error: communityErrorValue }, { data: membersData, error: membersError }] =
-        await Promise.all([
-          supabase
-            .from('communities')
-            .select('id, name, invite_code, discord_guild_id, created_by_profile_id, created_at')
-            .eq('id', profile.primary_community_id)
-            .maybeSingle(),
-          supabase
-            .from('community_members')
-            .select('community_id, profile_id, role, created_at')
-            .eq('community_id', profile.primary_community_id),
-        ]);
-
-      if (communityErrorValue || membersError) {
-        setCommunityError(
-          communityErrorValue?.message ?? membersError?.message ?? 'Unable to load your community.',
-        );
-        setCommunityLoading(false);
-        return;
-      }
-
-      const nextCommunity = (communityData as CommunityRecord | null) ?? null;
-      const nextMembers = (membersData as CommunityMemberRecord[] | null) ?? [];
-      const memberProfileIds = nextMembers
-        .map((member) => member.profile_id)
-        .filter((memberId) => memberId && memberId !== session.user.id);
-
-      setCurrentCommunity(nextCommunity);
-      setCommunityMembers(nextMembers);
-
-      if (memberProfileIds.length === 0) {
-        setCommunityProfiles([]);
-        setCommunityLoading(false);
-        return;
-      }
-
-      const { data: communityProfilesData, error: communityProfilesError } = await supabase
-        .from('profiles')
-        .select(profileSelectFields)
-        .in('id', memberProfileIds);
-
-      if (communityProfilesError) {
-        setCommunityError(communityProfilesError.message);
-      } else {
-        setCommunityProfiles((communityProfilesData as Profile[] | null) ?? []);
-      }
-
-      setCommunityLoading(false);
-    };
-
-    loadCommunityData();
-  }, [profile?.primary_community_id, session?.user]);
-
-  React.useEffect(() => {
-    if (!session?.user || friendSearch.trim().length < 2) {
-      setFriendSearchResults([]);
-      setFriendSearchLoading(false);
-      return;
-    }
-
-    const timeoutId = setTimeout(async () => {
-      setFriendSearchLoading(true);
-
-      const query = friendSearch.trim();
-      const { data, error } = await supabase
-        .from('profiles')
-        .select(profileSelectFields)
-        .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
-        .neq('id', session.user.id)
-        .limit(6);
-
-      if (error) {
-        setFriendError(error.message);
-        setFriendSearchResults([]);
-      } else {
-        setFriendSearchResults((data as Profile[] | null) ?? []);
-      }
-
-      setFriendSearchLoading(false);
-    }, 250);
-
-    return () => clearTimeout(timeoutId);
-  }, [friendSearch, session]);
-
-  React.useEffect(() => {
-    if (!session?.user) {
-      setLobbies([]);
-      setLobbiesLoading(false);
-      return;
-    }
-
-    const loadLobbies = async () => {
-      setLobbiesLoading(true);
-      setLobbiesError('');
-
-      const { data, error } = await supabase
-        .from('lobbies')
-        .select(
-          'id, title, scheduled_for, scheduled_until, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
-        )
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        setLobbiesError(error.message);
-      } else {
-        setLobbies(
-          ((data ?? []) as (
-            Omit<LobbyRecord, 'games'> & {
-              games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
-            }
-          )[]).map((lobby) => ({
-            ...lobby,
-            games: unwrapRelation(lobby.games),
-          })),
-        );
-      }
-
-      setLobbiesLoading(false);
-    };
-
-    loadLobbies();
-  }, [session]);
-
-  React.useEffect(() => {
-    if (!session?.user) {
-      setAvailabilityWindows([]);
-      setAutoDeclineOutsideHours(false);
-      setAvailabilityLoading(false);
-      return;
-    }
-
-    const loadAvailability = async () => {
-      setAvailabilityLoading(true);
-      setAvailabilityError('');
-
-      const [{ data: settings, error: settingsError }, { data: windows, error: windowsError }] =
-        await Promise.all([
-          supabase
-            .from('availability_settings')
-            .select('profile_id, auto_decline_outside_hours')
-            .eq('profile_id', session.user.id)
-            .maybeSingle(),
-          supabase
-            .from('availability_windows')
-            .select('id, profile_id, day_key, starts_at, ends_at, created_at')
-            .eq('profile_id', session.user.id)
-            .order('day_key', { ascending: true })
-            .order('starts_at', { ascending: true }),
-        ]);
-
-      if (settingsError || windowsError) {
-        setAvailabilityError(settingsError?.message ?? windowsError?.message ?? 'Unable to load availability.');
-        setAvailabilityLoading(false);
-        return;
-      }
-
-      setAvailabilityWindows((windows as AvailabilityWindow[] | null) ?? []);
-      setAutoDeclineOutsideHours((settings as AvailabilitySetting | null)?.auto_decline_outside_hours ?? false);
-      setAvailabilityLoading(false);
-    };
-
-    loadAvailability();
-  }, [session]);
-
-  React.useEffect(() => {
-    if (selectedLobbyGameId || libraryGames.length === 0) {
-      return;
-    }
-
-    setSelectedLobbyGameId(libraryGames[0].id);
-    setLobbyForm((current) => ({
-      ...current,
-      title: current.title || `${libraryGames[0].title} Lobby`,
-    }));
-  }, [libraryGames, selectedLobbyGameId]);
-
-  React.useEffect(() => {
     if (session?.user && profile && !profile.primary_community_id && section === 'dashboard') {
       setSection('friends');
     }
   }, [profile, section, session]);
-
-  const acceptedFriends = React.useMemo(() => {
-    return friendships
-      .map((friendship) => {
-        const linkedProfile = friendDirectory[friendship.friend_profile_id];
-
-        if (!linkedProfile) {
-          return null;
-        }
-
-        return {
-          ...linkedProfile,
-          is_favorite: friendship.is_favorite,
-        };
-      })
-      .filter(
-        (
-          friend,
-        ): friend is Profile & {
-          is_favorite: boolean;
-        } => Boolean(friend),
-      );
-  }, [friendDirectory, friendships]);
-
-  const incomingFriendRequests = React.useMemo(() => {
-    return friendRequests.filter(
-      (request) => request.status === 'pending' && request.addressee_profile_id === session?.user?.id,
-    );
-  }, [friendRequests, session]);
-
-  const outgoingFriendRequests = React.useMemo(() => {
-    return friendRequests.filter(
-      (request) => request.status === 'pending' && request.requester_profile_id === session?.user?.id,
-    );
-  }, [friendRequests, session]);
 
   const visibleFriends = React.useMemo(() => {
     if (friendFilter === 'pending') {
@@ -1276,107 +426,198 @@ export default function HomeScreen() {
     return acceptedFriends;
   }, [acceptedFriends, friendFilter]);
 
-  const suggestedFriends = React.useMemo(() => {
-    const pendingIds = new Set(
-      friendRequests
-        .filter((request) => request.status === 'pending')
-        .map((request) =>
-          request.requester_profile_id === session?.user?.id
-            ? request.addressee_profile_id
-            : request.requester_profile_id,
-        ),
-    );
-    const existingFriendIds = new Set(friendships.map((friendship) => friendship.friend_profile_id));
-    const memberRoleByProfileId = communityMembers.reduce<Record<string, CommunityMemberRecord['role']>>(
-      (accumulator, member) => {
-        accumulator[member.profile_id] = member.role;
+  const lobbyMembersByLobbyId = React.useMemo(
+    () =>
+      lobbyMembers.reduce<Record<string, LobbyMemberRecord[]>>((accumulator, member) => {
+        if (!accumulator[member.lobby_id]) {
+          accumulator[member.lobby_id] = [];
+        }
+
+        accumulator[member.lobby_id].push(member);
         return accumulator;
-      },
-      {},
-    );
+      }, {}),
+    [lobbyMembers],
+  );
 
-    return communityProfiles
-      .filter(
-        (candidate) =>
-          Boolean(candidate.discord_user_id) &&
-          candidate.id !== session?.user?.id &&
-          !existingFriendIds.has(candidate.id) &&
-          !pendingIds.has(candidate.id),
-      )
-      .map(
-        (candidate): SuggestedFriendRecord => ({
-          ...candidate,
-          community_role: memberRoleByProfileId[candidate.id] ?? 'member',
-        }),
-      )
-      .sort((left, right) => {
-        const leftName = (left.display_name ?? left.username ?? '').toLowerCase();
-        const rightName = (right.display_name ?? right.username ?? '').toLowerCase();
-        return leftName.localeCompare(rightName);
+  const lobbyHistoryByMemberKey = React.useMemo(
+    () =>
+      lobbyInviteHistory.reduce<Record<string, LobbyInviteHistoryRecord[]>>((accumulator, entry) => {
+        const key = `${entry.lobby_id}:${entry.profile_id}`;
+        if (!accumulator[key]) {
+          accumulator[key] = [];
+        }
+
+        accumulator[key].push(entry);
+        return accumulator;
+      }, {}),
+    [lobbyInviteHistory],
+  );
+
+  const getLobbyProfile = React.useCallback(
+    (profileId: string) => {
+      if (profile?.id === profileId) {
+        return profile;
+      }
+
+      return lobbyProfileDirectory[profileId] ?? null;
+    },
+    [lobbyProfileDirectory, profile],
+  );
+
+  const getLobbyProfileLabel = React.useCallback(
+    (profileId: string) => {
+      const linkedProfile = getLobbyProfile(profileId);
+      return linkedProfile?.display_name ?? linkedProfile?.username ?? 'Player';
+    },
+    [getLobbyProfile],
+  );
+
+  const getLobbyProfileAvatarUrl = React.useCallback(
+    (profileId: string) => resolveAvatarUrl(getLobbyProfile(profileId)),
+    [getLobbyProfile],
+  );
+
+  const getMemberHistory = React.useCallback(
+    (lobbyId: string, profileId: string) => lobbyHistoryByMemberKey[`${lobbyId}:${profileId}`] ?? [],
+    [lobbyHistoryByMemberKey],
+  );
+
+  const getCurrentLobbyMembership = React.useCallback(
+    (lobbyId: string) => lobbyMembers.find((member) => member.lobby_id === lobbyId && member.profile_id === session?.user?.id) ?? null,
+    [lobbyMembers, session],
+  );
+
+  const createInviteResponseDraft = React.useCallback(
+    (lobby: LobbyRecord, member: LobbyMemberRecord | null) => {
+      const defaultStartAt =
+        member?.suggested_start_at ??
+        lobby.scheduled_for ??
+        createDefaultLobbyStartDate().toISOString();
+      const parsedStartAt = new Date(defaultStartAt);
+      const safeStartAt = Number.isNaN(parsedStartAt.getTime()) ? createDefaultLobbyStartDate() : parsedStartAt;
+      const defaultEndAt =
+        member?.suggested_end_at ??
+        lobby.scheduled_until ??
+        getDefaultEndDate(safeStartAt).toISOString();
+      const parsedEndAt = new Date(defaultEndAt);
+      const safeEndAt = Number.isNaN(parsedEndAt.getTime()) ? getDefaultEndDate(safeStartAt) : parsedEndAt;
+
+      return {
+        decision:
+          member?.rsvp_status === 'declined' || member?.rsvp_status === 'suggested_time'
+            ? member.rsvp_status
+            : 'accepted',
+        comment: member?.response_comment ?? '',
+        startAt: safeStartAt.toISOString(),
+        endAt: safeEndAt.toISOString(),
+      };
+    },
+    [],
+  );
+
+  const getInviteResponseDraft = React.useCallback(
+    (lobby: LobbyRecord, member: LobbyMemberRecord | null) => inviteResponseDrafts[lobby.id] ?? createInviteResponseDraft(lobby, member),
+    [createInviteResponseDraft, inviteResponseDrafts],
+  );
+
+  const updateInviteResponseDraft = React.useCallback(
+    (
+      lobby: LobbyRecord,
+      member: LobbyMemberRecord | null,
+      updater:
+        | Partial<{
+            decision: Exclude<LobbyInviteStatus, 'pending'>;
+            comment: string;
+            startAt: string;
+            endAt: string;
+          }>
+        | ((current: {
+            decision: Exclude<LobbyInviteStatus, 'pending'>;
+            comment: string;
+            startAt: string;
+            endAt: string;
+          }) => {
+            decision: Exclude<LobbyInviteStatus, 'pending'>;
+            comment: string;
+            startAt: string;
+            endAt: string;
+          }),
+    ) => {
+      setInviteResponseDrafts((current) => {
+        const existing = current[lobby.id] ?? createInviteResponseDraft(lobby, member);
+        const nextValue = typeof updater === 'function' ? updater(existing) : { ...existing, ...updater };
+
+        return {
+          ...current,
+          [lobby.id]: nextValue,
+        };
       });
-  }, [communityMembers, communityProfiles, friendRequests, friendships, session]);
+    },
+    [createInviteResponseDraft],
+  );
 
-  const filteredGames = React.useMemo(() => {
-    const query = gameSearch.trim().toLowerCase();
-
-    if (!query) {
-      return libraryGames;
+  const getLobbyStatusColors = React.useCallback((status: LobbyInviteStatus, isCurrent: boolean) => {
+    if (!isCurrent) {
+      return {
+        chipStyle: styles.inviteHistoryMutedChip,
+        textStyle: styles.inviteHistoryMutedText,
+      };
     }
 
-    return libraryGames.filter((game) => {
-      return [game.title, game.genre, game.platform, game.description ?? '']
-        .join(' ')
-        .toLowerCase()
-        .includes(query);
-    });
-  }, [gameSearch, libraryGames]);
-
-  const roulettePoolGames = React.useMemo(() => {
-    return rouletteEntries
-      .map((entry) => entry.games)
-      .filter((game): game is Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform'> => Boolean(game));
-  }, [rouletteEntries]);
-
-  const selectedLobbyGame = React.useMemo(() => {
-    return libraryGames.find((game) => game.id === selectedLobbyGameId) ?? null;
-  }, [libraryGames, selectedLobbyGameId]);
-
-  const inviteReadyFriends = React.useMemo(() => {
-    if (acceptedFriends.length > 0) {
-      return acceptedFriends.map((friend) => ({
-        name: friend.display_name ?? friend.username ?? 'Player',
-      }));
+    if (status === 'accepted') {
+      return {
+        chipStyle: styles.inviteAcceptedChip,
+        textStyle: styles.inviteAcceptedText,
+      };
     }
 
-    return fallbackInviteFriends
-      .filter((friend) => friend.status !== 'Pending')
-      .map((friend) => ({ name: friend.name }));
-  }, [acceptedFriends]);
+    if (status === 'declined') {
+      return {
+        chipStyle: styles.inviteDeclinedChip,
+        textStyle: styles.inviteDeclinedText,
+      };
+    }
 
-  const availabilityDraftStartAt = React.useMemo(() => {
-    const parsedDate = new Date(availabilityDraft.startsAt);
-    return Number.isNaN(parsedDate.getTime()) ? createTimeDate(20, 0) : parsedDate;
-  }, [availabilityDraft.startsAt]);
-  const availabilityDraftEndAt = React.useMemo(() => {
-    const parsedDate = new Date(availabilityDraft.endsAt);
-    return Number.isNaN(parsedDate.getTime()) ? createTimeDate(22, 0) : parsedDate;
-  }, [availabilityDraft.endsAt]);
-  const selectedLobbyStartAt = React.useMemo(() => {
-    const parsedDate = new Date(lobbyForm.startAt);
-    return Number.isNaN(parsedDate.getTime()) ? createDefaultLobbyStartDate() : parsedDate;
-  }, [lobbyForm.startAt]);
-  const selectedLobbyEndAt = React.useMemo(() => {
-    const parsedDate = new Date(lobbyForm.endAt);
-    return Number.isNaN(parsedDate.getTime()) ? getDefaultEndDate(selectedLobbyStartAt) : parsedDate;
-  }, [lobbyForm.endAt, selectedLobbyStartAt]);
-  const rescheduleStartAt = React.useMemo(() => {
-    const parsedDate = new Date(rescheduleDraft.startAt);
-    return Number.isNaN(parsedDate.getTime()) ? createDefaultLobbyStartDate() : parsedDate;
-  }, [rescheduleDraft.startAt]);
-  const rescheduleEndAt = React.useMemo(() => {
-    const parsedDate = new Date(rescheduleDraft.endAt);
-    return Number.isNaN(parsedDate.getTime()) ? getDefaultEndDate(rescheduleStartAt) : parsedDate;
-  }, [rescheduleDraft.endAt, rescheduleStartAt]);
+    if (status === 'suggested_time') {
+      return {
+        chipStyle: styles.inviteSuggestedChip,
+        textStyle: styles.inviteSuggestedText,
+      };
+    }
+
+    return {
+      chipStyle: styles.invitePendingChip,
+      textStyle: styles.invitePendingText,
+    };
+  }, []);
+
+  const formatInviteStatusLabel = React.useCallback((status: LobbyInviteStatus) => {
+    if (status === 'suggested_time') {
+      return 'Suggested time';
+    }
+
+    if (status === 'accepted') {
+      return 'Accepted';
+    }
+
+    if (status === 'declined') {
+      return 'Declined';
+    }
+
+    return 'Pending';
+  }, []);
+
+  const formatHistoryMessage = React.useCallback(
+    (entry: LobbyInviteHistoryRecord) => {
+      const actionLabel = formatInviteStatusLabel(entry.rsvp_status);
+      if (entry.rsvp_status === 'suggested_time' && entry.suggested_start_at && entry.suggested_end_at) {
+        return `${actionLabel} | ${formatEventRange(new Date(entry.suggested_start_at), new Date(entry.suggested_end_at))}`;
+      }
+
+      return actionLabel;
+    },
+    [formatInviteStatusLabel],
+  );
 
   const prepareLobbyDraft = React.useCallback(
     (gameId: string) => {
@@ -1391,11 +632,18 @@ export default function HomeScreen() {
         ...current,
         title: `${game.title} Lobby`,
       }));
-      setSelectedLobbyInviteNames([]);
+      setSelectedLobbyInviteProfileIds([]);
       setLobbyMessage('');
       setSection('lobbies');
     },
-    [libraryGames],
+    [
+      libraryGames,
+      setLobbyForm,
+      setLobbyMessage,
+      setSection,
+      setSelectedLobbyGameId,
+      setSelectedLobbyInviteProfileIds,
+    ],
   );
 
   const handleCreateLobby = async () => {
@@ -1436,21 +684,15 @@ export default function HomeScreen() {
     setLobbiesError('');
     setLobbyMessage('');
 
-    const { data: createdLobby, error: lobbyError } = await supabase
-      .from('lobbies')
-      .insert({
-        game_id: selectedLobbyGame.id,
-        host_profile_id: session.user.id,
-        title,
-        scheduled_for: scheduledFor,
-        scheduled_until: scheduledUntil,
-        is_private: lobbyForm.visibility === 'private',
-        status: 'scheduled',
-      })
-      .select(
-        'id, title, scheduled_for, scheduled_until, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
-      )
-      .single();
+    const invitedProfileIds = Array.from(new Set(selectedLobbyInviteProfileIds));
+    const { error: lobbyError } = await supabase.rpc('create_lobby_with_invites', {
+      p_game_id: selectedLobbyGame.id,
+      p_title: title,
+      p_scheduled_for: scheduledFor,
+      p_scheduled_until: scheduledUntil,
+      p_is_private: lobbyForm.visibility === 'private',
+      p_invited_profile_ids: invitedProfileIds,
+    });
 
     if (lobbyError) {
       setLobbiesError(lobbyError.message);
@@ -1458,35 +700,11 @@ export default function HomeScreen() {
       return;
     }
 
-    const { error: memberError } = await supabase.from('lobby_members').insert({
-      lobby_id: createdLobby.id,
-      profile_id: session.user.id,
-      role: 'host',
-      rsvp_status: 'accepted',
-    });
-
-    const normalizedCreatedLobby: LobbyRecord = {
-      ...(createdLobby as Omit<LobbyRecord, 'games'> & {
-        games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
-      }),
-      games: unwrapRelation(
-        (createdLobby as {
-          games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
-        }).games,
-      ),
-    };
-
-    setLobbies((current) => [
-      {
-        ...normalizedCreatedLobby,
-        invite_count: selectedLobbyInviteNames.length,
-      },
-      ...current,
-    ]);
+    await loadLobbies();
     setLobbyMessage(
-      memberError
-        ? `Lobby created, but host membership setup needs attention: ${memberError.message}`
-        : `Lobby created.${selectedLobbyInviteNames.length > 0 ? ` ${selectedLobbyInviteNames.length} invite draft${selectedLobbyInviteNames.length === 1 ? '' : 's'} ready.` : ''}`,
+      invitedProfileIds.length > 0
+        ? `Lobby created and ${invitedProfileIds.length} invite${invitedProfileIds.length === 1 ? '' : 's'} sent.`
+        : 'Lobby created.',
     );
     setLobbyForm({
       title: `${selectedLobbyGame.title} Lobby`,
@@ -1496,7 +714,7 @@ export default function HomeScreen() {
       scheduledFor: '',
       visibility: 'private',
     });
-    setSelectedLobbyInviteNames([]);
+    setSelectedLobbyInviteProfileIds([]);
     setLobbyBusy(false);
   };
 
@@ -1647,17 +865,13 @@ export default function HomeScreen() {
     setLobbiesError('');
     setLobbyMessage('');
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('lobbies')
       .update({
         scheduled_for: rescheduleStartAt.toISOString(),
         scheduled_until: rescheduleEndAt.toISOString(),
       })
-      .eq('id', lobby.id)
-      .select(
-        'id, title, scheduled_for, scheduled_until, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
-      )
-      .single();
+      .eq('id', lobby.id);
 
     if (error) {
       setLobbiesError(error.message);
@@ -1665,54 +879,98 @@ export default function HomeScreen() {
       return;
     }
 
-    const normalizedLobby: LobbyRecord = {
-      ...(data as Omit<LobbyRecord, 'games'> & {
-        games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
-      }),
-      games: unwrapRelation(
-        (data as {
-          games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
-        }).games,
-      ),
-    };
-
-    setLobbies((current) =>
-      current.map((item) => (item.id === lobby.id ? { ...normalizedLobby, invite_count: item.invite_count } : item)),
-    );
+    await loadLobbies();
     setEditingLobbyId(null);
     setLobbyMessage('Lobby time updated.');
     setLobbyBusy(false);
   };
 
-  const getFriendRequestLabel = (request: FriendRequestRecord) => {
-    const otherProfileId =
-      request.requester_profile_id === session?.user?.id
-        ? request.addressee_profile_id
-        : request.requester_profile_id;
-    const otherProfile = friendDirectory[otherProfileId];
+  const handleRespondToLobbyInvite = async (lobby: LobbyRecord, membership: LobbyMemberRecord) => {
+    if (!session?.user) {
+      return;
+    }
 
-    return otherProfile?.display_name ?? otherProfile?.username ?? 'Player';
+    const responseDraft = getInviteResponseDraft(lobby, membership);
+    let suggestedStartAt: string | null = null;
+    let suggestedEndAt: string | null = null;
+
+    if (responseDraft.decision === 'suggested_time') {
+      const parsedStartAt = new Date(responseDraft.startAt);
+      const parsedEndAt = new Date(responseDraft.endAt);
+
+      if (Number.isNaN(parsedStartAt.getTime()) || Number.isNaN(parsedEndAt.getTime())) {
+        setLobbiesError('Pick a valid suggested start and end time.');
+        setLobbyMessage('');
+        return;
+      }
+
+      if (parsedEndAt <= parsedStartAt) {
+        setLobbiesError('Pick a suggested end time after the start time.');
+        setLobbyMessage('');
+        return;
+      }
+
+      suggestedStartAt = parsedStartAt.toISOString();
+      suggestedEndAt = parsedEndAt.toISOString();
+    }
+
+    setLobbyBusy(true);
+    setLobbiesError('');
+    setLobbyMessage('');
+
+    const { error } = await supabase.rpc('respond_to_lobby_invite', {
+      p_lobby_id: lobby.id,
+      p_status: responseDraft.decision,
+      p_comment: responseDraft.comment.trim() || null,
+      p_suggested_start_at: suggestedStartAt,
+      p_suggested_end_at: suggestedEndAt,
+    });
+
+    if (error) {
+      setLobbiesError(error.message);
+      setLobbyBusy(false);
+      return;
+    }
+
+    setInviteResponseDrafts((current) => {
+      const nextDrafts = { ...current };
+      delete nextDrafts[lobby.id];
+      return nextDrafts;
+    });
+    await loadLobbies();
+    setLobbyMessage(
+      responseDraft.decision === 'accepted'
+        ? 'Invite accepted.'
+        : responseDraft.decision === 'declined'
+          ? 'Invite declined.'
+          : 'Suggested time sent to the host.',
+    );
+    setLobbyBusy(false);
   };
 
-  const getFriendSearchStatus = (candidateId: string) => {
-    if (friendships.some((friendship) => friendship.friend_profile_id === candidateId)) {
-      return 'friend';
+  const handleApplySuggestedTime = async (lobby: LobbyRecord, membership: LobbyMemberRecord) => {
+    if (!session?.user) {
+      return;
     }
 
-    if (
-      friendRequests.some(
-        (request) =>
-          request.status === 'pending' &&
-          ((request.requester_profile_id === session?.user?.id &&
-            request.addressee_profile_id === candidateId) ||
-            (request.addressee_profile_id === session?.user?.id &&
-              request.requester_profile_id === candidateId)),
-      )
-    ) {
-      return 'pending';
+    setLobbyBusy(true);
+    setLobbiesError('');
+    setLobbyMessage('');
+
+    const { error } = await supabase.rpc('apply_lobby_time_suggestion', {
+      p_lobby_id: lobby.id,
+      p_profile_id: membership.profile_id,
+    });
+
+    if (error) {
+      setLobbiesError(error.message);
+      setLobbyBusy(false);
+      return;
     }
 
-    return 'new';
+    await loadLobbies();
+    setLobbyMessage('Suggested time applied. Other invitees have been reset to pending and notified to respond again.');
+    setLobbyBusy(false);
   };
 
   const sendFriendRequest = async (targetProfile: Profile) => {
@@ -1960,97 +1218,58 @@ export default function HomeScreen() {
     setCommunityBusy(false);
   };
 
+  const getInviteChipTestId = React.useCallback(
+    (profileId: string) => `lobby-invite-chip-${profileId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    [],
+  );
+
+  const formatHistoryTimestamp = React.useCallback((timestamp: string) => {
+    const parsedTimestamp = new Date(timestamp);
+    if (Number.isNaN(parsedTimestamp.getTime())) {
+      return 'Recently';
+    }
+
+    return parsedTimestamp.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }, []);
+
+  const renderResponseHistoryCards = React.useCallback(
+    (history: LobbyInviteHistoryRecord[]) =>
+      history.map((entry, index) => {
+        const isCurrent = index === 0;
+        const { chipStyle, textStyle } = getLobbyStatusColors(entry.rsvp_status, isCurrent);
+
+        return (
+          <Surface
+            key={entry.id}
+            style={[styles.inviteHistoryCard, isCurrent ? styles.inviteHistoryCurrentCard : styles.inviteHistoryMutedCard]}
+            elevation={0}>
+            <View style={styles.inviteHistoryHeader}>
+              <Chip compact style={chipStyle} textStyle={textStyle}>
+                {formatHistoryMessage(entry)}
+              </Chip>
+              <Text style={styles.friendNote}>{formatHistoryTimestamp(entry.created_at)}</Text>
+            </View>
+            {entry.comment ? <Text style={styles.listText}>{entry.comment}</Text> : null}
+          </Surface>
+        );
+      }),
+    [formatHistoryMessage, formatHistoryTimestamp, getLobbyStatusColors],
+  );
+
   const renderDashboard = () => (
-    <>
-      <Surface style={styles.heroCard} elevation={2}>
-        <Chip icon="motion-play" style={styles.liveChip}>
-          Live prototype
-        </Chip>
-        <Text variant="displaySmall" style={styles.heroTitle}>
-          Play together, faster.
-        </Text>
-        <Text style={styles.heroCopy}>
-          Placeholder data for the social gaming flow: invites, roulette, lobby setup, and
-          availability sync.
-        </Text>
-        <View style={styles.heroActions}>
-          <Button mode="contained" onPress={() => setSection('roulette')}>
-            Start group spin
-          </Button>
-          <Button mode="outlined" onPress={() => setSection('friends')}>
-            Manage friends
-          </Button>
-        </View>
-      </Surface>
-
-      <View style={styles.statRow}>
-        <StatCard label="Friends online" value="12" accent="#7C5CFF" />
-        <StatCard label="Open lobbies" value={String(lobbies.length)} accent="#33D1FF" />
-        <StatCard label="Pool games" value={String(roulettePoolGames.length)} accent="#7DFFB3" />
-      </View>
-
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Setup wizard"
-            subtitle="Mirror the onboarding handoff before auth and API work land."
-          />
-          <Text style={styles.listText}>1. Create username and avatar</Text>
-          <Text style={styles.listText}>2. Connect Discord or Twitch later</Text>
-          <Text style={styles.listText}>3. Pick favorite games for your pool</Text>
-          <Text style={styles.listText}>4. Set weekly availability</Text>
-          <ProgressBar progress={0.75} color="#7C5CFF" style={styles.progress} />
-        </Card.Content>
-      </Card>
-
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Tonight's fastest route"
-            subtitle="One-tap path from roulette to live lobby."
-          />
-          <View style={styles.quickPath}>
-            <Chip icon="dice-multiple">Spin</Chip>
-            <Chip icon="account-multiple">Invite squad</Chip>
-            <Chip icon="calendar-clock">Confirm time</Chip>
-            <Chip icon="bell-ring">Send reminder</Chip>
-          </View>
-        </Card.Content>
-      </Card>
-
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Featured games"
-            subtitle="Live from your Supabase library when rows exist, otherwise using fallback seed data."
-          />
-          <View style={styles.quickPath}>
-            {libraryGames
-              .filter((game) => game.is_featured)
-              .slice(0, 3)
-              .map((game) => (
-                <Chip key={game.id}>{game.title}</Chip>
-              ))}
-          </View>
-        </Card.Content>
-      </Card>
-
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Your roulette pool"
-            subtitle="Personal pool saved in Supabase and ready for the next spin."
-          />
-          <View style={styles.quickPath}>
-            {roulettePoolGames.length > 0 ? (
-              roulettePoolGames.slice(0, 4).map((game) => <Chip key={game.id}>{game.title}</Chip>)
-            ) : (
-              <Text style={styles.friendNote}>Add games from the library to start building your pool.</Text>
-            )}
-          </View>
-        </Card.Content>
-      </Card>
-    </>
+    <DashboardSection
+      libraryGames={libraryGames}
+      lobbiesCount={lobbies.length}
+      onManageFriends={() => setSection('friends')}
+      onStartGroupSpin={() => setSection('roulette')}
+      roulettePoolCount={roulettePoolGames.length}
+      roulettePoolGames={roulettePoolGames}
+    />
   );
 
   const renderFriends = () => (
@@ -2346,139 +1565,193 @@ export default function HomeScreen() {
   );
 
   const renderGames = () => (
-    <>
-      <SectionTitle
-        title="Game library"
-        subtitle="Supabase-backed library with local fallback data until the table is seeded."
-      />
-      <Searchbar
-        placeholder="Search title, genre, or platform"
-        value={gameSearch}
-        onChangeText={setGameSearch}
-        testID="games-search-input"
-      />
-      <View style={styles.quickPath}>
-        <Chip icon="filter-variant">Genre</Chip>
-        <Chip icon="devices">Platform</Chip>
-        <Chip icon="star-outline">{gamesLoading ? 'Loading' : `${filteredGames.length} results`}</Chip>
-      </View>
-      {gamesError ? (
-        <HelperText type="info" visible style={styles.helperText}>
-          Falling back to local game seed: {gamesError}
-        </HelperText>
-      ) : null}
-      {gameActionMessage ? (
-        <HelperText type="info" visible style={styles.successText}>
-          {gameActionMessage}
-        </HelperText>
-      ) : null}
-      {filteredGames.map((game) => (
-        <Card key={game.id} style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleLarge">{game.title}</Text>
-            <Text style={styles.supportingText}>{game.genre}</Text>
-            <Text style={styles.friendNote}>
-              {game.platform} | {game.player_count}
-            </Text>
-            <Text style={styles.listText}>{game.description ?? 'Description coming soon.'}</Text>
-            <View style={styles.quickPath}>
-              {favoriteGameIds.includes(game.id) ? (
-                <Chip icon="star" selected>
-                  Favorite
-                </Chip>
-              ) : null}
-              {rouletteEntries.some((entry) => entry.game_id === game.id) ? (
-                <Chip icon="dice-multiple">In roulette pool</Chip>
-              ) : null}
-            </View>
-            <View style={styles.cardActions}>
-              <Button mode="contained-tonal" onPress={() => prepareLobbyDraft(game.id)}>
-                Create lobby
-              </Button>
-              <Button
-                mode="text"
-                onPress={() => toggleFavorite(game.id)}
-                loading={gameActionBusyId === `favorite:${game.id}`}
-                disabled={gameActionBusyId !== null}>
-                {favoriteGameIds.includes(game.id) ? 'Unfavorite' : 'Favorite'}
-              </Button>
-              <Button
-                mode="text"
-                onPress={() => toggleRoulettePool(game.id)}
-                loading={gameActionBusyId === `pool:${game.id}`}
-                disabled={gameActionBusyId !== null}>
-                {rouletteEntries.some((entry) => entry.game_id === game.id) ? 'Remove from pool' : 'Add to pool'}
-              </Button>
-            </View>
-          </Card.Content>
-        </Card>
-      ))}
-      {!gamesLoading && filteredGames.length === 0 ? (
-        <Card style={styles.panel} testID="games-empty-state">
-          <Card.Content>
-            <Text variant="titleMedium">No games matched your search.</Text>
-            <Text style={styles.friendNote}>Try a title, genre, or platform keyword.</Text>
-          </Card.Content>
-        </Card>
-      ) : null}
-    </>
+    <GamesSection
+      favoriteGameIds={favoriteGameIds}
+      filteredGames={filteredGames}
+      gameActionBusyId={gameActionBusyId}
+      gameActionMessage={gameActionMessage}
+      gameSearch={gameSearch}
+      gamesError={gamesError}
+      gamesLoading={gamesLoading}
+      onChangeGameSearch={setGameSearch}
+      onPrepareLobbyDraft={prepareLobbyDraft}
+      onToggleFavorite={toggleFavorite}
+      onToggleRoulettePool={toggleRoulettePool}
+      rouletteEntries={rouletteEntries}
+    />
   );
 
   const renderRoulette = () => (
-    <>
-      <SectionTitle
-        title="Game roulette"
-        subtitle="Pick from your saved pool before building a lobby."
-      />
-      <Surface style={styles.rouletteHero} elevation={2}>
-        <Text variant="headlineMedium" style={styles.rouletteValue}>
-          {roulettePoolGames[0]?.title ?? 'Add games to spin'}
-        </Text>
-        <Text style={styles.sectionSubtitle}>
-          {roulettePoolGames.length > 0
-            ? `You currently have ${roulettePoolGames.length} game${roulettePoolGames.length === 1 ? '' : 's'} in your pool.`
-            : 'Your pool is empty. Add games from the library first.'}
-        </Text>
-        <View style={styles.heroActions}>
-          <Button
-            mode="contained"
-            onPress={() =>
-              roulettePoolGames[0] ? prepareLobbyDraft(roulettePoolGames[0].id) : setSection('games')
-            }>
-            Invite everyone
-          </Button>
-          <Button mode="outlined" onPress={() => {}}>
-            Spin again
-          </Button>
-        </View>
-      </Surface>
-      {roulettePoolGames.map((game) => (
-        <Card key={game.id} style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">{game.title}</Text>
-            <Text style={styles.friendNote}>
-              {game.genre} | {game.platform}
-            </Text>
-          </Card.Content>
-        </Card>
-      ))}
-      {roulettePoolGames.length === 0 ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">No games in your roulette pool yet.</Text>
-            <Text style={styles.friendNote}>Use the Game Library to add a few favorites and come back here.</Text>
-          </Card.Content>
-        </Card>
-      ) : null}
-    </>
+    <RouletteSection
+      onInviteEveryone={prepareLobbyDraft}
+      onOpenGames={() => setSection('games')}
+      onSpinAgain={() => {}}
+      roulettePoolGames={roulettePoolGames}
+    />
   );
 
   const renderLobbies = () => (
     <>
       <SectionTitle
         title="Schedule a game night"
-        subtitle="Simple flow: choose a game, pick the event time, then invite your squad."
+        subtitle="Create hosted sessions, review invite responses, and let invitees accept, decline, or suggest a better time."
       />
+      {lobbiesError ? (
+        <HelperText type="error" visible>
+          {lobbiesError}
+        </HelperText>
+      ) : null}
+      {lobbyMessage ? (
+        <HelperText type="info" visible style={styles.successText}>
+          {lobbyMessage}
+        </HelperText>
+      ) : null}
+      <Card style={styles.panel}>
+        <Card.Content>
+          <Text variant="titleMedium">Incoming invites</Text>
+          <Text style={styles.friendNote}>
+            Accept, decline, or suggest a better date and time with an optional note for the host.
+          </Text>
+          {lobbiesLoading ? <Text style={styles.friendNote}>Loading invite responses...</Text> : null}
+          {!lobbiesLoading && incomingLobbies.length === 0 ? (
+            <Text style={styles.friendNote}>No incoming invites right now.</Text>
+          ) : null}
+          {!lobbiesLoading &&
+            incomingLobbies.map((lobby) => {
+              const membership = getCurrentLobbyMembership(lobby.id);
+              if (!membership) {
+                return null;
+              }
+
+              const responseDraft = getInviteResponseDraft(lobby, membership);
+              const history = getMemberHistory(lobby.id, membership.profile_id);
+              const { chipStyle, textStyle } = getLobbyStatusColors(membership.rsvp_status, true);
+              const parsedDraftStartAt = new Date(responseDraft.startAt);
+              const safeDraftStartAt = Number.isNaN(parsedDraftStartAt.getTime())
+                ? createDefaultLobbyStartDate()
+                : parsedDraftStartAt;
+              const parsedDraftEndAt = new Date(responseDraft.endAt);
+              const safeDraftEndAt = Number.isNaN(parsedDraftEndAt.getTime())
+                ? getDefaultEndDate(safeDraftStartAt)
+                : parsedDraftEndAt;
+
+              return (
+                <Surface key={`incoming-${lobby.id}`} style={styles.inviteResponseCard} elevation={1}>
+                  <View style={styles.inviteCardHeader}>
+                    <View style={styles.friendMeta}>
+                      <Text variant="titleMedium">{lobby.title}</Text>
+                      <Text style={styles.friendNote}>
+                        {lobby.games?.title ?? 'Game unavailable'} |{' '}
+                        {lobby.scheduled_for
+                          ? formatEventRange(new Date(lobby.scheduled_for), getLobbyEndDate(lobby))
+                          : 'Starts now'}
+                      </Text>
+                      <Text style={styles.friendNote}>Host: {getLobbyProfileLabel(lobby.host_profile_id)}</Text>
+                    </View>
+                    <Chip compact style={chipStyle} textStyle={textStyle}>
+                      {formatInviteStatusLabel(membership.rsvp_status)}
+                    </Chip>
+                  </View>
+                  <View style={styles.inviteDecisionRow}>
+                    <Chip
+                      selected={responseDraft.decision === 'accepted'}
+                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'accepted' })}
+                      testID={`lobby-response-accept-${lobby.id}`}>
+                      Accept
+                    </Chip>
+                    <Chip
+                      selected={responseDraft.decision === 'declined'}
+                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'declined' })}
+                      testID={`lobby-response-decline-${lobby.id}`}>
+                      Decline
+                    </Chip>
+                    <Chip
+                      selected={responseDraft.decision === 'suggested_time'}
+                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'suggested_time' })}
+                      testID={`lobby-response-suggest-${lobby.id}`}>
+                      Suggest new time
+                    </Chip>
+                  </View>
+                  <TextInput
+                    mode="outlined"
+                    label="Comment (optional)"
+                    multiline
+                    value={responseDraft.comment}
+                    onChangeText={(value) => updateInviteResponseDraft(lobby, membership, { comment: value })}
+                    style={styles.input}
+                    testID={`lobby-response-comment-${lobby.id}`}
+                  />
+                  {responseDraft.decision === 'suggested_time' ? (
+                    <View style={styles.pickerFieldGroup}>
+                      <DatePickerInput
+                        locale="en"
+                        label="Suggested date"
+                        value={safeDraftStartAt}
+                        onChange={(nextDate) => {
+                          if (nextDate) {
+                            updateInviteResponseDraft(lobby, membership, (current) => ({
+                              ...current,
+                              startAt: setDatePart(safeDraftStartAt, nextDate).toISOString(),
+                              endAt: setDatePart(safeDraftEndAt, nextDate).toISOString(),
+                            }));
+                          }
+                        }}
+                        inputMode="start"
+                        mode="outlined"
+                        withModal
+                        style={styles.input}
+                        testID={`lobby-suggest-date-${lobby.id}`}
+                      />
+                      <TimeRangePicker
+                        startAt={safeDraftStartAt}
+                        endAt={safeDraftEndAt}
+                        onStartAtChange={(startAt) => {
+                          const currentDurationMs = Math.max(
+                            safeDraftEndAt.getTime() - safeDraftStartAt.getTime(),
+                            60 * 60 * 1000,
+                          );
+                          const nextEndAt = new Date(startAt.getTime() + currentDurationMs);
+
+                          updateInviteResponseDraft(lobby, membership, {
+                            startAt: startAt.toISOString(),
+                            endAt: nextEndAt.toISOString(),
+                          });
+                        }}
+                        onEndAtChange={(endAt) =>
+                          updateInviteResponseDraft(lobby, membership, {
+                            endAt: endAt.toISOString(),
+                          })
+                        }
+                        startTestID={`lobby-suggest-start-${lobby.id}`}
+                        endTestID={`lobby-suggest-end-${lobby.id}`}
+                      />
+                    </View>
+                  ) : null}
+                  <Button
+                    mode="contained"
+                    onPress={() => handleRespondToLobbyInvite(lobby, membership)}
+                    loading={lobbyBusy}
+                    disabled={lobbyBusy}
+                    testID={`lobby-response-submit-${lobby.id}`}>
+                    {responseDraft.decision === 'accepted'
+                      ? 'Save accept'
+                      : responseDraft.decision === 'declined'
+                        ? 'Save decline'
+                        : 'Send suggested time'}
+                  </Button>
+                  {history.length > 0 ? (
+                    <View style={styles.inviteHistorySection}>
+                      <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                        Your response history
+                      </Text>
+                      {renderResponseHistoryCards(history)}
+                    </View>
+                  ) : null}
+                </Surface>
+              );
+            })}
+        </Card.Content>
+      </Card>
       <Card style={styles.panel}>
         <Card.Content>
           <Text variant="titleMedium">Create event</Text>
@@ -2586,27 +1859,33 @@ export default function HomeScreen() {
                   Invite people
                 </Text>
                 <Text style={styles.friendNote}>
-                  Pick friends for the invite draft. Persisted invite rows come next.
+                  Invite accepted friends. Their responses will persist in `lobby_members`.
                 </Text>
               </View>
             </View>
-            <View style={styles.quickPath}>
-              {inviteReadyFriends.map((friend) => (
-                <Chip
-                  key={friend.name}
-                  selected={selectedLobbyInviteNames.includes(friend.name)}
-                  onPress={() =>
-                    setSelectedLobbyInviteNames((current) =>
-                      current.includes(friend.name)
-                        ? current.filter((name) => name !== friend.name)
-                        : [...current, friend.name],
-                    )
-                  }
-                  testID={`lobby-invite-chip-${friend.name.toLowerCase()}`}>
-                  {friend.name}
-                </Chip>
-              ))}
-            </View>
+            {inviteReadyFriends.length > 0 ? (
+              <View style={styles.quickPath}>
+                {inviteReadyFriends.map((friend) => (
+                  <Chip
+                    key={friend.id}
+                    selected={selectedLobbyInviteProfileIds.includes(friend.id)}
+                    onPress={() =>
+                      setSelectedLobbyInviteProfileIds((current) =>
+                        current.includes(friend.id)
+                          ? current.filter((profileId) => profileId !== friend.id)
+                          : [...current, friend.id],
+                      )
+                    }
+                    testID={getInviteChipTestId(friend.id)}>
+                    {friend.label}
+                  </Chip>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.friendNote}>
+                Invite availability starts once you have accepted friends in your list.
+              </Text>
+            )}
           </View>
           <TextInput
             mode="outlined"
@@ -2647,22 +1926,12 @@ export default function HomeScreen() {
             <Chip icon="account">
               Host: {profile?.display_name ?? profile?.username ?? 'You'}
             </Chip>
-            {selectedLobbyInviteNames.length > 0 ? (
+            {selectedLobbyInviteProfileIds.length > 0 ? (
               <Chip icon="account-multiple">
-                {selectedLobbyInviteNames.length} invite draft{selectedLobbyInviteNames.length === 1 ? '' : 's'}
+                {selectedLobbyInviteProfileIds.length} invite{selectedLobbyInviteProfileIds.length === 1 ? '' : 's'} ready
               </Chip>
             ) : null}
           </View>
-          {lobbiesError ? (
-            <HelperText type="error" visible>
-              {lobbiesError}
-            </HelperText>
-          ) : null}
-          {lobbyMessage ? (
-            <HelperText type="info" visible style={styles.successText}>
-              {lobbyMessage}
-            </HelperText>
-          ) : null}
           <Button
             mode="contained"
             onPress={handleCreateLobby}
@@ -2674,50 +1943,124 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      {lobbiesLoading ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">Loading lobbies</Text>
-            <Text style={styles.friendNote}>Pulling your hosted and joined sessions from Supabase.</Text>
-          </Card.Content>
-        </Card>
-      ) : null}
-      {lobbies.map((lobby) => (
-        <Card key={lobby.id} style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleLarge">{lobby.title}</Text>
-            <Text style={styles.supportingText}>
-              {lobby.games?.title ?? 'Game unavailable'} | {lobby.is_private ? 'Private' : 'Public'}
-            </Text>
-            <Text style={styles.friendNote}>
-              {lobby.scheduled_for
-                ? formatEventRange(new Date(lobby.scheduled_for), getLobbyEndDate(lobby))
-                : 'Starts now'}
-            </Text>
-            {typeof lobby.invite_count === 'number' && lobby.invite_count > 0 ? (
-              <Text style={styles.friendNote}>
-                Invite draft prepared for {lobby.invite_count} friend{lobby.invite_count === 1 ? '' : 's'}.
-              </Text>
-            ) : null}
-            <View style={styles.cardActions}>
-              <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
-                Reschedule
-              </Button>
-              <Button mode="text" onPress={() => setSection('inbox')}>
-                Send reminder
-              </Button>
-            </View>
-          </Card.Content>
-        </Card>
-      ))}
-      {!lobbiesLoading && lobbies.length === 0 ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">No lobbies yet.</Text>
+      <Card style={styles.panel}>
+        <Card.Content>
+          <Text variant="titleMedium">Hosted lobbies</Text>
+          <Text style={styles.friendNote}>
+            Review invite status, read comments, and apply suggested times without leaving the lobby workflow.
+          </Text>
+          {lobbiesLoading ? <Text style={styles.friendNote}>Loading hosted lobby details...</Text> : null}
+          {!lobbiesLoading && hostedLobbies.length === 0 ? (
             <Text style={styles.friendNote}>Create your first hosted session from a game or roulette pick.</Text>
-          </Card.Content>
-        </Card>
-      ) : null}
+          ) : null}
+          {!lobbiesLoading &&
+            hostedLobbies.map((lobby) => {
+              const hostedMembers = (lobbyMembersByLobbyId[lobby.id] ?? []).filter((member) => member.role === 'member');
+
+              return (
+                <Surface key={`hosted-${lobby.id}`} style={styles.inviteResponseCard} elevation={1}>
+                  <View style={styles.inviteCardHeader}>
+                    <View style={styles.friendMeta}>
+                      <Text variant="titleMedium">{lobby.title}</Text>
+                      <Text style={styles.friendNote}>
+                        {lobby.games?.title ?? 'Game unavailable'} |{' '}
+                        {lobby.scheduled_for
+                          ? formatEventRange(new Date(lobby.scheduled_for), getLobbyEndDate(lobby))
+                          : 'Starts now'}
+                      </Text>
+                      <Text style={styles.friendNote}>{lobby.is_private ? 'Private lobby' : 'Public lobby'}</Text>
+                    </View>
+                    <Chip compact style={styles.statusChip}>
+                      {hostedMembers.length} invitee{hostedMembers.length === 1 ? '' : 's'}
+                    </Chip>
+                  </View>
+                  <View style={styles.cardActions}>
+                    <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
+                      Reschedule
+                    </Button>
+                    <Button mode="text" onPress={() => setSection('inbox')}>
+                      Send reminder
+                    </Button>
+                  </View>
+                  {hostedMembers.length === 0 ? (
+                    <Text style={styles.friendNote}>No invitees on this lobby yet.</Text>
+                  ) : (
+                    (['pending', 'accepted', 'suggested_time', 'declined'] as LobbyInviteStatus[]).map((status) => {
+                      const membersForStatus = hostedMembers.filter((member) => member.rsvp_status === status);
+                      if (membersForStatus.length === 0) {
+                        return null;
+                      }
+
+                      return (
+                        <View key={`${lobby.id}-${status}`} style={styles.inviteGroupSection}>
+                          <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                            {formatInviteStatusLabel(status)}
+                          </Text>
+                          {membersForStatus.map((member) => {
+                            const history = getMemberHistory(lobby.id, member.profile_id);
+                            const { chipStyle, textStyle } = getLobbyStatusColors(member.rsvp_status, true);
+                            const avatarUrl = getLobbyProfileAvatarUrl(member.profile_id);
+                            const memberLabel = getLobbyProfileLabel(member.profile_id);
+
+                            return (
+                              <Surface key={`${lobby.id}-${member.profile_id}`} style={styles.hostMemberCard} elevation={0}>
+                                <View style={styles.friendRow}>
+                                  {avatarUrl ? (
+                                    <Avatar.Image size={42} source={{ uri: avatarUrl }} style={styles.avatar} />
+                                  ) : (
+                                    <Avatar.Text
+                                      size={42}
+                                      label={memberLabel.slice(0, 2).toUpperCase()}
+                                      style={styles.avatar}
+                                    />
+                                  )}
+                                  <View style={styles.friendMeta}>
+                                    <Text variant="titleSmall">{memberLabel}</Text>
+                                    {member.suggested_start_at && member.suggested_end_at ? (
+                                      <Text style={styles.friendNote}>
+                                        Suggested: {formatEventRange(new Date(member.suggested_start_at), new Date(member.suggested_end_at))}
+                                      </Text>
+                                    ) : null}
+                                    {member.response_comment ? (
+                                      <Text style={styles.listText}>{member.response_comment}</Text>
+                                    ) : (
+                                      <Text style={styles.friendNote}>No comment added.</Text>
+                                    )}
+                                  </View>
+                                  <Chip compact style={chipStyle} textStyle={textStyle}>
+                                    {formatInviteStatusLabel(member.rsvp_status)}
+                                  </Chip>
+                                </View>
+                                {member.rsvp_status === 'suggested_time' ? (
+                                  <Button
+                                    mode="contained"
+                                    onPress={() => handleApplySuggestedTime(lobby, member)}
+                                    loading={lobbyBusy}
+                                    disabled={lobbyBusy}
+                                    testID={`apply-lobby-suggestion-${lobby.id}-${member.profile_id}`}>
+                                    Apply suggested time
+                                  </Button>
+                                ) : null}
+                                {history.length > 0 ? (
+                                  <View style={styles.inviteHistorySection}>
+                                    <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                                      Response history
+                                    </Text>
+                                    {renderResponseHistoryCards(history)}
+                                  </View>
+                                ) : null}
+                              </Surface>
+                            );
+                          })}
+                        </View>
+                      );
+                    })
+                  )}
+                </Surface>
+              );
+            })}
+        </Card.Content>
+      </Card>
     </>
   );
 
@@ -2740,7 +2083,12 @@ export default function HomeScreen() {
             const startDate = lobby.scheduled_for ? new Date(lobby.scheduled_for) : createDefaultLobbyStartDate();
             const safeStartDate = Number.isNaN(startDate.getTime()) ? createDefaultLobbyStartDate() : startDate;
             const endDate = getLobbyEndDate(lobby);
-            const isEditing = editingLobbyId === lobby.id;
+            const isHost = lobby.host_profile_id === session?.user?.id;
+            const currentMembership = getCurrentLobbyMembership(lobby.id);
+            const isEditing = isHost && editingLobbyId === lobby.id;
+            const membershipColors = currentMembership
+              ? getLobbyStatusColors(currentMembership.rsvp_status, true)
+              : null;
 
             return (
               <Surface key={`${lobby.id}-schedule`} style={styles.scheduleEventCard} elevation={1}>
@@ -2750,14 +2098,25 @@ export default function HomeScreen() {
                     <Text style={styles.friendNote}>
                       {lobby.games?.title ?? 'Game unavailable'} | {formatEventRange(safeStartDate, endDate)}
                     </Text>
+                    {!isHost && currentMembership ? (
+                      <Text style={styles.friendNote}>
+                        Your current response: {formatInviteStatusLabel(currentMembership.rsvp_status)}
+                      </Text>
+                    ) : null}
                   </View>
-                  <Button
-                    mode={isEditing ? 'text' : 'contained-tonal'}
-                    compact
-                    onPress={() => (isEditing ? setEditingLobbyId(null) : startLobbyReschedule(lobby))}
-                    testID={`schedule-edit-lobby-${lobby.id}`}>
-                    {isEditing ? 'Cancel' : 'Edit time'}
-                  </Button>
+                  {isHost ? (
+                    <Button
+                      mode={isEditing ? 'text' : 'contained-tonal'}
+                      compact
+                      onPress={() => (isEditing ? setEditingLobbyId(null) : startLobbyReschedule(lobby))}
+                      testID={`schedule-edit-lobby-${lobby.id}`}>
+                      {isEditing ? 'Cancel' : 'Edit time'}
+                    </Button>
+                  ) : currentMembership && membershipColors ? (
+                    <Chip compact style={membershipColors.chipStyle} textStyle={membershipColors.textStyle}>
+                      {formatInviteStatusLabel(currentMembership.rsvp_status)}
+                    </Chip>
+                  ) : null}
                 </View>
                 {isEditing ? (
                   <View style={styles.pickerFieldGroup}>
@@ -2812,6 +2171,9 @@ export default function HomeScreen() {
                       Save time
                     </Button>
                   </View>
+                ) : null}
+                {!isHost && currentMembership?.response_comment ? (
+                  <Text style={styles.friendNote}>{currentMembership.response_comment}</Text>
                 ) : null}
               </Surface>
             );
@@ -2958,33 +2320,7 @@ export default function HomeScreen() {
     </>
   );
 
-  const renderInbox = () => (
-    <>
-      <SectionTitle
-        title="Notifications"
-        subtitle="Invites, reminders, and system states with placeholder messaging."
-      />
-      {notifications.map((item) => (
-        <Card key={`${item.label}-${item.message}`} style={styles.panel}>
-          <Card.Content>
-            <View style={styles.notificationHeader}>
-              <Chip compact>{item.label}</Chip>
-              <Text style={styles.friendNote}>{item.age}</Text>
-            </View>
-            <Text variant="bodyLarge">{item.message}</Text>
-          </Card.Content>
-        </Card>
-      ))}
-      <Card style={styles.panel}>
-        <Card.Content>
-          <Text variant="titleMedium">Lobby chat preview</Text>
-          <Divider style={styles.divider} />
-          <Text style={styles.listText}>NovaHex: Running ten minutes late.</Text>
-          <Text style={styles.listText}>You: No problem, spinning a backup game now.</Text>
-        </Card.Content>
-      </Card>
-    </>
-  );
+  const renderInbox = () => <InboxSection notifications={notifications} />;
 
   const renderProfile = () => {
     const resolvedAvatarUrl = resolveAvatarUrl(profile);
@@ -3233,17 +2569,6 @@ export default function HomeScreen() {
       </>
     );
   };
-
-  const content = {
-    dashboard: renderDashboard(),
-    friends: renderFriends(),
-    games: renderGames(),
-    roulette: renderRoulette(),
-    lobbies: renderLobbies(),
-    schedule: renderSchedule(),
-    inbox: renderInbox(),
-    profile: renderProfile(),
-  }[section];
 
   const handleAuth = async () => {
     if (!email || !password) {
@@ -3624,6 +2949,17 @@ export default function HomeScreen() {
     setGameActionBusyId(null);
   };
 
+  const content = {
+    dashboard: renderDashboard(),
+    friends: renderFriends(),
+    games: renderGames(),
+    roulette: renderRoulette(),
+    lobbies: renderLobbies(),
+    schedule: renderSchedule(),
+    inbox: renderInbox(),
+    profile: renderProfile(),
+  }[section];
+
   if (authLoading) {
     return (
       <View style={styles.loginScreen}>
@@ -3858,506 +3194,3 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  loginScreen: {
-    flex: 1,
-    backgroundColor: '#0B1020',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  loginCard: {
-    backgroundColor: '#151A2D',
-    borderColor: '#2C3560',
-    borderRadius: 28,
-    borderWidth: 1,
-    padding: 22,
-    gap: 10,
-  },
-  loginTitle: {
-    color: '#F5F7FF',
-    fontWeight: '800',
-  },
-  demoChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#252B49',
-    marginBottom: 4,
-  },
-  input: {
-    backgroundColor: '#171A2A',
-  },
-  helperText: {
-    color: '#95A0C8',
-  },
-  successText: {
-    color: '#7DFFB3',
-  },
-  loginButton: {
-    marginTop: 6,
-  },
-  screen: {
-    flex: 1,
-    backgroundColor: '#0B1020',
-  },
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 64,
-    paddingBottom: 120,
-    gap: 16,
-  },
-  eyebrow: {
-    color: '#7DFFB3',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.6,
-    textTransform: 'uppercase',
-  },
-  pageTitle: {
-    color: '#F5F7FF',
-    fontWeight: '800',
-  },
-  pageSubtitle: {
-    color: '#A7B0D6',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  headerRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    justifyContent: 'space-between',
-  },
-  segmented: {
-    marginTop: 4,
-  },
-  heroCard: {
-    backgroundColor: '#161B31',
-    borderColor: '#2C3560',
-    borderRadius: 28,
-    borderWidth: 1,
-    padding: 20,
-    gap: 14,
-  },
-  liveChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#252B49',
-  },
-  heroTitle: {
-    color: '#F7F8FF',
-    fontWeight: '800',
-  },
-  heroCopy: {
-    color: '#B9C0E0',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  heroActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  statRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  statCard: {
-    minWidth: 100,
-    flexGrow: 1,
-    backgroundColor: '#14192D',
-    borderRadius: 22,
-    borderWidth: 1,
-    padding: 16,
-  },
-  statValue: {
-    color: '#F4F6FF',
-    fontSize: 24,
-    fontWeight: '800',
-  },
-  statLabel: {
-    color: '#95A0C8',
-    marginTop: 4,
-  },
-  panel: {
-    backgroundColor: '#151A2D',
-    borderRadius: 24,
-  },
-  sectionHeader: {
-    gap: 4,
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    color: '#F5F7FF',
-    fontWeight: '700',
-  },
-  sectionSubtitle: {
-    color: '#95A0C8',
-    lineHeight: 20,
-  },
-  listText: {
-    color: '#D8DDF4',
-    fontSize: 14,
-    lineHeight: 22,
-    marginBottom: 4,
-  },
-  progress: {
-    marginTop: 12,
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: '#262C44',
-  },
-  quickPath: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 8,
-  },
-  friendCard: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-  },
-  friendRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 14,
-  },
-  friendRequestCard: {
-    gap: 8,
-    marginTop: 14,
-    paddingTop: 4,
-  },
-  avatar: {
-    backgroundColor: '#7C5CFF',
-  },
-  avatarLarge: {
-    backgroundColor: '#33D1FF',
-  },
-  friendMeta: {
-    flex: 1,
-    gap: 2,
-  },
-  friendStatus: {
-    color: '#7DFFB3',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  friendNote: {
-    color: '#9AA5CA',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  supportingText: {
-    color: '#C7CDEA',
-    marginTop: 4,
-    marginBottom: 2,
-  },
-  subsectionTitle: {
-    color: '#F5F7FF',
-    fontWeight: '700',
-    marginTop: 10,
-  },
-  cardActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 14,
-  },
-  schedulerStep: {
-    backgroundColor: '#10162A',
-    borderColor: '#28335F',
-    borderRadius: 22,
-    borderWidth: 1,
-    gap: 12,
-    marginTop: 14,
-    padding: 14,
-  },
-  schedulerStepHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-  },
-  stepBadge: {
-    backgroundColor: '#7DFFB3',
-    borderRadius: 999,
-    color: '#07140F',
-    fontSize: 16,
-    fontWeight: '900',
-    height: 34,
-    lineHeight: 34,
-    textAlign: 'center',
-    width: 34,
-  },
-  gamePickGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  gamePickCard: {
-    backgroundColor: '#171D35',
-    borderColor: '#2C3560',
-    borderRadius: 18,
-    borderWidth: 1,
-    flexGrow: 1,
-    gap: 8,
-    minWidth: 150,
-    padding: 12,
-  },
-  gamePickCardSelected: {
-    backgroundColor: '#1E3143',
-    borderColor: '#7DFFB3',
-  },
-  gamePickTitle: {
-    color: '#F5F7FF',
-    fontWeight: '800',
-  },
-  rouletteHero: {
-    alignItems: 'center',
-    backgroundColor: '#1A2040',
-    borderColor: '#32417E',
-    borderRadius: 160,
-    borderWidth: 1,
-    minHeight: 240,
-    justifyContent: 'center',
-    padding: 24,
-    gap: 12,
-  },
-  rouletteValue: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  availabilityRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 12,
-  },
-  availabilitySummaryCard: {
-    alignItems: 'center',
-    backgroundColor: '#10162A',
-    borderColor: '#28335F',
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'space-between',
-    marginTop: 12,
-    padding: 14,
-  },
-  availabilitySummaryValue: {
-    color: '#F5F7FF',
-    fontSize: 28,
-    fontWeight: '800',
-  },
-  dayPicker: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
-  },
-  dayChip: {
-    backgroundColor: '#20263F',
-  },
-  selectedDayChip: {
-    backgroundColor: '#32417E',
-  },
-  eventTimePanel: {
-    backgroundColor: '#151B31',
-    borderColor: '#2C3560',
-    borderRadius: 22,
-    borderWidth: 1,
-    gap: 12,
-    padding: 14,
-  },
-  eventTimeHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    justifyContent: 'space-between',
-  },
-  eventTimeTitle: {
-    color: '#F5F7FF',
-    fontWeight: '800',
-  },
-  pickerFieldGroup: {
-    gap: 12,
-    marginTop: 4,
-  },
-  timeRangeButtons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  pickerSummary: {
-    backgroundColor: '#10162A',
-    borderColor: '#28335F',
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 4,
-    padding: 12,
-  },
-  scheduleEventCard: {
-    backgroundColor: '#10162A',
-    borderColor: '#28335F',
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 12,
-    marginTop: 12,
-    padding: 14,
-  },
-  availabilityWindowCard: {
-    backgroundColor: '#10162A',
-    borderColor: '#1F8F5F',
-    borderRadius: 16,
-    borderWidth: 1,
-    marginTop: 10,
-    padding: 12,
-  },
-  timeBlockPanel: {
-    backgroundColor: '#10162A',
-    borderColor: '#2C3560',
-    borderRadius: 24,
-    borderWidth: 1,
-    gap: 14,
-    marginTop: 14,
-    padding: 16,
-  },
-  timeBlockHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    justifyContent: 'space-between',
-  },
-  timeBlockTitle: {
-    color: '#F5F7FF',
-    fontSize: 30,
-    fontWeight: '900',
-  },
-  timeBlockGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  availabilityDay: {
-    color: '#F5F7FF',
-    fontWeight: '700',
-    width: 36,
-  },
-  scheduleLegend: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  availableLegendChip: {
-    backgroundColor: '#103326',
-    borderColor: '#1F8F5F',
-    borderWidth: 1,
-  },
-  availableLegendText: {
-    color: '#7DFFB3',
-  },
-  unavailableLegendChip: {
-    backgroundColor: '#35181E',
-    borderColor: '#B84A5A',
-    borderWidth: 1,
-  },
-  unavailableLegendText: {
-    color: '#FF8A98',
-  },
-  slotRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    flex: 1,
-  },
-  availableSlotChip: {
-    backgroundColor: '#103326',
-    borderColor: '#1F8F5F',
-    borderWidth: 1,
-  },
-  availableSlotText: {
-    color: '#D8FFEA',
-    fontWeight: '700',
-  },
-  unavailableSlotChip: {
-    backgroundColor: '#35181E',
-    borderColor: '#B84A5A',
-    borderWidth: 1,
-  },
-  unavailableSlotText: {
-    color: '#FFD8DE',
-    fontWeight: '700',
-  },
-  availabilityWeekOverview: {
-    backgroundColor: '#10162A',
-    borderRadius: 18,
-    gap: 8,
-    marginTop: 14,
-    padding: 12,
-  },
-  availabilityMiniRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 10,
-  },
-  availabilityMiniDay: {
-    color: '#F5F7FF',
-    fontSize: 12,
-    fontWeight: '800',
-    width: 34,
-  },
-  availabilityMiniSlots: {
-    flexDirection: 'row',
-    flex: 1,
-    gap: 6,
-  },
-  availabilityMiniOn: {
-    backgroundColor: '#2BE38D',
-    borderRadius: 999,
-    flex: 1,
-    height: 8,
-  },
-  availabilityMiniOff: {
-    backgroundColor: '#B84A5A',
-    borderRadius: 999,
-    flex: 1,
-    height: 8,
-    opacity: 0.75,
-  },
-  countdownChip: {
-    alignSelf: 'flex-start',
-    marginTop: 8,
-  },
-  notificationHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  divider: {
-    backgroundColor: '#2A3150',
-    marginVertical: 12,
-  },
-  profileHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 14,
-  },
-  profileSummary: {
-    gap: 6,
-  },
-  statusChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#252B49',
-  },
-  fab: {
-    position: 'absolute',
-    right: 16,
-    bottom: 18,
-    backgroundColor: '#7C5CFF',
-  },
-});

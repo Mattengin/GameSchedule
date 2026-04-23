@@ -470,6 +470,14 @@ describe('friends flow', () => {
     cy.contains(/low-friction squad suggestions first/i).should('be.visible');
   };
 
+  it('routes a signed-in user without a squad from dashboard to friends automatically', () => {
+    cy.visit('/');
+    cy.signupUi(currentUser.email, currentUser.password);
+
+    cy.contains(/friends & contacts/i).should('be.visible');
+    cy.contains('Join your squad').should('be.visible');
+  });
+
   it('shows community onboarding for a user without a squad and creates one', () => {
     signInAndOpenFriends();
 
@@ -491,6 +499,42 @@ describe('friends flow', () => {
 
     cy.contains(/invite code not found/i).should('be.visible');
     cy.contains('Join your squad').should('be.visible');
+  });
+
+  it('joins a squad from a valid invite code and loads community suggestions', () => {
+    const community: MockCommunity = {
+      id: 'community-joinable',
+      name: 'Alpha Squad',
+      invite_code: 'ALPHA999',
+      discord_guild_id: null,
+      created_by_profile_id: otherUser.userId,
+      created_at: new Date().toISOString(),
+    };
+
+    communitiesStore.push(community);
+    communityMembersStore.push({
+      community_id: community.id,
+      profile_id: otherUser.userId,
+      role: 'owner',
+      created_at: new Date().toISOString(),
+    });
+    otherUser.profile.primary_community_id = community.id;
+
+    cy.visit('/');
+    cy.signupUi(currentUser.email, currentUser.password);
+
+    cy.get('[data-testid="community-invite-code-input"]').type(' ALPHA999 ');
+    cy.get('[data-testid="join-community-button"]').click();
+
+    cy.wait('@joinCommunityRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_invite_code).to.equal('ALPHA999');
+      });
+
+    cy.contains(/joined alpha squad/i).should('be.visible');
+    cy.contains('Suggested from your Discord community').should('be.visible');
+    cy.contains('Nova Hex').should('be.visible');
   });
 
   it('shows suggested community members and sends a friend request', () => {

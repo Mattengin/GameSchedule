@@ -1,0 +1,332 @@
+import * as React from 'react';
+import { View } from 'react-native';
+import { Button, Card, Chip, Divider, HelperText, ProgressBar, Searchbar, Surface, Text } from 'react-native-paper';
+import { styles } from './homeStyles';
+import type { GameRecord, RouletteEntry } from './homeTypes';
+import { SectionTitle, StatCard } from './homeUtils';
+
+type NotificationItem = {
+  age: string;
+  label: string;
+  message: string;
+};
+
+type DashboardSectionProps = {
+  libraryGames: GameRecord[];
+  lobbiesCount: number;
+  onManageFriends: () => void;
+  onStartGroupSpin: () => void;
+  roulettePoolCount: number;
+  roulettePoolGames: Pick<GameRecord, 'id' | 'title'>[];
+};
+
+export function DashboardSection({
+  libraryGames,
+  lobbiesCount,
+  onManageFriends,
+  onStartGroupSpin,
+  roulettePoolCount,
+  roulettePoolGames,
+}: DashboardSectionProps) {
+  return (
+    <>
+      <Surface style={styles.heroCard} elevation={2}>
+        <Chip icon="motion-play" style={styles.liveChip}>
+          Live prototype
+        </Chip>
+        <Text variant="displaySmall" style={styles.heroTitle}>
+          Play together, faster.
+        </Text>
+        <Text style={styles.heroCopy}>
+          Placeholder data for the social gaming flow: invites, roulette, lobby setup, and
+          availability sync.
+        </Text>
+        <View style={styles.heroActions}>
+          <Button mode="contained" onPress={onStartGroupSpin}>
+            Start group spin
+          </Button>
+          <Button mode="outlined" onPress={onManageFriends}>
+            Manage friends
+          </Button>
+        </View>
+      </Surface>
+
+      <View style={styles.statRow}>
+        <StatCard label="Friends online" value="12" accent="#7C5CFF" />
+        <StatCard label="Open lobbies" value={String(lobbiesCount)} accent="#33D1FF" />
+        <StatCard label="Pool games" value={String(roulettePoolCount)} accent="#7DFFB3" />
+      </View>
+
+      <Card style={styles.panel}>
+        <Card.Content>
+          <SectionTitle
+            title="Setup wizard"
+            subtitle="Mirror the onboarding handoff before auth and API work land."
+          />
+          <Text style={styles.listText}>1. Create username and avatar</Text>
+          <Text style={styles.listText}>2. Connect Discord or Twitch later</Text>
+          <Text style={styles.listText}>3. Pick favorite games for your pool</Text>
+          <Text style={styles.listText}>4. Set weekly availability</Text>
+          <ProgressBar progress={0.75} color="#7C5CFF" style={styles.progress} />
+        </Card.Content>
+      </Card>
+
+      <Card style={styles.panel}>
+        <Card.Content>
+          <SectionTitle
+            title="Tonight's fastest route"
+            subtitle="One-tap path from roulette to live lobby."
+          />
+          <View style={styles.quickPath}>
+            <Chip icon="dice-multiple">Spin</Chip>
+            <Chip icon="account-multiple">Invite squad</Chip>
+            <Chip icon="calendar-clock">Confirm time</Chip>
+            <Chip icon="bell-ring">Send reminder</Chip>
+          </View>
+        </Card.Content>
+      </Card>
+
+      <Card style={styles.panel}>
+        <Card.Content>
+          <SectionTitle
+            title="Featured games"
+            subtitle="Live from your Supabase library when rows exist, otherwise using fallback seed data."
+          />
+          <View style={styles.quickPath}>
+            {libraryGames
+              .filter((game) => game.is_featured)
+              .slice(0, 3)
+              .map((game) => (
+                <Chip key={game.id}>{game.title}</Chip>
+              ))}
+          </View>
+        </Card.Content>
+      </Card>
+
+      <Card style={styles.panel}>
+        <Card.Content>
+          <SectionTitle
+            title="Your roulette pool"
+            subtitle="Personal pool saved in Supabase and ready for the next spin."
+          />
+          <View style={styles.quickPath}>
+            {roulettePoolGames.length > 0 ? (
+              roulettePoolGames.slice(0, 4).map((game) => <Chip key={game.id}>{game.title}</Chip>)
+            ) : (
+              <Text style={styles.friendNote}>Add games from the library to start building your pool.</Text>
+            )}
+          </View>
+        </Card.Content>
+      </Card>
+    </>
+  );
+}
+
+type GamesSectionProps = {
+  favoriteGameIds: string[];
+  filteredGames: GameRecord[];
+  gameActionBusyId: string | null;
+  gameActionMessage: string;
+  gameSearch: string;
+  gamesError: string;
+  gamesLoading: boolean;
+  onChangeGameSearch: (value: string) => void;
+  onPrepareLobbyDraft: (gameId: string) => void;
+  onToggleFavorite: (gameId: string) => void;
+  onToggleRoulettePool: (gameId: string) => void;
+  rouletteEntries: RouletteEntry[];
+};
+
+export function GamesSection({
+  favoriteGameIds,
+  filteredGames,
+  gameActionBusyId,
+  gameActionMessage,
+  gameSearch,
+  gamesError,
+  gamesLoading,
+  onChangeGameSearch,
+  onPrepareLobbyDraft,
+  onToggleFavorite,
+  onToggleRoulettePool,
+  rouletteEntries,
+}: GamesSectionProps) {
+  return (
+    <>
+      <SectionTitle
+        title="Game library"
+        subtitle="Supabase-backed library with local fallback data until the table is seeded."
+      />
+      <Searchbar
+        placeholder="Search title, genre, or platform"
+        value={gameSearch}
+        onChangeText={onChangeGameSearch}
+        testID="games-search-input"
+      />
+      <View style={styles.quickPath}>
+        <Chip icon="filter-variant">Genre</Chip>
+        <Chip icon="devices">Platform</Chip>
+        <Chip icon="star-outline">{gamesLoading ? 'Loading' : `${filteredGames.length} results`}</Chip>
+      </View>
+      {gamesError ? (
+        <HelperText type="info" visible style={styles.helperText}>
+          Falling back to local game seed: {gamesError}
+        </HelperText>
+      ) : null}
+      {gameActionMessage ? (
+        <HelperText type="info" visible style={styles.successText}>
+          {gameActionMessage}
+        </HelperText>
+      ) : null}
+      {filteredGames.map((game) => {
+        const isFavorite = favoriteGameIds.includes(game.id);
+        const inRoulettePool = rouletteEntries.some((entry) => entry.game_id === game.id);
+
+        return (
+          <Card key={game.id} style={styles.panel}>
+            <Card.Content>
+              <Text variant="titleLarge">{game.title}</Text>
+              <Text style={styles.supportingText}>{game.genre}</Text>
+              <Text style={styles.friendNote}>
+                {game.platform} | {game.player_count}
+              </Text>
+              <Text style={styles.listText}>{game.description ?? 'Description coming soon.'}</Text>
+              <View style={styles.quickPath}>
+                {isFavorite ? (
+                  <Chip icon="star" selected>
+                    Favorite
+                  </Chip>
+                ) : null}
+                {inRoulettePool ? <Chip icon="dice-multiple">In roulette pool</Chip> : null}
+              </View>
+              <View style={styles.cardActions}>
+                <Button mode="contained-tonal" onPress={() => onPrepareLobbyDraft(game.id)}>
+                  Create lobby
+                </Button>
+                <Button
+                  mode="text"
+                  onPress={() => onToggleFavorite(game.id)}
+                  loading={gameActionBusyId === `favorite:${game.id}`}
+                  disabled={gameActionBusyId !== null}>
+                  {isFavorite ? 'Unfavorite' : 'Favorite'}
+                </Button>
+                <Button
+                  mode="text"
+                  onPress={() => onToggleRoulettePool(game.id)}
+                  loading={gameActionBusyId === `pool:${game.id}`}
+                  disabled={gameActionBusyId !== null}>
+                  {inRoulettePool ? 'Remove from pool' : 'Add to pool'}
+                </Button>
+              </View>
+            </Card.Content>
+          </Card>
+        );
+      })}
+      {!gamesLoading && filteredGames.length === 0 ? (
+        <Card style={styles.panel} testID="games-empty-state">
+          <Card.Content>
+            <Text variant="titleMedium">No games matched your search.</Text>
+            <Text style={styles.friendNote}>Try a title, genre, or platform keyword.</Text>
+          </Card.Content>
+        </Card>
+      ) : null}
+    </>
+  );
+}
+
+type RouletteSectionProps = {
+  onInviteEveryone: (gameId: string) => void;
+  onOpenGames: () => void;
+  onSpinAgain: () => void;
+  roulettePoolGames: Pick<GameRecord, 'genre' | 'id' | 'platform' | 'title'>[];
+};
+
+export function RouletteSection({
+  onInviteEveryone,
+  onOpenGames,
+  onSpinAgain,
+  roulettePoolGames,
+}: RouletteSectionProps) {
+  const featuredGame = roulettePoolGames[0] ?? null;
+
+  return (
+    <>
+      <SectionTitle
+        title="Game roulette"
+        subtitle="Pick from your saved pool before building a lobby."
+      />
+      <Surface style={styles.rouletteHero} elevation={2}>
+        <Text variant="headlineMedium" style={styles.rouletteValue}>
+          {featuredGame?.title ?? 'Add games to spin'}
+        </Text>
+        <Text style={styles.sectionSubtitle}>
+          {roulettePoolGames.length > 0
+            ? `You currently have ${roulettePoolGames.length} game${roulettePoolGames.length === 1 ? '' : 's'} in your pool.`
+            : 'Your pool is empty. Add games from the library first.'}
+        </Text>
+        <View style={styles.heroActions}>
+          <Button
+            mode="contained"
+            onPress={() => (featuredGame ? onInviteEveryone(featuredGame.id) : onOpenGames())}>
+            Invite everyone
+          </Button>
+          <Button mode="outlined" onPress={onSpinAgain}>
+            Spin again
+          </Button>
+        </View>
+      </Surface>
+      {roulettePoolGames.map((game) => (
+        <Card key={game.id} style={styles.panel}>
+          <Card.Content>
+            <Text variant="titleMedium">{game.title}</Text>
+            <Text style={styles.friendNote}>
+              {game.genre} | {game.platform}
+            </Text>
+          </Card.Content>
+        </Card>
+      ))}
+      {roulettePoolGames.length === 0 ? (
+        <Card style={styles.panel}>
+          <Card.Content>
+            <Text variant="titleMedium">No games in your roulette pool yet.</Text>
+            <Text style={styles.friendNote}>Use the Game Library to add a few favorites and come back here.</Text>
+          </Card.Content>
+        </Card>
+      ) : null}
+    </>
+  );
+}
+
+type InboxSectionProps = {
+  notifications: NotificationItem[];
+};
+
+export function InboxSection({ notifications }: InboxSectionProps) {
+  return (
+    <>
+      <SectionTitle
+        title="Notifications"
+        subtitle="Invites, reminders, and system states with placeholder messaging."
+      />
+      {notifications.map((item) => (
+        <Card key={`${item.label}-${item.message}`} style={styles.panel}>
+          <Card.Content>
+            <View style={styles.notificationHeader}>
+              <Chip compact>{item.label}</Chip>
+              <Text style={styles.friendNote}>{item.age}</Text>
+            </View>
+            <Text variant="bodyLarge">{item.message}</Text>
+          </Card.Content>
+        </Card>
+      ))}
+      <Card style={styles.panel}>
+        <Card.Content>
+          <Text variant="titleMedium">Lobby chat preview</Text>
+          <Divider style={styles.divider} />
+          <Text style={styles.listText}>NovaHex: Running ten minutes late.</Text>
+          <Text style={styles.listText}>You: No problem, spinning a backup game now.</Text>
+        </Card.Content>
+      </Card>
+    </>
+  );
+}

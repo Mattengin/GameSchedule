@@ -9,7 +9,8 @@ This README is meant to preserve the working context from the build session: pro
 - repository root: `C:\Users\matt6\Project\nEVER STOP`
 - Expo app folder: `C:\Users\matt6\Project\nEVER STOP\GameSchedule`
 - active branch during this checkpoint: `main`
-- primary app file: [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx)
+- screen entry point: [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx)
+- extracted home feature modules now live under [`features/home/`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home)
 - hosted demo: `https://mattengin.github.io/GameSchedule/`
 - GitHub Pages workflow location: [`.github/workflows/deploy-pages.yml`](/c:/Users/matt6/Project/nEVER%20STOP/.github/workflows/deploy-pages.yml)
 
@@ -69,6 +70,10 @@ This is the practical chat history condensed into a handoff:
 - redesigned lobby creation into a low-friction scheduler path: select game, pick event time, invite people
 - added squad/community-based friend discovery so users can join or create one Discord-shaped community and get suggested friends from it
 - replaced the brittle fixed availability block UI with recurring windows like `Mon 8:00 PM - 10:00 PM`
+- started improvement-track cleanup work to break up the monolithic home screen into feature modules and data hooks
+- moved extracted home helpers out of `app/` into `features/home/` after Expo Router treated those files as routes during web export
+- added new Cypress account/API/database-contract coverage using mocked Supabase-shaped requests so tests stay secret-safe
+- converted lobby invites from draft-only UI into real `lobby_members` invites with accept, decline, suggest-new-time, optional comments, and append-only response history
 
 ## Tech Stack
 
@@ -244,9 +249,16 @@ Current SQL scripts:
 - validates that end time is after start time
 - host membership insertion on create
 - lobbies shown in both Lobbies and Schedule tabs
-- invite draft UI in the lobby form
-- invite draft count shown in UI
-- invite draft currently local-only
+- invite chips in the lobby form use accepted friends with stable profile IDs
+- lobby creation now goes through `create_lobby_with_invites(...)`
+- host gets an `accepted` `lobby_members` row on create
+- invitees get real `pending` `lobby_members` rows on create
+- Lobbies tab now has `Incoming invites` and `Hosted lobbies` sections
+- invitees can accept, decline, or suggest a new time
+- every invite decision supports an optional comment
+- invite suggestions use the same date/start/end picker pattern as scheduling
+- response history is appended in `lobby_member_response_history`
+- hosts can apply a suggested time and automatically reset other invitees to `pending`
 
 ### Step 6: Scheduling + Availability
 
@@ -297,6 +309,7 @@ Current SQL scripts:
 
 - profile overview card
 - initials avatar
+- avatar URL image rendering with initials fallback
 - editable profile details:
   - username
   - display name
@@ -308,6 +321,23 @@ Current SQL scripts:
 - preferences summary
 - Discord connection status card
 - Discord connect/disconnect controls
+
+### Internal Cleanup / Improvement Track 3
+
+- `app/index.tsx` now acts more like the screen entry/orchestrator, with shared UI/data logic split into `features/home`
+- home screen shared constants, styles, types, utilities, and section renderers extracted into:
+  - [`features/home/homeConstants.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeConstants.ts)
+  - [`features/home/homeStyles.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeStyles.ts)
+  - [`features/home/homeTypes.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeTypes.ts)
+  - [`features/home/homeUtils.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeUtils.tsx)
+  - [`features/home/homeSections.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeSections.tsx)
+- read-side data orchestration extracted into feature hooks:
+  - [`features/home/homeGameHooks.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeGameHooks.ts)
+  - [`features/home/homeSocialHooks.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeSocialHooks.ts)
+  - [`features/home/homeLobbyHooks.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeLobbyHooks.ts)
+  - [`features/home/homeAvailabilityHooks.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeAvailabilityHooks.ts)
+- this refactor reduced `app/index.tsx` complexity without changing the current single-screen product shape
+- key lesson: Expo Router treats files under `app/` as routes, so non-route helpers must live outside that tree
 
 ### Public Demo / GitHub Pages
 
@@ -322,6 +352,10 @@ Current SQL scripts:
   - `EXPO_PUBLIC_ALLOW_SIGNUP`
   - `EXPO_PUBLIC_DEMO_LABEL`
 - public demo mode can disable self-signup so the hosted backend does not get flooded with junk accounts
+- GitHub Pages is intended to point at the separate QA/demo Supabase project rather than the prod project
+- QA and prod Supabase projects were both validated against the current schema surface
+- helper script added for QA schema application:
+  - [`scripts/apply-qa-schema.ps1`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/apply-qa-schema.ps1)
 - local static export verified successfully with:
   - `npx expo export --platform web`
 - hosted GitHub Pages deployment verified live:
@@ -335,7 +369,7 @@ Unused Expo starter/template code has been trimmed back:
 
 - old starter files were removed from `app-example`, `components`, `constants`, and `hooks`
 - some empty directory stubs still exist locally, but they are not part of the active app surface
-- the active UI is concentrated in [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx) and [`app/_layout.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/_layout.tsx)
+- the active UI is now centered in [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx), [`app/_layout.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/_layout.tsx), and the extracted [`features/home/`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home) modules
 
 ## Database Scripts
 
@@ -369,17 +403,26 @@ Creates:
 
 - `public.lobbies`
 - `public.lobby_members`
+- `public.lobby_member_response_history`
 
 Important fields:
 
 - `scheduled_for` stores the start timestamp
 - `scheduled_until` stores the end timestamp
 - `lobbies_scheduled_until_after_start` prevents end times before start times
+- `lobby_members.rsvp_status` now supports `pending`, `accepted`, `declined`, and `suggested_time`
+- `lobby_members` also stores current response comments, suggested start/end timestamps, and response timestamps
+
+Important RPCs:
+
+- `public.create_lobby_with_invites(...)`
+- `public.respond_to_lobby_invite(...)`
+- `public.apply_lobby_time_suggestion(...)`
 
 Important note:
 
-- the first lobby RLS version created an infinite recursion problem because `lobbies` and `lobby_members` policies referenced each other
-- this was fixed by simplifying lobby reads to host-owned reads for the current phase
+- the earliest lobby RLS version created an infinite recursion problem because `lobbies` and `lobby_members` policies referenced each other
+- the current version avoids that by using security-definer helper functions for view checks and dedicated RPCs for write flows
 
 ### `availability-schema.sql`
 
@@ -407,6 +450,15 @@ Also adds:
 
 - authenticated read access for `public.profiles`
 - `public.accept_friend_request(uuid)` RPC
+
+### `profiles-schema.sql`
+
+Adds the base `public.profiles` bootstrap for projects that do not already have it.
+
+Used for:
+
+- bootstrapping fresh QA/demo projects
+- keeping auth-linked profile data consistent across environments
 
 ### `communities-schema.sql`
 
@@ -606,6 +658,7 @@ Current behavior:
 
 Current Cypress specs:
 
+- [`cypress/e2e/account-settings.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/account-settings.cy.ts)
 - [`cypress/e2e/auth-smoke.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-smoke.cy.ts)
 - [`cypress/e2e/auth-session.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-session.cy.ts)
 - [`cypress/e2e/profile-onboarding.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/profile-onboarding.cy.ts)
@@ -617,6 +670,10 @@ Current Cypress specs:
 
 Covered behavior:
 
+- profile save API contract
+- email update API contract
+- password update validation plus API contract
+- Discord OAuth hash cleanup after return
 - auth screen rendering
 - invalid auth behavior
 - mocked session flows
@@ -626,13 +683,21 @@ Covered behavior:
 - favorites persistence
 - roulette persistence
 - lobby creation
-- lobby invite-draft behavior
+- host `lobby_members` row insertion contract
+- real invite row creation for accepted friends
+- invitee accept flow with optional comment
+- invitee decline flow with optional comment
+- invitee suggest-new-time flow with optional comment
+- host apply-suggested-time flow
+- invite response history append behavior
 - lobby start/end time persistence
 - schedule-page lobby rescheduling
 - availability window add/delete behavior
 - availability range validation
 - community onboarding create flow
 - community onboarding invalid invite flow
+- community onboarding valid invite flow
+- signed-in no-squad redirect to Friends/community onboarding
 - Discord-community friend suggestions
 - friend search
 - send request
@@ -643,6 +708,7 @@ Important note:
 
 - many Cypress specs intentionally mock auth/backend interactions
 - this was done because live Supabase signup hit email-send rate limits
+- the newer account/API/database coverage is contract-style and does not use live secrets or mutate real hosted data
 
 ### Current Repo Health
 
@@ -654,6 +720,10 @@ Current verification status:
   - `npm run cypress:run -- --spec "cypress/e2e/lobbies.cy.ts,cypress/e2e/schedule-availability.cy.ts"`
 - targeted Cypress auth/friends run passes:
   - `npm run cypress:run -- --spec "cypress/e2e/auth-smoke.cy.ts,cypress/e2e/friends.cy.ts"`
+- targeted Cypress account/friends/lobbies run passes against the local static export:
+  - `npm run cypress:run -- --config baseUrl=http://localhost:8082/GameSchedule --spec "cypress/e2e/account-settings.cy.ts,cypress/e2e/friends.cy.ts,cypress/e2e/lobbies.cy.ts"`
+- targeted Cypress lobby/schedule regression run passes against the local static export:
+  - `npm run cypress:run -- --config baseUrl=http://localhost:8082/GameSchedule --spec "cypress/e2e/lobbies.cy.ts,cypress/e2e/schedule-availability.cy.ts"`
 
 Recent repo-health fixes:
 
@@ -663,6 +733,8 @@ Recent repo-health fixes:
 - converted Cypress specs into modules to avoid duplicate global identifier errors
 - updated [`tsconfig.json`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/tsconfig.json) to use `moduleResolution: "bundler"`
 - configured ESLint to ignore generated `dist/**` output in [`.eslintrc.js`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/.eslintrc.js)
+- moved non-route home helpers out of `app/` so Expo Router no longer exports bogus route files
+- split read-side home logic across `features/home` hooks/modules to reduce `app/index.tsx` coupling
 
 ## Supabase Limits Discussion
 
@@ -839,10 +911,9 @@ Conclusion:
 
 ## Current Limitations
 
-- lobby invite drafts are still local-only
-- real invited `lobby_members` beyond the host are not yet persisted
 - notifications are placeholder-only
 - chat is placeholder-only
+- lobby response updates are surfaced in the Lobbies and Schedule tabs, not yet in Inbox notifications
 - Discord login is started and redirects correctly, but full end-to-end manual confirmation after Discord approval should still be validated
 - Discord relationship/friend import is not implemented
 - Twitch integration is not implemented
@@ -857,7 +928,7 @@ Short-term:
 - run `scripts/communities-schema.sql` in Supabase before using squad suggestions live
 - live-validate the new friends flow with two real accounts
 - run the updated `lobbies-schema.sql` and `availability-schema.sql` in the demo Supabase project before publishing the new scheduler live
-- connect accepted friends to real `lobby_members` invites
+- live-validate the new lobby invite/comment/history flow with multiple real accounts
 - build notifications from friend requests and lobby actions
 - manually validate the new schedule picker flow against real Supabase data after the SQL is applied
 
@@ -873,20 +944,27 @@ Long-term:
 - add backend functions or RPCs for:
   - accepting friend requests
   - creating mirrored friendship rows safely
-  - inviting real friends into lobbies
+  - sending notifications for lobby responses and time changes
   - syncing Discord and IGDB data
 
 ## Key Files
 
 - [`app/_layout.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/_layout.tsx)
 - [`app/index.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/app/index.tsx)
+- [`features/home/homeSections.tsx`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeSections.tsx)
+- [`features/home/homeSocialHooks.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeSocialHooks.ts)
+- [`features/home/homeLobbyHooks.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/features/home/homeLobbyHooks.ts)
 - [`services/supabaseClient.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/services/supabaseClient.ts)
 - [`scripts/games-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/games-schema.sql)
 - [`scripts/game-social-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/game-social-schema.sql)
 - [`scripts/lobbies-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/lobbies-schema.sql)
 - [`scripts/availability-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/availability-schema.sql)
 - [`scripts/friends-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/friends-schema.sql)
+- [`scripts/communities-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/communities-schema.sql)
+- [`scripts/profiles-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/profiles-schema.sql)
+- [`scripts/apply-qa-schema.ps1`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/apply-qa-schema.ps1)
 - [`scripts/discord-profile-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/discord-profile-schema.sql)
+- [`cypress/e2e/account-settings.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/account-settings.cy.ts)
 - [`cypress/e2e/auth-smoke.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-smoke.cy.ts)
 - [`cypress/e2e/auth-session.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-session.cy.ts)
 - [`cypress/e2e/profile-onboarding.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/profile-onboarding.cy.ts)
@@ -906,10 +984,14 @@ This repo has been moved from a starter template into a functioning Supabase-bac
 - favorites
 - roulette
 - lobbies
+- lobby invite responses and history
 - scheduling
 - availability
+- account settings
 - Discord login/profile identity groundwork
 - the first real friends/request flow
+- Discord-first squad suggestions
+- internal home-feature refactor
 - test coverage
 - manual live validation
 - Supabase limits discussion
