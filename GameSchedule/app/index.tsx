@@ -43,10 +43,31 @@ type Profile = {
   avatar_url: string | null;
   display_name: string | null;
   onboarding_complete: boolean;
+  primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;
   discord_avatar_url: string | null;
   discord_connected_at: string | null;
+};
+
+type CommunityRecord = {
+  id: string;
+  name: string;
+  invite_code: string;
+  discord_guild_id: string | null;
+  created_by_profile_id: string;
+  created_at: string;
+};
+
+type CommunityMemberRecord = {
+  community_id: string;
+  profile_id: string;
+  role: 'owner' | 'member';
+  created_at: string;
+};
+
+type SuggestedFriendRecord = Profile & {
+  community_role: 'owner' | 'member';
 };
 
 type GameRecord = {
@@ -182,7 +203,7 @@ const discordClientId = process.env.EXPO_PUBLIC_DISCORD_CLIENT_ID?.trim() ?? '';
 const discordStateStorageKey = 'gameschedule-discord-oauth-state';
 
 const profileSelectFields =
-  'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';
+  'id, username, avatar_url, display_name, onboarding_complete, primary_community_id, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';
 
 const getWebBasePath = () => {
   if (Platform.OS !== 'web') {
@@ -637,6 +658,15 @@ export default function HomeScreen() {
   const [friendRequests, setFriendRequests] = React.useState<FriendRequestRecord[]>([]);
   const [friendDirectory, setFriendDirectory] = React.useState<Record<string, Profile>>({});
   const [friendSearchResults, setFriendSearchResults] = React.useState<Profile[]>([]);
+  const [currentCommunity, setCurrentCommunity] = React.useState<CommunityRecord | null>(null);
+  const [communityMembers, setCommunityMembers] = React.useState<CommunityMemberRecord[]>([]);
+  const [communityProfiles, setCommunityProfiles] = React.useState<Profile[]>([]);
+  const [communityLoading, setCommunityLoading] = React.useState(false);
+  const [communityBusy, setCommunityBusy] = React.useState(false);
+  const [communityError, setCommunityError] = React.useState('');
+  const [communityMessage, setCommunityMessage] = React.useState('');
+  const [communityInviteCode, setCommunityInviteCode] = React.useState('');
+  const [communityName, setCommunityName] = React.useState('');
   const [lobbiesLoading, setLobbiesLoading] = React.useState(false);
   const [lobbiesError, setLobbiesError] = React.useState('');
   const [lobbyBusy, setLobbyBusy] = React.useState(false);
@@ -808,6 +838,7 @@ export default function HomeScreen() {
         display_name: fallbackName,
         avatar_url: discordIdentity?.discord_avatar_url ?? null,
         onboarding_complete: Boolean(discordIdentity),
+        primary_community_id: null,
         discord_user_id: discordIdentity?.discord_user_id ?? null,
         discord_username: discordIdentity?.discord_username ?? null,
         discord_avatar_url: discordIdentity?.discord_avatar_url ?? null,
@@ -980,9 +1011,7 @@ export default function HomeScreen() {
 
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
-        .select(
-          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
-        )
+        .select(profileSelectFields)
         .in('id', profileIds);
 
       if (profilesError) {
@@ -1006,6 +1035,72 @@ export default function HomeScreen() {
   }, [session]);
 
   React.useEffect(() => {
+    if (!session?.user || !profile?.primary_community_id) {
+      setCurrentCommunity(null);
+      setCommunityMembers([]);
+      setCommunityProfiles([]);
+      setCommunityLoading(false);
+      return;
+    }
+
+    const loadCommunityData = async () => {
+      setCommunityLoading(true);
+      setCommunityError('');
+
+      const [{ data: communityData, error: communityErrorValue }, { data: membersData, error: membersError }] =
+        await Promise.all([
+          supabase
+            .from('communities')
+            .select('id, name, invite_code, discord_guild_id, created_by_profile_id, created_at')
+            .eq('id', profile.primary_community_id)
+            .maybeSingle(),
+          supabase
+            .from('community_members')
+            .select('community_id, profile_id, role, created_at')
+            .eq('community_id', profile.primary_community_id),
+        ]);
+
+      if (communityErrorValue || membersError) {
+        setCommunityError(
+          communityErrorValue?.message ?? membersError?.message ?? 'Unable to load your community.',
+        );
+        setCommunityLoading(false);
+        return;
+      }
+
+      const nextCommunity = (communityData as CommunityRecord | null) ?? null;
+      const nextMembers = (membersData as CommunityMemberRecord[] | null) ?? [];
+      const memberProfileIds = nextMembers
+        .map((member) => member.profile_id)
+        .filter((memberId) => memberId && memberId !== session.user.id);
+
+      setCurrentCommunity(nextCommunity);
+      setCommunityMembers(nextMembers);
+
+      if (memberProfileIds.length === 0) {
+        setCommunityProfiles([]);
+        setCommunityLoading(false);
+        return;
+      }
+
+      const { data: communityProfilesData, error: communityProfilesError } = await supabase
+        .from('profiles')
+        .select(profileSelectFields)
+        .in('id', memberProfileIds);
+
+      if (communityProfilesError) {
+        setCommunityError(communityProfilesError.message);
+      } else {
+        setCommunityProfiles((communityProfilesData as Profile[] | null) ?? []);
+      }
+
+      setCommunityLoading(false);
+    };
+
+    loadCommunityData();
+  }, [profile?.primary_community_id, session?.user]);
+
+  React.useEffect(() => {
     if (!session?.user || friendSearch.trim().length < 2) {
       setFriendSearchResults([]);
       setFriendSearchLoading(false);
@@ -1018,9 +1113,7 @@ export default function HomeScreen() {
       const query = friendSearch.trim();
       const { data, error } = await supabase
         .from('profiles')
-        .select(
-          'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
-        )
+        .select(profileSelectFields)
         .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
         .neq('id', session.user.id)
         .limit(6);
@@ -1130,6 +1223,12 @@ export default function HomeScreen() {
     }));
   }, [libraryGames, selectedLobbyGameId]);
 
+  React.useEffect(() => {
+    if (session?.user && profile && !profile.primary_community_id && section === 'dashboard') {
+      setSection('friends');
+    }
+  }, [profile, section, session]);
+
   const acceptedFriends = React.useMemo(() => {
     return friendships
       .map((friendship) => {
@@ -1176,6 +1275,46 @@ export default function HomeScreen() {
 
     return acceptedFriends;
   }, [acceptedFriends, friendFilter]);
+
+  const suggestedFriends = React.useMemo(() => {
+    const pendingIds = new Set(
+      friendRequests
+        .filter((request) => request.status === 'pending')
+        .map((request) =>
+          request.requester_profile_id === session?.user?.id
+            ? request.addressee_profile_id
+            : request.requester_profile_id,
+        ),
+    );
+    const existingFriendIds = new Set(friendships.map((friendship) => friendship.friend_profile_id));
+    const memberRoleByProfileId = communityMembers.reduce<Record<string, CommunityMemberRecord['role']>>(
+      (accumulator, member) => {
+        accumulator[member.profile_id] = member.role;
+        return accumulator;
+      },
+      {},
+    );
+
+    return communityProfiles
+      .filter(
+        (candidate) =>
+          Boolean(candidate.discord_user_id) &&
+          candidate.id !== session?.user?.id &&
+          !existingFriendIds.has(candidate.id) &&
+          !pendingIds.has(candidate.id),
+      )
+      .map(
+        (candidate): SuggestedFriendRecord => ({
+          ...candidate,
+          community_role: memberRoleByProfileId[candidate.id] ?? 'member',
+        }),
+      )
+      .sort((left, right) => {
+        const leftName = (left.display_name ?? left.username ?? '').toLowerCase();
+        const rightName = (right.display_name ?? right.username ?? '').toLowerCase();
+        return leftName.localeCompare(rightName);
+      });
+  }, [communityMembers, communityProfiles, friendRequests, friendships, session]);
 
   const filteredGames = React.useMemo(() => {
     const query = gameSearch.trim().toLowerCase();
@@ -1720,6 +1859,107 @@ export default function HomeScreen() {
     setFriendActionBusyId(null);
   };
 
+  const handleCreateCommunity = async () => {
+    if (!session?.user) {
+      return;
+    }
+
+    const trimmedName = communityName.trim();
+    if (!trimmedName) {
+      setCommunityError('Enter a squad name before creating a community.');
+      setCommunityMessage('');
+      return;
+    }
+
+    setCommunityBusy(true);
+    setCommunityError('');
+    setCommunityMessage('');
+
+    const { data, error } = await supabase.rpc('create_community', {
+      p_name: trimmedName,
+    });
+
+    if (error) {
+      setCommunityError(error.message);
+      setCommunityBusy(false);
+      return;
+    }
+
+    const createdCommunity = unwrapRelation(data as CommunityRecord[] | CommunityRecord | null);
+
+    if (createdCommunity) {
+      setCurrentCommunity(createdCommunity);
+      setCommunityMembers([
+        {
+          community_id: createdCommunity.id,
+          profile_id: session.user.id,
+          role: 'owner',
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      setCommunityProfiles([]);
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              primary_community_id: createdCommunity.id,
+            }
+          : current,
+      );
+      setCommunityMessage(
+        `Squad created. Share code ${createdCommunity.invite_code.toUpperCase()} with your Discord community.`,
+      );
+      setCommunityName('');
+    }
+
+    setCommunityBusy(false);
+  };
+
+  const handleJoinCommunity = async () => {
+    if (!session?.user) {
+      return;
+    }
+
+    const trimmedCode = communityInviteCode.trim();
+    if (!trimmedCode) {
+      setCommunityError('Enter a squad code before joining.');
+      setCommunityMessage('');
+      return;
+    }
+
+    setCommunityBusy(true);
+    setCommunityError('');
+    setCommunityMessage('');
+
+    const { data, error } = await supabase.rpc('join_community_by_invite', {
+      p_invite_code: trimmedCode,
+    });
+
+    if (error) {
+      setCommunityError(error.message);
+      setCommunityBusy(false);
+      return;
+    }
+
+    const joinedCommunity = unwrapRelation(data as CommunityRecord[] | CommunityRecord | null);
+
+    if (joinedCommunity) {
+      setCurrentCommunity(joinedCommunity);
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              primary_community_id: joinedCommunity.id,
+            }
+          : current,
+      );
+      setCommunityMessage(`Joined ${joinedCommunity.name}. Discord-based squad suggestions are now ready.`);
+      setCommunityInviteCode('');
+    }
+
+    setCommunityBusy(false);
+  };
+
   const renderDashboard = () => (
     <>
       <Surface style={styles.heroCard} elevation={2}>
@@ -1817,23 +2057,7 @@ export default function HomeScreen() {
     <>
       <SectionTitle
         title="Friends & contacts"
-        subtitle="Search profiles, send requests, and manage your real friend list."
-      />
-      <Searchbar
-        placeholder="Search by username or display name"
-        value={friendSearch}
-        onChangeText={setFriendSearch}
-        testID="friends-search-input"
-      />
-      <SegmentedButtons
-        value={friendFilter}
-        onValueChange={(value) => setFriendFilter(value as 'all' | 'favorites' | 'pending')}
-        style={styles.segmented}
-        buttons={[
-          { value: 'all', label: 'All' },
-          { value: 'favorites', label: 'Favorites' },
-          { value: 'pending', label: 'Pending' },
-        ]}
+        subtitle="Low-friction squad suggestions first, then requests, favorites, and manual search."
       />
       {friendError ? (
         <HelperText type="error" visible>
@@ -1845,16 +2069,76 @@ export default function HomeScreen() {
           {friendMessage}
         </HelperText>
       ) : null}
+      {communityError ? (
+        <HelperText type="error" visible>
+          {communityError}
+        </HelperText>
+      ) : null}
+      {communityMessage ? (
+        <HelperText type="info" visible style={styles.successText}>
+          {communityMessage}
+        </HelperText>
+      ) : null}
 
-      {friendSearch.trim().length >= 2 ? (
+      {!profile?.primary_community_id ? (
         <Card style={styles.panel}>
           <Card.Content>
-            <Text variant="titleMedium">Search results</Text>
+            <Text variant="titleMedium">Join your squad</Text>
             <Text style={styles.friendNote}>
-              {friendSearchLoading ? 'Searching profiles...' : 'Send a request to bring someone into your lobby flow.'}
+              Use a squad code from your Discord community or create one if you are the organizer.
             </Text>
-            {friendSearchResults.map((candidate) => {
-              const status = getFriendSearchStatus(candidate.id);
+            <TextInput
+              mode="outlined"
+              label="Squad code"
+              placeholder="Enter invite code"
+              value={communityInviteCode}
+              onChangeText={setCommunityInviteCode}
+              autoCapitalize="characters"
+              style={styles.input}
+              testID="community-invite-code-input"
+            />
+            <Button
+              mode="contained"
+              onPress={handleJoinCommunity}
+              loading={communityBusy}
+              disabled={communityBusy}
+              testID="join-community-button">
+              Join squad
+            </Button>
+            <Divider style={styles.divider} />
+            <Text variant="titleSmall" style={styles.eventTimeTitle}>
+              Create a new squad
+            </Text>
+            <TextInput
+              mode="outlined"
+              label="Squad name"
+              placeholder="Creator squad, guild night, or server name"
+              value={communityName}
+              onChangeText={setCommunityName}
+              style={styles.input}
+              testID="community-name-input"
+            />
+            <Button
+              mode="outlined"
+              onPress={handleCreateCommunity}
+              loading={communityBusy}
+              disabled={communityBusy}
+              testID="create-community-button">
+              Create squad
+            </Button>
+          </Card.Content>
+        </Card>
+      ) : (
+        <Card style={styles.panel}>
+          <Card.Content>
+            <Text variant="titleMedium">Suggested from your Discord community</Text>
+            <Text style={styles.friendNote}>
+              {currentCommunity
+                ? `${currentCommunity.name} | Invite code ${currentCommunity.invite_code.toUpperCase()}`
+                : 'Loading your community...'}
+            </Text>
+            {communityLoading ? <Text style={styles.friendNote}>Loading community suggestions...</Text> : null}
+            {!communityLoading && suggestedFriends.map((candidate) => {
               const candidateName = candidate.display_name ?? candidate.username ?? 'Player';
               const resolvedAvatarUrl = resolveAvatarUrl(candidate);
 
@@ -1872,30 +2156,29 @@ export default function HomeScreen() {
                   <View style={styles.friendMeta}>
                     <Text variant="titleMedium">{candidateName}</Text>
                     <Text style={styles.friendNote}>
-                      {candidate.username ? `@${candidate.username}` : 'No username yet'}
+                      {candidate.username ? `@${candidate.username}` : 'No username yet'} |{' '}
+                      {candidate.community_role === 'owner' ? 'Squad organizer' : 'Squad member'}
                     </Text>
                   </View>
-                  {status === 'new' ? (
-                    <Button
-                      mode="contained-tonal"
-                      onPress={() => sendFriendRequest(candidate)}
-                      loading={friendActionBusyId === `request:${candidate.id}`}
-                      disabled={friendActionBusyId !== null}
-                      testID={`send-friend-request-${candidate.id}`}>
-                      Send request
-                    </Button>
-                  ) : (
-                    <Chip>{status === 'friend' ? 'Already friends' : 'Pending'}</Chip>
-                  )}
+                  <Button
+                    mode="contained-tonal"
+                    onPress={() => sendFriendRequest(candidate)}
+                    loading={friendActionBusyId === `request:${candidate.id}`}
+                    disabled={friendActionBusyId !== null}
+                    testID={`suggested-friend-request-${candidate.id}`}>
+                    Add friend
+                  </Button>
                 </View>
               );
             })}
-            {!friendSearchLoading && friendSearchResults.length === 0 ? (
-              <Text style={styles.friendNote}>No matching profiles found.</Text>
+            {!communityLoading && suggestedFriends.length === 0 ? (
+              <Text style={styles.friendNote}>
+                No new squad suggestions right now. Invite more people into the community or use manual search below.
+              </Text>
             ) : null}
           </Card.Content>
         </Card>
-      ) : null}
+      )}
 
       {(friendFilter === 'pending' || incomingFriendRequests.length > 0 || outgoingFriendRequests.length > 0) ? (
         <Card style={styles.panel}>
@@ -1939,6 +2222,17 @@ export default function HomeScreen() {
         </Card>
       ) : null}
 
+      <SegmentedButtons
+        value={friendFilter}
+        onValueChange={(value) => setFriendFilter(value as 'all' | 'favorites' | 'pending')}
+        style={styles.segmented}
+        buttons={[
+          { value: 'all', label: 'All' },
+          { value: 'favorites', label: 'Favorites' },
+          { value: 'pending', label: 'Pending' },
+        ]}
+      />
+
       {visibleFriends.map((friend) => {
         const friendName = friend.display_name ?? friend.username ?? 'Player';
         const resolvedAvatarUrl = resolveAvatarUrl(friend);
@@ -1978,10 +2272,76 @@ export default function HomeScreen() {
         <Card style={styles.panel}>
           <Card.Content>
             <Text variant="titleMedium">No friends yet.</Text>
-            <Text style={styles.friendNote}>Search for another profile and send your first request.</Text>
+            <Text style={styles.friendNote}>
+              Use the squad suggestions above or search manually below.
+            </Text>
           </Card.Content>
         </Card>
       ) : null}
+
+      <Card style={styles.panel}>
+        <Card.Content>
+          <Text variant="titleMedium">Manual search</Text>
+          <Text style={styles.friendNote}>
+            Search by username or display name if someone is not showing up in your squad suggestions.
+          </Text>
+          <Searchbar
+            placeholder="Search by username or display name"
+            value={friendSearch}
+            onChangeText={setFriendSearch}
+            testID="friends-search-input"
+          />
+          {friendSearch.trim().length >= 2 ? (
+            <>
+              <Text style={styles.friendNote}>
+                {friendSearchLoading ? 'Searching profiles...' : 'Send a request to bring someone into your lobby flow.'}
+              </Text>
+              {friendSearchResults.map((candidate) => {
+                const status = getFriendSearchStatus(candidate.id);
+                const candidateName = candidate.display_name ?? candidate.username ?? 'Player';
+                const resolvedAvatarUrl = resolveAvatarUrl(candidate);
+
+                return (
+                  <View key={candidate.id} style={styles.friendRow}>
+                    {resolvedAvatarUrl ? (
+                      <Avatar.Image size={42} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
+                    ) : (
+                      <Avatar.Text
+                        size={42}
+                        label={candidateName.slice(0, 2).toUpperCase()}
+                        style={styles.avatar}
+                      />
+                    )}
+                    <View style={styles.friendMeta}>
+                      <Text variant="titleMedium">{candidateName}</Text>
+                      <Text style={styles.friendNote}>
+                        {candidate.username ? `@${candidate.username}` : 'No username yet'}
+                      </Text>
+                    </View>
+                    {status === 'new' ? (
+                      <Button
+                        mode="contained-tonal"
+                        onPress={() => sendFriendRequest(candidate)}
+                        loading={friendActionBusyId === `request:${candidate.id}`}
+                        disabled={friendActionBusyId !== null}
+                        testID={`send-friend-request-${candidate.id}`}>
+                        Send request
+                      </Button>
+                    ) : (
+                      <Chip>{status === 'friend' ? 'Already friends' : 'Pending'}</Chip>
+                    )}
+                  </View>
+                );
+              })}
+              {!friendSearchLoading && friendSearchResults.length === 0 ? (
+                <Text style={styles.friendNote}>No matching profiles found.</Text>
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.friendNote}>Type at least two characters to search profiles.</Text>
+          )}
+        </Card.Content>
+      </Card>
     </>
   );
 
@@ -3006,9 +3366,7 @@ export default function HomeScreen() {
         onboarding_complete: true,
       })
       .eq('id', session.user.id)
-      .select(
-        'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
-      )
+      .select(profileSelectFields)
       .single();
 
     if (error) {
@@ -3091,9 +3449,7 @@ export default function HomeScreen() {
         discord_connected_at: null,
       })
       .eq('id', session.user.id)
-      .select(
-        'id, username, avatar_url, display_name, onboarding_complete, discord_user_id, discord_username, discord_avatar_url, discord_connected_at',
-      )
+      .select(profileSelectFields)
       .single();
 
     if (error) {
@@ -3293,7 +3649,7 @@ export default function HomeScreen() {
           </Text>
           <Text style={styles.pageSubtitle}>
             {allowSignup
-              ? 'Supabase email/password auth for the first real app step. Kept minimal for testing.'
+              ? 'Discord is the fastest way in for squad suggestions. Email/password stays as a fallback for testing.'
               : 'Public demo access is sign-in only. Use a shared demo account or one we provide for testing.'}
           </Text>
 
@@ -3307,8 +3663,12 @@ export default function HomeScreen() {
             testID="discord-login-button">
             Continue with Discord
           </Button>
+          <Text style={styles.friendNote}>
+            Recommended: use Discord first so the app can suggest people from your shared squad.
+          </Text>
 
           <Divider style={styles.divider} />
+          <Text style={styles.friendNote}>Fallback: use email/password if you are testing or not ready to link Discord.</Text>
 
           <SegmentedButtons
             value={authMode}

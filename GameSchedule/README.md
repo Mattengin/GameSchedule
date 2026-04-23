@@ -63,9 +63,11 @@ This is the practical chat history condensed into a handoff:
 - shifted social strategy toward Discord-first because streamers/gamers already have Discord communities
 - set up GitHub Pages public hosting with a separate demo Supabase project and repo variables
 - added Discord login as an option while keeping email/password fallback
+- reprioritized auth so Discord is the recommended entry path while email/password remains as fallback
 - cleaned up Expo starter noise, while leaving some empty folder stubs in place
 - paused new feature work to improve scheduling UX with picker-based event start/end times and cleaner recurring availability ranges
 - redesigned lobby creation into a low-friction scheduler path: select game, pick event time, invite people
+- added squad/community-based friend discovery so users can join or create one Discord-shaped community and get suggested friends from it
 - replaced the brittle fixed availability block UI with recurring windows like `Mon 8:00 PM - 10:00 PM`
 
 ## Tech Stack
@@ -154,6 +156,7 @@ Current SQL scripts:
 - [`scripts/lobbies-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/lobbies-schema.sql)
 - [`scripts/availability-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/availability-schema.sql)
 - [`scripts/friends-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/friends-schema.sql)
+- [`scripts/communities-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/communities-schema.sql)
 - [`scripts/discord-profile-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/discord-profile-schema.sql)
 
 ## What Has Been Built
@@ -265,8 +268,15 @@ Current SQL scripts:
 
 - `friend_requests` table
 - `friends` table
+- `communities` table
+- `community_members` table
+- `profiles.primary_community_id`
 - authenticated search across `public.profiles`
 - Friends tab now uses live Supabase-backed data
+- Discord is now the recommended auth path for social discovery
+- Discord-community squad suggestions added above the classic request flow
+- join/create-community onboarding when a signed-in user has no squad yet
+- single-squad invite code flow for low-friction discovery
 - search by username/display name
 - send friend requests
 - incoming pending requests
@@ -397,6 +407,24 @@ Also adds:
 
 - authenticated read access for `public.profiles`
 - `public.accept_friend_request(uuid)` RPC
+
+### `communities-schema.sql`
+
+Creates:
+
+- `public.communities`
+- `public.community_members`
+
+Also adds:
+
+- `public.profiles.primary_community_id`
+- `public.create_community(text)` RPC
+- `public.join_community_by_invite(text)` RPC
+
+Purpose:
+
+- drive low-friction Discord-first squad suggestions
+- keep GameSchedule lightweight instead of importing Discord’s restricted friends graph
 
 ### `discord-profile-schema.sql`
 
@@ -557,6 +585,21 @@ Current behavior:
 - users can delete individual availability windows
 - invalid end-before-start ranges show an error and do not save
 
+### Discord-First Squad Suggestions
+
+The Friends flow now treats Discord identity as the primary social starting point without attempting a real Discord friends import.
+
+Current behavior:
+
+- auth screen recommends Discord as the fastest path into the app
+- signed-in users without a squad are routed into join/create-community onboarding
+- users can create a squad and receive a reusable invite code
+- users can join a squad by invite code
+- Friends tab shows `Suggested from your Discord community` above pending requests and manual search
+- suggestions exclude the current user, existing friends, and pending-request relationships
+- one-tap `Add friend` from suggestions uses the normal `friend_requests` flow underneath
+- manual search remains as the fallback path when a user is not yet in the same squad
+
 ## Testing
 
 ### Cypress Coverage
@@ -588,6 +631,9 @@ Covered behavior:
 - schedule-page lobby rescheduling
 - availability window add/delete behavior
 - availability range validation
+- community onboarding create flow
+- community onboarding invalid invite flow
+- Discord-community friend suggestions
 - friend search
 - send request
 - accept request
@@ -606,6 +652,8 @@ Current verification status:
 - `npx tsc --noEmit` passes
 - targeted Cypress schedule/lobby run passes:
   - `npm run cypress:run -- --spec "cypress/e2e/lobbies.cy.ts,cypress/e2e/schedule-availability.cy.ts"`
+- targeted Cypress auth/friends run passes:
+  - `npm run cypress:run -- --spec "cypress/e2e/auth-smoke.cy.ts,cypress/e2e/friends.cy.ts"`
 
 Recent repo-health fixes:
 
@@ -680,6 +728,7 @@ A major product conclusion from the session:
 - this app is for streamers and gamers
 - most users already have Discord
 - forcing them to rebuild a full second network is likely the wrong UX
+- the practical v1 path is shared Discord-community membership, not Discord’s restricted friends-list API
 
 Conclusion:
 
@@ -805,6 +854,7 @@ Conclusion:
 Short-term:
 
 - manually finish the Discord authorization flow and confirm the app session/profile bootstrap after return
+- run `scripts/communities-schema.sql` in Supabase before using squad suggestions live
 - live-validate the new friends flow with two real accounts
 - run the updated `lobbies-schema.sql` and `availability-schema.sql` in the demo Supabase project before publishing the new scheduler live
 - connect accepted friends to real `lobby_members` invites
@@ -815,8 +865,8 @@ Medium-term:
 
 - redesign the social layer around a Discord-first model
 - add Discord auth/account linking
-- import or discover Discord-connected users
-- reduce the amount of manual search/add work
+- expand community discovery beyond one primary squad if the product needs it
+- reduce the amount of manual search/add work even further
 
 Long-term:
 

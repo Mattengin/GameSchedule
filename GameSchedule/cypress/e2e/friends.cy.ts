@@ -1,14 +1,21 @@
+type MockProfile = {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  display_name: string;
+  onboarding_complete: boolean;
+  primary_community_id: string | null;
+  discord_user_id: string | null;
+  discord_username: string | null;
+  discord_avatar_url: string | null;
+  discord_connected_at: string | null;
+};
+
 type MockAccount = {
   email: string;
   password: string;
   userId: string;
-  profile: {
-    id: string;
-    username: string;
-    avatar_url: string | null;
-    display_name: string;
-    onboarding_complete: boolean;
-  };
+  profile: MockProfile;
 };
 
 type MockFriendRequest = {
@@ -25,9 +32,27 @@ type MockFriendship = {
   is_favorite: boolean;
 };
 
+type MockCommunity = {
+  id: string;
+  name: string;
+  invite_code: string;
+  discord_guild_id: string | null;
+  created_by_profile_id: string;
+  created_at: string;
+};
+
+type MockCommunityMember = {
+  community_id: string;
+  profile_id: string;
+  role: 'owner' | 'member';
+  created_at: string;
+};
+
 const authStore = new Map<string, MockAccount>();
 const friendRequestsStore: MockFriendRequest[] = [];
 const friendshipsStore: MockFriendship[] = [];
+const communitiesStore: MockCommunity[] = [];
+const communityMembersStore: MockCommunityMember[] = [];
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
@@ -40,6 +65,7 @@ const makeAccount = (
   const userId = makeUserId(email);
   const resolvedUsername = username ?? email.split('@')[0].toLowerCase();
   const resolvedDisplayName = displayName ?? resolvedUsername;
+  const now = new Date().toISOString();
 
   return {
     email,
@@ -51,6 +77,11 @@ const makeAccount = (
       avatar_url: null,
       display_name: resolvedDisplayName,
       onboarding_complete: true,
+      primary_community_id: null,
+      discord_user_id: `discord-${userId}`,
+      discord_username: resolvedDisplayName,
+      discord_avatar_url: null,
+      discord_connected_at: now,
     },
   };
 };
@@ -172,6 +203,83 @@ const registerMockFriends = (currentUser: MockAccount, otherUser: MockAccount) =
     });
   }).as('profilesRequest');
 
+  cy.intercept('GET', '**/rest/v1/communities*', (req) => {
+    const idValue = getQueryValue(req.url, 'id');
+    req.reply({
+      statusCode: 200,
+      body: idValue ? communitiesStore.find((community) => community.id === idValue) ?? null : [],
+    });
+  }).as('communitiesRequest');
+
+  cy.intercept('GET', '**/rest/v1/community_members*', (req) => {
+    const communityId = getQueryValue(req.url, 'community_id');
+    req.reply({
+      statusCode: 200,
+      body: communityMembersStore.filter((member) => member.community_id === communityId),
+    });
+  }).as('communityMembersRequest');
+
+  cy.intercept('POST', '**/rest/v1/rpc/create_community', (req) => {
+    const name = (req.body as { p_name: string }).p_name.trim();
+    const community: MockCommunity = {
+      id: `community-${Date.now()}`,
+      name,
+      invite_code: 'SQUAD123',
+      discord_guild_id: null,
+      created_by_profile_id: currentUser.userId,
+      created_at: new Date().toISOString(),
+    };
+
+    communitiesStore.push(community);
+    communityMembersStore.push({
+      community_id: community.id,
+      profile_id: currentUser.userId,
+      role: 'owner',
+      created_at: new Date().toISOString(),
+    });
+    currentUser.profile.primary_community_id = community.id;
+
+    req.reply({
+      statusCode: 200,
+      body: community,
+    });
+  }).as('createCommunityRpc');
+
+  cy.intercept('POST', '**/rest/v1/rpc/join_community_by_invite', (req) => {
+    const inviteCode = ((req.body as { p_invite_code: string }).p_invite_code ?? '').trim().toLowerCase();
+    const community = communitiesStore.find(
+      (entry) => entry.invite_code.toLowerCase() === inviteCode,
+    );
+
+    if (!community) {
+      req.reply({
+        statusCode: 400,
+        body: { message: 'Invite code not found' },
+      });
+      return;
+    }
+
+    if (
+      !communityMembersStore.some(
+        (member) => member.community_id === community.id && member.profile_id === currentUser.userId,
+      )
+    ) {
+      communityMembersStore.push({
+        community_id: community.id,
+        profile_id: currentUser.userId,
+        role: 'member',
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    currentUser.profile.primary_community_id = community.id;
+
+    req.reply({
+      statusCode: 200,
+      body: community,
+    });
+  }).as('joinCommunityRpc');
+
   cy.intercept('GET', '**/rest/v1/games*', {
     statusCode: 200,
     body: [],
@@ -209,28 +317,6 @@ const registerMockFriends = (currentUser: MockAccount, otherUser: MockAccount) =
       body: friendshipsStore.filter((row) => row.profile_id === userId),
     });
   }).as('friendsRequest');
-
-  cy.intercept('POST', '**/rest/v1/friends*', (req) => {
-    const rows = Array.isArray(req.body) ? (req.body as MockFriendship[]) : [req.body as MockFriendship];
-
-    rows.forEach((row) => {
-      const existingIndex = friendshipsStore.findIndex(
-        (entry) =>
-          entry.profile_id === row.profile_id && entry.friend_profile_id === row.friend_profile_id,
-      );
-
-      if (existingIndex >= 0) {
-        friendshipsStore[existingIndex] = { ...friendshipsStore[existingIndex], ...row };
-      } else {
-        friendshipsStore.push(row);
-      }
-    });
-
-    req.reply({
-      statusCode: 201,
-      body: rows,
-    });
-  }).as('friendsInsert');
 
   cy.intercept('PATCH', '**/rest/v1/friends*', (req) => {
     const profileId = getQueryValue(req.url, 'profile_id');
@@ -362,12 +448,18 @@ describe('friends flow', () => {
     authStore.clear();
     friendRequestsStore.length = 0;
     friendshipsStore.length = 0;
+    communitiesStore.length = 0;
+    communityMembersStore.length = 0;
   });
 
   beforeEach(() => {
     authStore.clear();
     friendRequestsStore.length = 0;
     friendshipsStore.length = 0;
+    communitiesStore.length = 0;
+    communityMembersStore.length = 0;
+    currentUser.profile.primary_community_id = null;
+    otherUser.profile.primary_community_id = null;
     registerMockFriends(currentUser, otherUser);
   });
 
@@ -375,16 +467,65 @@ describe('friends flow', () => {
     cy.visit('/');
     cy.signupUi(currentUser.email, currentUser.password);
     cy.contains('Friends').click();
-    cy.contains(/search profiles, send requests, and manage your real friend list/i).should('be.visible');
+    cy.contains(/low-friction squad suggestions first/i).should('be.visible');
   };
 
-  it('searches profiles and sends a friend request', () => {
+  it('shows community onboarding for a user without a squad and creates one', () => {
     signInAndOpenFriends();
 
-    cy.get('[data-testid="friends-search-input"]').type('nova');
-    cy.contains('Search results').should('be.visible');
+    cy.contains('Join your squad').should('be.visible');
+    cy.get('[data-testid="community-name-input"]').type('Creator Squad');
+    cy.get('[data-testid="create-community-button"]').click();
+
+    cy.wait('@createCommunityRpc');
+    cy.contains(/squad created/i).should('be.visible');
+    cy.contains('Suggested from your Discord community').should('be.visible');
+    cy.contains(/creator squad/i).should('be.visible');
+  });
+
+  it('shows an error for an invalid squad code', () => {
+    signInAndOpenFriends();
+
+    cy.get('[data-testid="community-invite-code-input"]').type('wrong123');
+    cy.get('[data-testid="join-community-button"]').click();
+
+    cy.contains(/invite code not found/i).should('be.visible');
+    cy.contains('Join your squad').should('be.visible');
+  });
+
+  it('shows suggested community members and sends a friend request', () => {
+    const community: MockCommunity = {
+      id: 'community-alpha',
+      name: 'Alpha Squad',
+      invite_code: 'ALPHA999',
+      discord_guild_id: null,
+      created_by_profile_id: currentUser.userId,
+      created_at: new Date().toISOString(),
+    };
+
+    communitiesStore.push(community);
+    communityMembersStore.push(
+      {
+        community_id: community.id,
+        profile_id: currentUser.userId,
+        role: 'owner',
+        created_at: new Date().toISOString(),
+      },
+      {
+        community_id: community.id,
+        profile_id: otherUser.userId,
+        role: 'member',
+        created_at: new Date().toISOString(),
+      },
+    );
+    currentUser.profile.primary_community_id = community.id;
+    otherUser.profile.primary_community_id = community.id;
+
+    signInAndOpenFriends();
+
+    cy.contains('Suggested from your Discord community').should('be.visible');
     cy.contains('Nova Hex').should('be.visible');
-    cy.get(`[data-testid="send-friend-request-${otherUser.userId}"]`).click();
+    cy.get(`[data-testid="suggested-friend-request-${otherUser.userId}"]`).click();
 
     cy.contains(/friend request sent to nova hex/i).should('be.visible');
     cy.contains('Pending requests').should('be.visible');
@@ -411,7 +552,7 @@ describe('friends flow', () => {
     cy.contains('@novahex').should('be.visible');
   });
 
-  it('favorites an accepted friend and shows them under the favorites filter', () => {
+  it('favorites an accepted friend and keeps manual search as a fallback', () => {
     friendshipsStore.push({
       profile_id: currentUser.userId,
       friend_profile_id: otherUser.userId,
@@ -420,6 +561,8 @@ describe('friends flow', () => {
 
     signInAndOpenFriends();
 
+    cy.contains('Manual search').should('be.visible');
+    cy.get('[data-testid="friends-search-input"]').type('nova');
     cy.contains('Nova Hex').should('be.visible');
     cy.get(`[data-testid="toggle-friend-favorite-${otherUser.userId}"]`).click();
     cy.contains(/friend added to favorites/i).should('be.visible');

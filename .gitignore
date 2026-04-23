@@ -10,3 +10,6 @@ GameSchedule-clone/
 GameSchedule/.env
 GameSchedule/node_modules/
 GameSchedule/.expo/
+*.qa-query.json
+*.qa-migration.json
+qa-query-test.json
