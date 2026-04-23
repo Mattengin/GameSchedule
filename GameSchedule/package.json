@@ -13,6 +13,8 @@
     "lint": "expo lint",
     "cypress:open": "node ..\\node_modules\\cypress\\bin\\cypress open",
     "cypress:run": "node ..\\node_modules\\cypress\\bin\\cypress run",
+    "cypress:run:smoke": "node ..\\node_modules\\cypress\\bin\\cypress run --spec \"cypress/e2e/smoke/**/*.cy.{ts,tsx}\"",
+    "cypress:run:regression": "node ..\\node_modules\\cypress\\bin\\cypress run --spec \"cypress/e2e/regression/**/*.cy.{ts,tsx}\"",
     "test:e2e": "node ..\\node_modules\\cypress\\bin\\cypress run --e2e"
   },
   "jest": {

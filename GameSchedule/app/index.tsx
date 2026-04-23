@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
@@ -1453,6 +1453,24 @@ export default function HomeScreen() {
     [],
   );
 
+  const renderDiscordGuildInlineIcon = React.useCallback(
+    (guild: { name: string; icon_url: string | null }, size: number) =>
+      guild.icon_url ? (
+        <Avatar.Image
+          size={size}
+          source={{ uri: guild.icon_url }}
+          style={styles.discordGuildInlineAvatar}
+        />
+      ) : (
+        <Avatar.Text
+          size={size}
+          label={guild.name.slice(0, 1).toUpperCase()}
+          style={styles.discordGuildInlineAvatar}
+        />
+      ),
+    [],
+  );
+
   const formatHistoryTimestamp = React.useCallback((timestamp: string) => {
     const parsedTimestamp = new Date(timestamp);
     if (Number.isNaN(parsedTimestamp.getTime())) {
@@ -2162,14 +2180,26 @@ export default function HomeScreen() {
               </>
             ) : (
               <>
-                <Button
-                  mode="outlined"
-                  onPress={() => setDiscordGuildPickerVisible(true)}
-                  testID="lobby-discord-guild-picker-button">
-                  {selectedLobbyDiscordGuild
-                    ? `Meet in: ${selectedLobbyDiscordGuild.name}`
-                    : 'Choose Discord server (optional)'}
-                </Button>
+                {selectedLobbyDiscordGuild ? (
+                  <Pressable
+                    onPress={() => setDiscordGuildPickerVisible(true)}
+                    style={styles.discordGuildPickerButton}
+                    testID="lobby-discord-guild-picker-button">
+                    <View style={styles.discordGuildPickerContent}>
+                      <Text style={styles.discordGuildPickerPrefix}>Meet in:</Text>
+                      {renderDiscordGuildInlineIcon(selectedLobbyDiscordGuild, 18)}
+                      <Text style={styles.discordGuildPickerValue}>{selectedLobbyDiscordGuild.name}</Text>
+                    </View>
+                  </Pressable>
+                ) : (
+                  <Button
+                    mode="outlined"
+                    onPress={() => setDiscordGuildPickerVisible(true)}
+                    icon="discord"
+                    testID="lobby-discord-guild-picker-button">
+                    Choose Discord server (optional)
+                  </Button>
+                )}
                 <View style={styles.cardActions}>
                   <Button
                     mode="text"
@@ -2194,9 +2224,24 @@ export default function HomeScreen() {
                   ) : null}
                 </View>
                 {selectedLobbyDiscordGuild ? (
-                  <Text style={styles.friendNote}>
-                    Meetup server: {selectedLobbyDiscordGuild.name}
-                  </Text>
+                  <View style={styles.discordGuildSummaryRow}>
+                    {selectedLobbyDiscordGuild.icon_url ? (
+                      <Avatar.Image
+                        size={22}
+                        source={{ uri: selectedLobbyDiscordGuild.icon_url }}
+                        style={styles.discordGuildSummaryAvatar}
+                      />
+                    ) : (
+                      <Avatar.Text
+                        size={22}
+                        label={selectedLobbyDiscordGuild.name.slice(0, 2).toUpperCase()}
+                        style={styles.discordGuildSummaryAvatar}
+                      />
+                    )}
+                    <Text style={styles.friendNote}>
+                      Meetup server: {selectedLobbyDiscordGuild.name}
+                    </Text>
+                  </View>
                 ) : null}
               </>
             )}
@@ -2241,7 +2286,18 @@ export default function HomeScreen() {
               Host: {profile?.display_name ?? profile?.username ?? 'You'}
             </Chip>
             {selectedLobbyDiscordGuild ? (
-              <Chip icon="discord">{selectedLobbyDiscordGuild.name}</Chip>
+              <Chip
+                icon={
+                  selectedLobbyDiscordGuild.icon_url
+                    ? () =>
+                        renderDiscordGuildInlineIcon(
+                          selectedLobbyDiscordGuild,
+                          18,
+                        )
+                    : 'discord'
+                }>
+                {selectedLobbyDiscordGuild.name}
+              </Chip>
             ) : null}
             {selectedLobbyInviteProfileIds.length > 0 ? (
               <Chip icon="account-multiple">

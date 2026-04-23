@@ -940,7 +940,10 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="lobby-discord-guild-picker-button"]').click({ force: true });
     cy.contains('Choose Discord server').should('be.visible');
     cy.get('[data-testid="discord-guild-option-guild-night"]').click();
-    cy.get('[data-testid="lobby-discord-guild-picker-button"]').should('contain', 'Meet in: Night Raiders');
+    cy.get('[data-testid="lobby-discord-guild-picker-button"]').within(() => {
+      cy.contains('Meet in:').should('be.visible');
+      cy.contains('Night Raiders').should('be.visible');
+    });
     cy.contains('Meetup server: Night Raiders').should('be.visible');
     cy.get('[data-testid="create-lobby-button"]').click();
 

@@ -135,6 +135,8 @@ npx tsc --noEmit
 npm run export:web
 npm run cypress:open
 npm run cypress:run
+npm run cypress:run:smoke
+npm run cypress:run:regression
 npm run test:e2e
 ```
 
@@ -666,17 +668,27 @@ Current behavior:
 
 ### Cypress Coverage
 
-Current Cypress specs:
+Current Cypress suite layout:
 
-- [`cypress/e2e/account-settings.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/account-settings.cy.ts)
-- [`cypress/e2e/auth-smoke.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-smoke.cy.ts)
-- [`cypress/e2e/auth-session.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/auth-session.cy.ts)
-- [`cypress/e2e/profile-onboarding.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/profile-onboarding.cy.ts)
-- [`cypress/e2e/games-library.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/games-library.cy.ts)
-- [`cypress/e2e/game-social.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/game-social.cy.ts)
-- [`cypress/e2e/lobbies.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/lobbies.cy.ts)
-- [`cypress/e2e/schedule-availability.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/schedule-availability.cy.ts)
-- [`cypress/e2e/friends.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/friends.cy.ts)
+Smoke:
+
+- [`cypress/e2e/smoke/account-settings.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/smoke/account-settings.cy.ts)
+- [`cypress/e2e/smoke/auth-smoke.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/smoke/auth-smoke.cy.ts)
+- [`cypress/e2e/smoke/auth-session.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/smoke/auth-session.cy.ts)
+
+Regression:
+
+- [`cypress/e2e/regression/profile-onboarding.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/regression/profile-onboarding.cy.ts)
+- [`cypress/e2e/regression/games-library.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/regression/games-library.cy.ts)
+- [`cypress/e2e/regression/game-social.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/regression/game-social.cy.ts)
+- [`cypress/e2e/regression/lobbies.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/regression/lobbies.cy.ts)
+- [`cypress/e2e/regression/schedule-availability.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/regression/schedule-availability.cy.ts)
+- [`cypress/e2e/regression/friends.cy.ts`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/cypress/e2e/regression/friends.cy.ts)
+
+Recommended commands:
+
+- `npm run cypress:run:smoke`
+- `npm run cypress:run:regression`
 
 Covered behavior:
 
@@ -726,14 +738,13 @@ Current verification status:
 
 - `npm run lint` passes
 - `npx tsc --noEmit` passes
-- targeted Cypress schedule/lobby run passes:
-  - `npm run cypress:run -- --spec "cypress/e2e/lobbies.cy.ts,cypress/e2e/schedule-availability.cy.ts"`
-- targeted Cypress auth/friends run passes:
-  - `npm run cypress:run -- --spec "cypress/e2e/auth-smoke.cy.ts,cypress/e2e/friends.cy.ts"`
-- targeted Cypress account/friends/lobbies run passes against the local static export:
-  - `npm run cypress:run -- --config baseUrl=http://localhost:8082/GameSchedule --spec "cypress/e2e/account-settings.cy.ts,cypress/e2e/friends.cy.ts,cypress/e2e/lobbies.cy.ts"`
-- targeted Cypress lobby/schedule regression run passes against the local static export:
-  - `npm run cypress:run -- --config baseUrl=http://localhost:8082/GameSchedule --spec "cypress/e2e/lobbies.cy.ts,cypress/e2e/schedule-availability.cy.ts"`
+- targeted Cypress smoke run now uses:
+  - `npm run cypress:run:smoke`
+- targeted Cypress regression run now uses:
+  - `npm run cypress:run:regression`
+- targeted current-source verification was run against a fresh Expo web server on `http://localhost:8083` for:
+  - `cypress/e2e/smoke/account-settings.cy.ts`
+  - `cypress/e2e/regression/lobbies.cy.ts`
 
 Recent repo-health fixes:
 

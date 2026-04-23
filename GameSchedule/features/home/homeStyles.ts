@@ -190,6 +190,43 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
+  discordGuildPickerButton: {
+    alignItems: 'center',
+    borderColor: '#32417E',
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  discordGuildPickerContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  discordGuildPickerPrefix: {
+    color: '#9AA5CA',
+    fontSize: 14,
+  },
+  discordGuildPickerValue: {
+    color: '#8A6CFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  discordGuildSummaryRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  discordGuildInlineAvatar: {
+    backgroundColor: '#5865F2',
+    marginRight: 0,
+  },
+  discordGuildSummaryAvatar: {
+    backgroundColor: '#5865F2',
+  },
   supportingText: {
     color: '#C7CDEA',
     marginTop: 4,
