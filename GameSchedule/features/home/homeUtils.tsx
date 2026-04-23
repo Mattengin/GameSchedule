@@ -28,6 +28,17 @@ export const getWebRedirectUrl = () => {
   return `${currentLocation.origin}${getWebBasePath()}/`;
 };
 
+export const getDiscordCallbackPath = () => `${getWebBasePath()}/discord-oauth-callback`;
+
+export const isDiscordCallbackPath = () => {
+  if (Platform.OS !== 'web') {
+    return false;
+  }
+
+  const currentPath = globalThis.window?.location.pathname ?? '';
+  return currentPath === getDiscordCallbackPath();
+};
+
 export const clearOAuthHashFromUrl = () => {
   if (Platform.OS !== 'web') {
     return;
@@ -48,6 +59,28 @@ export const clearOAuthHashFromUrl = () => {
   }
 
   currentHistory.replaceState(currentHistory.state, '', `${currentLocation.pathname}${currentLocation.search}`);
+};
+
+export const getSessionProviderToken = (session: Session | null) => {
+  const providerToken = (session as Session & { provider_token?: string | null } | null)?.provider_token;
+  return typeof providerToken === 'string' && providerToken.trim() ? providerToken : null;
+};
+
+export const readHashParams = () => {
+  if (Platform.OS !== 'web') {
+    return new URLSearchParams();
+  }
+
+  const currentHash = globalThis.window?.location.hash ?? '';
+  return new URLSearchParams(currentHash.startsWith('#') ? currentHash.slice(1) : currentHash);
+};
+
+export const buildDiscordGuildIconUrl = (guildId: string, iconHash: string | null | undefined) => {
+  if (!guildId || !iconHash) {
+    return null;
+  }
+
+  return `https://cdn.discordapp.com/icons/${guildId}/${iconHash}.png?size=128`;
 };
 
 export const getDiscordIdentityFromSession = (session: Session | null) => {

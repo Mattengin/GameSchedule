@@ -21,6 +21,14 @@ type MockAccount = {
 const authStore = new Map<string, MockAccount>();
 const profileUpdateBodies: Record<string, unknown>[] = [];
 const updateUserBodies: Record<string, unknown>[] = [];
+const discordGuildStore: {
+  profile_id: string;
+  discord_guild_id: string;
+  name: string;
+  icon_url: string | null;
+  is_owner: boolean;
+  synced_at: string;
+}[] = [];
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
@@ -84,8 +92,8 @@ const getQueryValue = (url: string, key: string) => {
   return match ? decodeURIComponent(match[1]) : '';
 };
 
-const replaceTextInputValue = (selector: string, previousValue: string, nextValue: string) => {
-  const eraseKeys = Array.from({ length: previousValue.length }, () => '{backspace}').join('');
+const replaceTextInputValue = (selector: string, _previousValue: string, nextValue: string) => {
+  const eraseKeys = Array.from({ length: 80 }, () => '{backspace}').join('');
   cy.get(selector).click().type(`{end}${eraseKeys}${nextValue}`);
 };
 
@@ -196,6 +204,32 @@ const registerMockAccountSettings = (account: MockAccount) => {
     body: [],
   }).as('gamesRequest');
 
+  cy.intercept('GET', '**/rest/v1/profile_discord_guilds*', {
+    statusCode: 200,
+    body: discordGuildStore.filter((guild) => guild.profile_id === account.userId),
+  }).as('profileDiscordGuildsRequest');
+
+  cy.intercept('POST', '**/rest/v1/rpc/replace_discord_guilds', (req) => {
+    const guilds = ((req.body as { p_guilds?: typeof discordGuildStore | null })?.p_guilds ?? []) as typeof discordGuildStore;
+
+    discordGuildStore.length = 0;
+    guilds.forEach((guild) => {
+      discordGuildStore.push({
+        profile_id: account.userId,
+        discord_guild_id: guild.discord_guild_id,
+        name: guild.name,
+        icon_url: guild.icon_url ?? null,
+        is_owner: Boolean(guild.is_owner),
+        synced_at: new Date().toISOString(),
+      });
+    });
+
+    req.reply({
+      statusCode: 200,
+      body: guilds.length,
+    });
+  }).as('replaceDiscordGuildsRpc');
+
   cy.intercept('GET', '**/rest/v1/favorite_games*', {
     statusCode: 200,
     body: [],
@@ -246,6 +280,7 @@ describe('account settings', () => {
     authStore.clear();
     profileUpdateBodies.length = 0;
     updateUserBodies.length = 0;
+    discordGuildStore.length = 0;
     account.profile = {
       ...account.profile,
       username: account.email.split('@')[0].toLowerCase(),

@@ -7,9 +7,12 @@ import {
   Button,
   Card,
   Chip,
+  Dialog,
   Divider,
   FAB,
   HelperText,
+  List,
+  Portal,
   Searchbar,
   SegmentedButtons,
   Surface,
@@ -48,6 +51,7 @@ import {
   EventTimePicker,
   SectionTitle,
   TimeRangePicker,
+  buildDiscordGuildIconUrl,
   clearOAuthHashFromUrl,
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
@@ -56,9 +60,14 @@ import {
   formatEventRange,
   formatEventTime,
   getDefaultEndDate,
+  getDiscordCallbackPath,
   getDiscordIdentityFromSession,
   getLobbyEndDate,
+  getSessionProviderToken,
+  getWebBasePath,
   getWebRedirectUrl,
+  isDiscordCallbackPath,
+  readHashParams,
   resolveAvatarUrl,
   setDatePart,
   unwrapRelation,
@@ -88,6 +97,7 @@ export default function HomeScreen() {
   const [profileMessage, setProfileMessage] = React.useState('');
   const [discordBusy, setDiscordBusy] = React.useState(false);
   const [discordMessage, setDiscordMessage] = React.useState('');
+  const [discordGuildPickerVisible, setDiscordGuildPickerVisible] = React.useState(false);
   const [accountEmail, setAccountEmail] = React.useState('');
   const [accountBusy, setAccountBusy] = React.useState(false);
   const [accountError, setAccountError] = React.useState('');
@@ -98,6 +108,8 @@ export default function HomeScreen() {
   });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
   const [friendFilter, setFriendFilter] = React.useState<'all' | 'favorites' | 'pending'>('all');
+  const lastDiscordProviderTokenRef = React.useRef<string | null>(null);
+  const handledDiscordCallbackTokenRef = React.useRef<string | null>(null);
 
   const {
     favoriteGameIds,
@@ -160,9 +172,11 @@ export default function HomeScreen() {
   });
 
   const {
+    discordGuilds,
     editingLobbyId,
     incomingLobbies,
     inviteReadyFriends,
+    loadDiscordGuilds,
     loadLobbies,
     lobbyInviteHistory,
     lobbies,
@@ -225,6 +239,136 @@ export default function HomeScreen() {
     >
   >({});
 
+  const syncDiscordGuildSnapshot = React.useCallback(
+    async (
+      providerToken: string,
+      options?: {
+        syncIdentity?: boolean;
+        silent?: boolean;
+        successMessage?: string;
+      },
+    ) => {
+      if (!session?.user) {
+        return [];
+      }
+
+      const shouldSyncIdentity = options?.syncIdentity ?? false;
+      const shouldStaySilent = options?.silent ?? false;
+
+      try {
+        const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+          headers: {
+            Authorization: `Bearer ${providerToken}`,
+          },
+        });
+
+        if (!guildsResponse.ok) {
+          throw new Error('Unable to fetch Discord servers.');
+        }
+
+        const rawGuilds = (await guildsResponse.json()) as {
+          id: string;
+          name: string;
+          icon?: string | null;
+          owner?: boolean;
+        }[];
+
+        const normalizedGuilds = rawGuilds
+          .filter((guild) => Boolean(guild.id) && Boolean(guild.name))
+          .map((guild) => ({
+            discord_guild_id: guild.id,
+            name: guild.name,
+            icon_url: buildDiscordGuildIconUrl(guild.id, guild.icon ?? null),
+            is_owner: Boolean(guild.owner),
+          }));
+
+        if (shouldSyncIdentity) {
+          const userResponse = await fetch('https://discord.com/api/v10/users/@me', {
+            headers: {
+              Authorization: `Bearer ${providerToken}`,
+            },
+          });
+
+          if (!userResponse.ok) {
+            throw new Error('Unable to fetch the Discord account details.');
+          }
+
+          const discordUser = (await userResponse.json()) as {
+            id: string;
+            username?: string;
+            global_name?: string | null;
+            avatar?: string | null;
+          };
+
+          const discordDisplayName =
+            discordUser.global_name?.trim() ||
+            discordUser.username?.trim() ||
+            profile?.display_name?.trim() ||
+            profile?.username?.trim() ||
+            'Discord user';
+          const discordAvatarUrl = discordUser.avatar
+            ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png?size=128`
+            : null;
+
+          const { data: updatedProfile, error: updateError } = await supabase
+            .from('profiles')
+            .update({
+              discord_user_id: discordUser.id,
+              discord_username: discordDisplayName,
+              discord_avatar_url: discordAvatarUrl,
+              discord_connected_at: new Date().toISOString(),
+              avatar_url: profile?.avatar_url ?? discordAvatarUrl,
+              display_name: profile?.display_name ?? discordDisplayName,
+            })
+            .eq('id', session.user.id)
+            .select(profileSelectFields)
+            .single();
+
+          if (updateError) {
+            throw updateError;
+          }
+
+          setProfile(updatedProfile);
+        }
+
+        const { error: replaceGuildsError } = await supabase.rpc('replace_discord_guilds', {
+          p_guilds: normalizedGuilds,
+        });
+
+        if (replaceGuildsError) {
+          throw replaceGuildsError;
+        }
+
+        await loadDiscordGuilds();
+        setLobbyForm((current) =>
+          current.discordGuildId &&
+          !normalizedGuilds.some((guild) => guild.discord_guild_id === current.discordGuildId)
+            ? {
+                ...current,
+                discordGuildId: '',
+              }
+            : current,
+        );
+
+        if (!shouldStaySilent) {
+          setDiscordMessage(
+            options?.successMessage ??
+              `Discord servers synced${normalizedGuilds.length === 1 ? ': 1 server ready.' : `: ${normalizedGuilds.length} servers ready.`}`,
+          );
+        }
+
+        return normalizedGuilds;
+      } catch (error) {
+        if (!shouldStaySilent) {
+          setDiscordMessage(error instanceof Error ? error.message : 'Unable to sync Discord servers.');
+        }
+
+        return [];
+      }
+    },
+    [loadDiscordGuilds, profile, session, setLobbyForm],
+  );
+
   React.useEffect(() => {
     if (!allowSignup && authMode === 'signup') {
       setAuthMode('signin');
@@ -248,7 +392,9 @@ export default function HomeScreen() {
         setAuthError(error.message);
       } else {
         setSession(currentSession);
-        clearOAuthHashFromUrl();
+        if (!isDiscordCallbackPath()) {
+          clearOAuthHashFromUrl();
+        }
       }
 
       setAuthLoading(false);
@@ -260,7 +406,9 @@ export default function HomeScreen() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      clearOAuthHashFromUrl();
+      if (!isDiscordCallbackPath()) {
+        clearOAuthHashFromUrl();
+      }
       setAuthLoading(false);
     });
 
@@ -269,6 +417,67 @@ export default function HomeScreen() {
       subscription.unsubscribe();
     };
   }, []);
+
+  React.useEffect(() => {
+    const providerToken = getSessionProviderToken(session);
+
+    if (!session?.user || !providerToken) {
+      lastDiscordProviderTokenRef.current = null;
+      return;
+    }
+
+    if (lastDiscordProviderTokenRef.current === providerToken) {
+      return;
+    }
+
+    lastDiscordProviderTokenRef.current = providerToken;
+    void syncDiscordGuildSnapshot(providerToken, { silent: true });
+  }, [session, syncDiscordGuildSnapshot]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || !session?.user || !isDiscordCallbackPath()) {
+      return;
+    }
+
+    const hashParams = readHashParams();
+    const accessToken = hashParams.get('access_token');
+    const returnedState = hashParams.get('state');
+
+    if (!accessToken || handledDiscordCallbackTokenRef.current === accessToken) {
+      return;
+    }
+
+    const expectedState = globalThis.window?.sessionStorage?.getItem(discordStateStorageKey) ?? '';
+    if (expectedState && returnedState && expectedState !== returnedState) {
+      setDiscordMessage('Discord link could not be verified. Please try again.');
+      globalThis.window?.history.replaceState(
+        globalThis.window.history.state,
+        '',
+        `${getWebBasePath()}/`,
+      );
+      return;
+    }
+
+    handledDiscordCallbackTokenRef.current = accessToken;
+    globalThis.window?.sessionStorage?.removeItem(discordStateStorageKey);
+    setDiscordBusy(true);
+    setDiscordMessage('');
+
+    void (async () => {
+      await syncDiscordGuildSnapshot(accessToken, {
+        syncIdentity: true,
+        successMessage: 'Discord linked and servers synced.',
+      });
+
+      globalThis.window?.history.replaceState(
+        globalThis.window.history.state,
+        '',
+        `${getWebBasePath()}/`,
+      );
+      setSection('profile');
+      setDiscordBusy(false);
+    })();
+  }, [session, syncDiscordGuildSnapshot]);
 
   React.useEffect(() => {
     const syncProfile = async () => {
@@ -425,6 +634,11 @@ export default function HomeScreen() {
 
     return acceptedFriends;
   }, [acceptedFriends, friendFilter]);
+
+  const selectedLobbyDiscordGuild = React.useMemo(
+    () => discordGuilds.find((guild) => guild.discord_guild_id === lobbyForm.discordGuildId) ?? null,
+    [discordGuilds, lobbyForm.discordGuildId],
+  );
 
   const lobbyMembersByLobbyId = React.useMemo(
     () =>
@@ -619,6 +833,12 @@ export default function HomeScreen() {
     [formatInviteStatusLabel],
   );
 
+  const getLobbyDiscordServerLabel = React.useCallback(
+    (lobby: Pick<LobbyRecord, 'discord_guild_name'>) =>
+      lobby.discord_guild_name ? `Meet in Discord: ${lobby.discord_guild_name}` : null,
+    [],
+  );
+
   const prepareLobbyDraft = React.useCallback(
     (gameId: string) => {
       const game = libraryGames.find((item) => item.id === gameId);
@@ -631,6 +851,7 @@ export default function HomeScreen() {
       setLobbyForm((current) => ({
         ...current,
         title: `${game.title} Lobby`,
+        discordGuildId: '',
       }));
       setSelectedLobbyInviteProfileIds([]);
       setLobbyMessage('');
@@ -690,6 +911,9 @@ export default function HomeScreen() {
       p_title: title,
       p_scheduled_for: scheduledFor,
       p_scheduled_until: scheduledUntil,
+      p_discord_guild_id: selectedLobbyDiscordGuild?.discord_guild_id ?? null,
+      p_discord_guild_name: selectedLobbyDiscordGuild?.name ?? null,
+      p_discord_guild_icon_url: selectedLobbyDiscordGuild?.icon_url ?? null,
       p_is_private: lobbyForm.visibility === 'private',
       p_invited_profile_ids: invitedProfileIds,
     });
@@ -712,6 +936,7 @@ export default function HomeScreen() {
       startAt: createDefaultLobbyStartDate().toISOString(),
       endAt: createDefaultLobbyEndDate().toISOString(),
       scheduledFor: '',
+      discordGuildId: '',
       visibility: 'private',
     });
     setSelectedLobbyInviteProfileIds([]);
@@ -1223,6 +1448,11 @@ export default function HomeScreen() {
     [],
   );
 
+  const getDiscordGuildOptionTestId = React.useCallback(
+    (guildId: string) => `discord-guild-option-${guildId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    [],
+  );
+
   const formatHistoryTimestamp = React.useCallback((timestamp: string) => {
     const parsedTimestamp = new Date(timestamp);
     if (Number.isNaN(parsedTimestamp.getTime())) {
@@ -1647,6 +1877,9 @@ export default function HomeScreen() {
                           : 'Starts now'}
                       </Text>
                       <Text style={styles.friendNote}>Host: {getLobbyProfileLabel(lobby.host_profile_id)}</Text>
+                      {getLobbyDiscordServerLabel(lobby) ? (
+                        <Text style={styles.friendNote}>{getLobbyDiscordServerLabel(lobby)}</Text>
+                      ) : null}
                     </View>
                     <Chip compact style={chipStyle} textStyle={textStyle}>
                       {formatInviteStatusLabel(membership.rsvp_status)}
@@ -1887,6 +2120,87 @@ export default function HomeScreen() {
               </Text>
             )}
           </View>
+          <View style={styles.schedulerStep}>
+            <View style={styles.schedulerStepHeader}>
+              <Text style={styles.stepBadge}>4</Text>
+              <View style={styles.friendMeta}>
+                <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                  Discord meetup server
+                </Text>
+                <Text style={styles.friendNote}>
+                  Optional. Pick one Discord server as the meetup place for this lobby.
+                </Text>
+              </View>
+            </View>
+            {!profile?.discord_user_id ? (
+              <>
+                <Text style={styles.friendNote}>
+                  Connect Discord first if you want to tag a meetup server on the lobby.
+                </Text>
+                <Button
+                  mode="outlined"
+                  onPress={handleDiscordConnect}
+                  loading={discordBusy}
+                  disabled={discordBusy}
+                  testID="lobby-discord-connect-button">
+                  Connect Discord
+                </Button>
+              </>
+            ) : discordGuilds.length === 0 ? (
+              <>
+                <Text style={styles.friendNote}>
+                  No Discord servers are synced yet. Refresh to load your current server list.
+                </Text>
+                <Button
+                  mode="outlined"
+                  onPress={handleDiscordConnect}
+                  loading={discordBusy}
+                  disabled={discordBusy}
+                  testID="lobby-discord-refresh-button">
+                  Refresh Discord servers
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  mode="outlined"
+                  onPress={() => setDiscordGuildPickerVisible(true)}
+                  testID="lobby-discord-guild-picker-button">
+                  {selectedLobbyDiscordGuild
+                    ? `Meet in: ${selectedLobbyDiscordGuild.name}`
+                    : 'Choose Discord server (optional)'}
+                </Button>
+                <View style={styles.cardActions}>
+                  <Button
+                    mode="text"
+                    onPress={handleDiscordConnect}
+                    loading={discordBusy}
+                    disabled={discordBusy}
+                    testID="lobby-discord-refresh-linked-button">
+                    Refresh servers
+                  </Button>
+                  {selectedLobbyDiscordGuild ? (
+                    <Button
+                      mode="text"
+                      onPress={() =>
+                        setLobbyForm((current) => ({
+                          ...current,
+                          discordGuildId: '',
+                        }))
+                      }
+                      testID="clear-lobby-discord-guild-button">
+                      Clear selection
+                    </Button>
+                  ) : null}
+                </View>
+                {selectedLobbyDiscordGuild ? (
+                  <Text style={styles.friendNote}>
+                    Meetup server: {selectedLobbyDiscordGuild.name}
+                  </Text>
+                ) : null}
+              </>
+            )}
+          </View>
           <TextInput
             mode="outlined"
             label="Event title"
@@ -1926,6 +2240,9 @@ export default function HomeScreen() {
             <Chip icon="account">
               Host: {profile?.display_name ?? profile?.username ?? 'You'}
             </Chip>
+            {selectedLobbyDiscordGuild ? (
+              <Chip icon="discord">{selectedLobbyDiscordGuild.name}</Chip>
+            ) : null}
             {selectedLobbyInviteProfileIds.length > 0 ? (
               <Chip icon="account-multiple">
                 {selectedLobbyInviteProfileIds.length} invite{selectedLobbyInviteProfileIds.length === 1 ? '' : 's'} ready
@@ -1969,6 +2286,9 @@ export default function HomeScreen() {
                           : 'Starts now'}
                       </Text>
                       <Text style={styles.friendNote}>{lobby.is_private ? 'Private lobby' : 'Public lobby'}</Text>
+                      {getLobbyDiscordServerLabel(lobby) ? (
+                        <Text style={styles.friendNote}>{getLobbyDiscordServerLabel(lobby)}</Text>
+                      ) : null}
                     </View>
                     <Chip compact style={styles.statusChip}>
                       {hostedMembers.length} invitee{hostedMembers.length === 1 ? '' : 's'}
@@ -2061,6 +2381,41 @@ export default function HomeScreen() {
             })}
         </Card.Content>
       </Card>
+      <Portal>
+        <Dialog visible={discordGuildPickerVisible} onDismiss={() => setDiscordGuildPickerVisible(false)}>
+          <Dialog.Title>Choose Discord server</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              This is optional metadata for where everyone should meet on Discord.
+            </Text>
+            {discordGuilds.map((guild) => (
+              <List.Item
+                key={guild.discord_guild_id}
+                title={guild.name}
+                description={guild.is_owner ? 'You own this server' : 'Shared Discord server'}
+                left={() =>
+                  guild.icon_url ? (
+                    <Avatar.Image size={40} source={{ uri: guild.icon_url }} style={styles.avatar} />
+                  ) : (
+                    <Avatar.Text size={40} label={guild.name.slice(0, 2).toUpperCase()} style={styles.avatar} />
+                  )
+                }
+                onPress={() => {
+                  setLobbyForm((current) => ({
+                    ...current,
+                    discordGuildId: guild.discord_guild_id,
+                  }));
+                  setDiscordGuildPickerVisible(false);
+                }}
+                testID={getDiscordGuildOptionTestId(guild.discord_guild_id)}
+              />
+            ))}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setDiscordGuildPickerVisible(false)}>Close</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </>
   );
 
@@ -2098,6 +2453,9 @@ export default function HomeScreen() {
                     <Text style={styles.friendNote}>
                       {lobby.games?.title ?? 'Game unavailable'} | {formatEventRange(safeStartDate, endDate)}
                     </Text>
+                    {getLobbyDiscordServerLabel(lobby) ? (
+                      <Text style={styles.friendNote}>{getLobbyDiscordServerLabel(lobby)}</Text>
+                    ) : null}
                     {!isHost && currentMembership ? (
                       <Text style={styles.friendNote}>
                         Your current response: {formatInviteStatusLabel(currentMembership.rsvp_status)}
@@ -2365,19 +2723,46 @@ export default function HomeScreen() {
           </Chip>
           <Text style={styles.friendNote}>
             {profile?.discord_user_id
-              ? 'This linked identity will become the primary social layer for discovery, invites, and presence.'
+              ? `This linked identity is now driving discovery and optional meetup-server tags. ${discordGuilds.length} server${discordGuilds.length === 1 ? '' : 's'} synced.`
               : 'Next step is wiring Discord OAuth so identity and discovery start with the account players already use.'}
           </Text>
+          {profile?.discord_user_id && discordGuilds.length === 0 ? (
+            <Text style={styles.friendNote}>
+              No Discord servers are synced yet. Refresh once to load the servers you can tag during lobby creation.
+            </Text>
+          ) : null}
+          {profile?.discord_user_id && discordGuilds.length > 0 ? (
+            <View style={styles.quickPath}>
+              {discordGuilds.slice(0, 4).map((guild) => (
+                <Chip key={guild.discord_guild_id} icon="discord">
+                  {guild.name}
+                </Chip>
+              ))}
+              {discordGuilds.length > 4 ? (
+                <Chip>+{discordGuilds.length - 4} more</Chip>
+              ) : null}
+            </View>
+          ) : null}
           <View style={styles.cardActions}>
             {profile?.discord_user_id ? (
-              <Button
-                mode="outlined"
-                onPress={handleDiscordDisconnect}
-                loading={discordBusy}
-                disabled={discordBusy}
-                testID="discord-disconnect-button">
-                Disconnect Discord
-              </Button>
+              <>
+                <Button
+                  mode="contained-tonal"
+                  onPress={handleDiscordConnect}
+                  loading={discordBusy}
+                  disabled={discordBusy}
+                  testID="discord-refresh-servers-button">
+                  Refresh Discord servers
+                </Button>
+                <Button
+                  mode="outlined"
+                  onPress={handleDiscordDisconnect}
+                  loading={discordBusy}
+                  disabled={discordBusy}
+                  testID="discord-disconnect-button">
+                  Disconnect Discord
+                </Button>
+              </>
             ) : (
               <Button
                 mode="contained"
@@ -2629,6 +3014,7 @@ export default function HomeScreen() {
       provider: 'discord',
       options: {
         redirectTo: getWebRedirectUrl(),
+        scopes: 'identify email guilds',
       },
     });
 
@@ -2716,6 +3102,15 @@ export default function HomeScreen() {
     setDiscordBusy(true);
     setDiscordMessage('');
 
+    const providerToken = getSessionProviderToken(session);
+    if (profile.discord_user_id && providerToken) {
+      await syncDiscordGuildSnapshot(providerToken, {
+        successMessage: 'Discord servers refreshed.',
+      });
+      setDiscordBusy(false);
+      return;
+    }
+
     if (!discordClientId) {
       setDiscordMessage(
         'Discord client setup is not configured yet. Add EXPO_PUBLIC_DISCORD_CLIENT_ID before wiring OAuth.',
@@ -2739,8 +3134,7 @@ export default function HomeScreen() {
       return;
     }
 
-    const basePath = currentLocation.pathname.startsWith('/GameSchedule') ? '/GameSchedule' : '';
-    const redirectUri = `${currentLocation.origin}${basePath}/discord-oauth-callback`;
+    const redirectUri = `${currentLocation.origin}${getDiscordCallbackPath()}`;
     const state = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
     globalThis.window.sessionStorage?.setItem(discordStateStorageKey, state);
@@ -2748,7 +3142,7 @@ export default function HomeScreen() {
     const authorizeUrl = new URL('https://discord.com/oauth2/authorize');
     authorizeUrl.searchParams.set('response_type', 'token');
     authorizeUrl.searchParams.set('client_id', discordClientId);
-    authorizeUrl.searchParams.set('scope', 'identify');
+    authorizeUrl.searchParams.set('scope', 'identify guilds');
     authorizeUrl.searchParams.set('redirect_uri', redirectUri);
     authorizeUrl.searchParams.set('prompt', 'consent');
     authorizeUrl.searchParams.set('state', state);
@@ -2779,11 +3173,27 @@ export default function HomeScreen() {
 
     if (error) {
       setDiscordMessage(error.message);
-    } else {
-      setProfile(data);
-      setDiscordMessage('Discord link removed.');
+      setDiscordBusy(false);
+      return;
     }
 
+    const { error: replaceGuildsError } = await supabase.rpc('replace_discord_guilds', {
+      p_guilds: [],
+    });
+
+    if (replaceGuildsError) {
+      setDiscordMessage(replaceGuildsError.message);
+      setDiscordBusy(false);
+      return;
+    }
+
+    await loadDiscordGuilds();
+    setProfile(data);
+    setLobbyForm((current) => ({
+      ...current,
+      discordGuildId: '',
+    }));
+    setDiscordMessage('Discord link removed.');
     setDiscordBusy(false);
   }
 

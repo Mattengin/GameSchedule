@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { profileSelectFields } from './homeConstants';
 import type {
+  DiscordGuildRecord,
   GameRecord,
   LobbyInviteHistoryRecord,
   LobbyMemberRecord,
@@ -35,6 +36,7 @@ export function useLobbyState({
   const [lobbyBusy, setLobbyBusy] = React.useState(false);
   const [lobbyMessage, setLobbyMessage] = React.useState('');
   const [lobbies, setLobbies] = React.useState<LobbyRecord[]>([]);
+  const [discordGuilds, setDiscordGuilds] = React.useState<DiscordGuildRecord[]>([]);
   const [lobbyMembers, setLobbyMembers] = React.useState<LobbyMemberRecord[]>([]);
   const [lobbyInviteHistory, setLobbyInviteHistory] = React.useState<LobbyInviteHistoryRecord[]>([]);
   const [lobbyProfileDirectory, setLobbyProfileDirectory] = React.useState<Record<string, Profile>>({});
@@ -51,12 +53,34 @@ export function useLobbyState({
     startAt: createDefaultLobbyStartDate().toISOString(),
     endAt: createDefaultLobbyEndDate().toISOString(),
     scheduledFor: '',
+    discordGuildId: '',
     visibility: 'private' as 'private' | 'public',
   });
+
+  const loadDiscordGuilds = React.useCallback(async () => {
+    if (!session?.user) {
+      setDiscordGuilds([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('profile_discord_guilds')
+      .select('profile_id, discord_guild_id, name, icon_url, is_owner, synced_at')
+      .eq('profile_id', session.user.id)
+      .order('name', { ascending: true });
+
+    if (error) {
+      setDiscordGuilds([]);
+      return;
+    }
+
+    setDiscordGuilds((data as DiscordGuildRecord[] | null) ?? []);
+  }, [session]);
 
   const loadLobbies = React.useCallback(async () => {
     if (!session?.user) {
       setLobbies([]);
+      setDiscordGuilds([]);
       setLobbyMembers([]);
       setLobbyInviteHistory([]);
       setLobbyProfileDirectory({});
@@ -70,7 +94,7 @@ export function useLobbyState({
     const { data, error } = await supabase
       .from('lobbies')
       .select(
-        'id, title, scheduled_for, scheduled_until, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
+        'id, title, scheduled_for, scheduled_until, discord_guild_id, discord_guild_name, discord_guild_icon_url, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
       )
       .order('created_at', { ascending: false });
 
@@ -182,6 +206,10 @@ export function useLobbyState({
   }, [loadLobbies]);
 
   React.useEffect(() => {
+    void loadDiscordGuilds();
+  }, [loadDiscordGuilds]);
+
+  React.useEffect(() => {
     if (selectedLobbyGameId || libraryGames.length === 0) {
       return;
     }
@@ -257,9 +285,11 @@ export function useLobbyState({
   }, [rescheduleDraft.endAt, rescheduleStartAt]);
 
   return {
+    discordGuilds,
     editingLobbyId,
     incomingLobbies,
     inviteReadyFriends,
+    loadDiscordGuilds,
     loadLobbies,
     lobbyInviteHistory,
     lobbies,

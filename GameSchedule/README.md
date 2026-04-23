@@ -356,6 +356,8 @@ Current SQL scripts:
 - QA and prod Supabase projects were both validated against the current schema surface
 - helper script added for QA schema application:
   - [`scripts/apply-qa-schema.ps1`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/apply-qa-schema.ps1)
+- current local `.env` also points at the QA/demo Supabase project, so local Expo and GitHub Pages are aligned
+- the latest lobby invite / response-history schema was applied and verified on QA
 - local static export verified successfully with:
   - `npx expo export --platform web`
 - hosted GitHub Pages deployment verified live:
@@ -514,6 +516,14 @@ The following tables were confirmed reachable from the client and returned `200`
 - `availability_windows`
 - `friend_requests`
 - `friends`
+
+Later QA verification also confirmed the newer lobby invite schema surface:
+
+- `lobby_member_response_history`
+- `lobby_members.response_comment`
+- `create_lobby_with_invites(...)`
+- `respond_to_lobby_invite(...)`
+- `apply_lobby_time_suggestion(...)`
 
 ### Manual Playwright Validation
 
@@ -832,6 +842,52 @@ Current Discord auth direction:
 - profile bootstrap now reads Discord identities from Supabase sessions when available
 - profiles can store linked Discord identity data
 
+## Discord Server Metadata
+
+We added a server-only Discord meetup layer for lobbies.
+
+Current implementation:
+
+- users can sync their Discord server list into `public.profile_discord_guilds`
+- sync happens from Discord OAuth `guilds` scope
+- lobby creation can optionally store:
+  - `discord_guild_id`
+  - `discord_guild_name`
+  - `discord_guild_icon_url`
+- this is metadata only for where the squad should meet
+- hosts are **not** selecting channels yet
+- invitees are **not** validated against the chosen Discord server yet
+- no bot is involved in this phase
+
+Important product boundary:
+
+- channel browsing is explicitly out of scope for this phase
+- the chosen Discord server should be treated as host-selected context, not as enforced membership logic
+
+## Lobby History Retention
+
+`lobby_member_response_history` is intentionally append-only while a lobby is active so accept/decline/suggested-time decisions remain visible during coordination.
+
+Retention direction:
+
+- keep `lobby_members` as the lightweight current-state table
+- keep history for `24 hours` after the event ends
+- delete only `lobby_member_response_history`
+- use a daily Supabase Cron / `pg_cron` cleanup job
+- QA currently has the cleanup job installed as:
+  - `cleanup-lobby-response-history`
+  - schedule: `15 5 * * *`
+
+Effective end-time fallback rules:
+
+- use `scheduled_until` when present
+- else use `scheduled_for + 1 hour`
+- else use `created_at + 1 hour`
+
+Operational note:
+
+- if `cron.job_run_details` starts growing noticeably, add a separate pruning routine later
+
 ## Friends Flow Safety Update
 
 The first friends version allowed the client to create both friendship rows directly during accept. That was convenient for prototyping, but it was too permissive.
@@ -916,19 +972,45 @@ Conclusion:
 - lobby response updates are surfaced in the Lobbies and Schedule tabs, not yet in Inbox notifications
 - Discord login is started and redirects correctly, but full end-to-end manual confirmation after Discord approval should still be validated
 - Discord relationship/friend import is not implemented
+- Discord server selection is server-only; channel selection is not implemented
 - Twitch integration is not implemented
 - IGDB integration is not implemented
 - the app is still largely a single-screen prototype shell rather than full routed screens
+
+## Operational and Cost Risks
+
+### Low
+
+- server-only Discord metadata has low storage cost
+- one daily cleanup cron has negligible user-facing impact
+- deleting only history keeps the product simple and cheap
+
+### Medium
+
+- cron failure can silently let history accumulate
+- QA/prod cron drift can cause inconsistent retention behavior
+- Discord guild re-syncs can increase egress/compute if overused
+- `cron.job_run_details` can grow over time if never pruned
+
+### High
+
+- incorrect effective-end-time logic can delete history too early
+- assuming Discord channel browsing is available without a bot would lead to a broken product path
+- schema/cron mismatch between environments can make Pages/local/prod behave differently
 
 ## Recommended Next Steps
 
 Short-term:
 
 - manually finish the Discord authorization flow and confirm the app session/profile bootstrap after return
-- run `scripts/communities-schema.sql` in Supabase before using squad suggestions live
+- mirror the latest schema updates to prod when ready, especially:
+  - `scripts/communities-schema.sql`
+  - `scripts/lobbies-schema.sql`
+  - `scripts/discord-guilds-schema.sql`
+- prod still needs the new Discord guild sync schema and cleanup cron mirrored from QA when you are ready
 - live-validate the new friends flow with two real accounts
-- run the updated `lobbies-schema.sql` and `availability-schema.sql` in the demo Supabase project before publishing the new scheduler live
 - live-validate the new lobby invite/comment/history flow with multiple real accounts
+- live-validate the optional Discord meetup-server selection with linked accounts
 - build notifications from friend requests and lobby actions
 - manually validate the new schedule picker flow against real Supabase data after the SQL is applied
 
@@ -958,6 +1040,7 @@ Long-term:
 - [`scripts/games-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/games-schema.sql)
 - [`scripts/game-social-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/game-social-schema.sql)
 - [`scripts/lobbies-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/lobbies-schema.sql)
+- [`scripts/discord-guilds-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/discord-guilds-schema.sql)
 - [`scripts/availability-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/availability-schema.sql)
 - [`scripts/friends-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/friends-schema.sql)
 - [`scripts/communities-schema.sql`](/c:/Users/matt6/Project/nEVER%20STOP/GameSchedule/scripts/communities-schema.sql)
@@ -985,6 +1068,7 @@ This repo has been moved from a starter template into a functioning Supabase-bac
 - roulette
 - lobbies
 - lobby invite responses and history
+- Discord meetup-server metadata
 - scheduling
 - availability
 - account settings

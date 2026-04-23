@@ -33,6 +33,9 @@ type MockLobby = {
   title: string;
   scheduled_for: string | null;
   scheduled_until: string | null;
+  discord_guild_id: string | null;
+  discord_guild_name: string | null;
+  discord_guild_icon_url: string | null;
   is_private: boolean;
   status: 'scheduled' | 'open' | 'closed';
   game_id: string;
@@ -79,6 +82,15 @@ type MockFriendship = {
   is_favorite: boolean;
 };
 
+type MockDiscordGuild = {
+  profile_id: string;
+  discord_guild_id: string;
+  name: string;
+  icon_url: string | null;
+  is_owner: boolean;
+  synced_at: string;
+};
+
 const games: MockGame[] = [
   {
     id: 'helix-arena',
@@ -114,6 +126,7 @@ const lobbyStore: MockLobby[] = [];
 const lobbyMembersStore: MockLobbyMember[] = [];
 const lobbyHistoryStore: MockLobbyHistory[] = [];
 const friendshipStore: MockFriendship[] = [];
+const profileDiscordGuildStore: MockDiscordGuild[] = [];
 
 let currentSessionUserId: string | null = null;
 let lobbySequence = 0;
@@ -247,6 +260,40 @@ const upsertFriendship = (profileId: string, friendProfileId: string, isFavorite
   });
 };
 
+const linkDiscordProfile = (account: MockAccount, discordUsername: string) => {
+  account.profile.discord_user_id = `discord-${account.userId}`;
+  account.profile.discord_username = discordUsername;
+  account.profile.discord_avatar_url = null;
+  account.profile.discord_connected_at = nextIsoTimestamp();
+};
+
+const replaceDiscordGuildsForProfile = (
+  profileId: string,
+  guilds: {
+    discord_guild_id: string;
+    name: string;
+    icon_url?: string | null;
+    is_owner?: boolean;
+  }[],
+) => {
+  for (let index = profileDiscordGuildStore.length - 1; index >= 0; index -= 1) {
+    if (profileDiscordGuildStore[index].profile_id === profileId) {
+      profileDiscordGuildStore.splice(index, 1);
+    }
+  }
+
+  guilds.forEach((guild) => {
+    profileDiscordGuildStore.push({
+      profile_id: profileId,
+      discord_guild_id: guild.discord_guild_id,
+      name: guild.name,
+      icon_url: guild.icon_url ?? null,
+      is_owner: guild.is_owner ?? false,
+      synced_at: nextIsoTimestamp(),
+    });
+  });
+};
+
 const ensureInviteGraphForHost = (hostAccount: MockAccount) => {
   const novaAccount = ensureAccount(novaEmail, friendPassword, {
     displayName: 'Nova Hex',
@@ -275,6 +322,11 @@ const buildLobby = (
   scheduledFor: string | null,
   scheduledUntil: string | null,
   isPrivate: boolean,
+  discordGuild?: {
+    discord_guild_id: string | null;
+    discord_guild_name: string | null;
+    discord_guild_icon_url: string | null;
+  },
 ): MockLobby => {
   lobbySequence += 1;
   const game = games.find((item) => item.id === gameId) ?? null;
@@ -284,6 +336,9 @@ const buildLobby = (
     title,
     scheduled_for: scheduledFor,
     scheduled_until: scheduledUntil,
+    discord_guild_id: discordGuild?.discord_guild_id ?? null,
+    discord_guild_name: discordGuild?.discord_guild_name ?? null,
+    discord_guild_icon_url: discordGuild?.discord_guild_icon_url ?? null,
     is_private: isPrivate,
     status: 'scheduled',
     game_id: gameId,
@@ -431,6 +486,32 @@ const registerMockLobbies = () => {
     body: [],
   }).as('availabilityWindowsRequest');
 
+  cy.intercept('GET', '**/rest/v1/profile_discord_guilds*', (req) => {
+    req.reply({
+      statusCode: 200,
+      body: profileDiscordGuildStore.filter((guild) => guild.profile_id === currentSessionUserId),
+    });
+  }).as('profileDiscordGuildsRequest');
+
+  cy.intercept('POST', '**/rest/v1/rpc/replace_discord_guilds', (req) => {
+    const guilds = ((req.body as { p_guilds?: MockDiscordGuild[] | Record<string, unknown>[] | null })?.p_guilds ??
+      []) as {
+      discord_guild_id: string;
+      name: string;
+      icon_url?: string | null;
+      is_owner?: boolean;
+    }[];
+
+    if (currentSessionUserId) {
+      replaceDiscordGuildsForProfile(currentSessionUserId, guilds);
+    }
+
+    req.reply({
+      statusCode: 200,
+      body: guilds.length,
+    });
+  }).as('replaceDiscordGuildsRpc');
+
   cy.intercept('GET', '**/rest/v1/lobbies*', (req) => {
     const accessibleLobbyIds = new Set(getAccessibleLobbyIds(currentSessionUserId ?? ''));
     req.reply({
@@ -498,6 +579,9 @@ const registerMockLobbies = () => {
       p_scheduled_until: scheduledUntil,
       p_is_private: isPrivate,
       p_invited_profile_ids: invitedProfileIds = [],
+      p_discord_guild_id: discordGuildId = null,
+      p_discord_guild_name: discordGuildName = null,
+      p_discord_guild_icon_url: discordGuildIconUrl = null,
     } = req.body as {
       p_game_id: string;
       p_title: string;
@@ -505,9 +589,16 @@ const registerMockLobbies = () => {
       p_scheduled_until: string | null;
       p_is_private: boolean;
       p_invited_profile_ids?: string[];
+      p_discord_guild_id?: string | null;
+      p_discord_guild_name?: string | null;
+      p_discord_guild_icon_url?: string | null;
     };
 
-    const lobby = buildLobby(currentAccount, gameId, title, scheduledFor, scheduledUntil, isPrivate);
+    const lobby = buildLobby(currentAccount, gameId, title, scheduledFor, scheduledUntil, isPrivate, {
+      discord_guild_id: discordGuildId,
+      discord_guild_name: discordGuildName,
+      discord_guild_icon_url: discordGuildIconUrl,
+    });
     lobbyStore.unshift(lobby);
 
     lobbyMembersStore.push({
@@ -749,14 +840,20 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="auth-email-input"]').should('exist');
   };
 
-  const createLobbyWithInvitees = (inviteeIds: string[]) => {
+  const createLobbyWithInvitees = (inviteeIds: string[], options?: { submit?: boolean }) => {
     cy.contains(/^Lobbies$/).click({ force: true });
 
     inviteeIds.forEach((profileId) => {
       cy.get(`[data-testid="${`lobby-invite-chip-${profileId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}"]`).click();
     });
 
-    cy.get('[data-testid="create-lobby-button"]').click();
+    if (options?.submit ?? true) {
+      cy.get('[data-testid="create-lobby-button"]').click();
+    }
+  };
+
+  const scrollToDiscordMeetupStep = () => {
+    cy.contains('Discord meetup server').scrollIntoView();
   };
 
   beforeEach(() => {
@@ -765,6 +862,7 @@ describe('lobbies flow', () => {
     lobbyMembersStore.length = 0;
     lobbyHistoryStore.length = 0;
     friendshipStore.length = 0;
+    profileDiscordGuildStore.length = 0;
     currentSessionUserId = null;
     lobbySequence = 0;
     historySequence = 0;
@@ -774,6 +872,10 @@ describe('lobbies flow', () => {
 
   it('starts a lobby draft from a game card and creates a private lobby through the RPC', () => {
     signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    scrollToDiscordMeetupStep();
+    cy.get('[data-testid="lobby-discord-connect-button"]').should('be.visible');
 
     cy.contains('Games').click();
     cy.get('[data-testid="games-search-input"]').type('Helix Arena');
@@ -796,6 +898,68 @@ describe('lobbies flow', () => {
     cy.contains(/lobby created/i).should('exist');
     cy.contains('Helix Arena Lobby').should('be.visible');
     cy.contains(/private lobby/i).should('be.visible');
+  });
+
+  it('shows the refresh prompt when Discord is linked but no servers are synced yet', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    linkDiscordProfile(hostAccount, 'Host Player');
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    scrollToDiscordMeetupStep();
+    cy.get('[data-testid="lobby-discord-refresh-button"]').should('be.visible');
+  });
+
+  it('lets a linked host pick a Discord server and carries it through hosted, incoming, and schedule views', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    linkDiscordProfile(hostAccount, 'Host Player');
+    replaceDiscordGuildsForProfile(hostAccount.userId, [
+      {
+        discord_guild_id: 'guild-night',
+        name: 'Night Raiders',
+        icon_url: 'https://cdn.discordapp.com/icons/guild-night/icon.png',
+        is_owner: true,
+      },
+      {
+        discord_guild_id: 'guild-side',
+        name: 'Side Quest Crew',
+        is_owner: false,
+      },
+    ]);
+
+    signUpHost();
+    createLobbyWithInvitees([novaUserId], { submit: false });
+
+    scrollToDiscordMeetupStep();
+    cy.get('[data-testid="lobby-discord-guild-picker-button"]').click({ force: true });
+    cy.contains('Choose Discord server').should('be.visible');
+    cy.get('[data-testid="discord-guild-option-guild-night"]').click();
+    cy.get('[data-testid="lobby-discord-guild-picker-button"]').should('contain', 'Meet in: Night Raiders');
+    cy.contains('Meetup server: Night Raiders').should('be.visible');
+    cy.get('[data-testid="create-lobby-button"]').click();
+
+    cy.wait('@createLobbyRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_discord_guild_id).to.equal('guild-night');
+        expect(body.p_discord_guild_name).to.equal('Night Raiders');
+        expect(body.p_discord_guild_icon_url).to.equal('https://cdn.discordapp.com/icons/guild-night/icon.png');
+      });
+
+    cy.contains('Meet in Discord: Night Raiders').should('be.visible');
+    cy.contains(/^Schedule$/).click({ force: true });
+    cy.contains('Meet in Discord: Night Raiders').should('be.visible');
+
+    logout();
+    logInAs(novaEmail, friendPassword);
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.contains('Meet in Discord: Night Raiders').should('be.visible');
   });
 
   it('creates real invite rows and shows invitees grouped under hosted lobbies', () => {

@@ -5,6 +5,9 @@ create table if not exists public.lobbies (
   title text not null,
   scheduled_for timestamptz,
   scheduled_until timestamptz,
+  discord_guild_id text,
+  discord_guild_name text,
+  discord_guild_icon_url text,
   is_private boolean not null default true,
   status text not null default 'scheduled' check (status in ('scheduled', 'open', 'closed')),
   created_at timestamptz not null default now()
@@ -12,6 +15,15 @@ create table if not exists public.lobbies (
 
 alter table public.lobbies
 add column if not exists scheduled_until timestamptz;
+
+alter table public.lobbies
+add column if not exists discord_guild_id text;
+
+alter table public.lobbies
+add column if not exists discord_guild_name text;
+
+alter table public.lobbies
+add column if not exists discord_guild_icon_url text;
 
 alter table public.lobbies
 drop constraint if exists lobbies_scheduled_until_after_start;
@@ -180,13 +192,19 @@ begin
 end;
 $$;
 
+drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[]);
+drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text);
+
 create or replace function public.create_lobby_with_invites(
   p_game_id text,
   p_title text,
   p_scheduled_for timestamptz,
   p_scheduled_until timestamptz,
   p_is_private boolean,
-  p_invited_profile_ids uuid[] default '{}'
+  p_invited_profile_ids uuid[] default '{}',
+  p_discord_guild_id text default null,
+  p_discord_guild_name text default null,
+  p_discord_guild_icon_url text default null
 )
 returns public.lobbies
 language plpgsql
@@ -228,6 +246,9 @@ begin
     title,
     scheduled_for,
     scheduled_until,
+    discord_guild_id,
+    discord_guild_name,
+    discord_guild_icon_url,
     is_private,
     status
   )
@@ -237,6 +258,9 @@ begin
     p_title,
     p_scheduled_for,
     p_scheduled_until,
+    nullif(btrim(p_discord_guild_id), ''),
+    nullif(btrim(p_discord_guild_name), ''),
+    nullif(btrim(p_discord_guild_icon_url), ''),
     p_is_private,
     'scheduled'
   )
@@ -494,6 +518,64 @@ begin
 end;
 $$;
 
+create or replace function public.cleanup_expired_lobby_response_history()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer := 0;
+begin
+  delete from public.lobby_member_response_history history
+  using public.lobbies lobby
+  where lobby.id = history.lobby_id
+    and coalesce(
+      lobby.scheduled_until,
+      lobby.scheduled_for + interval '1 hour',
+      lobby.created_at + interval '1 hour'
+    ) < now() - interval '24 hours';
+
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+
+do $$
+declare
+  existing_job_id bigint;
+begin
+  begin
+    execute 'create extension if not exists pg_cron';
+  exception
+    when insufficient_privilege then
+      raise notice 'pg_cron could not be enabled automatically. Schedule cleanup_expired_lobby_response_history manually.';
+      existing_job_id := null;
+    when feature_not_supported then
+      raise notice 'pg_cron is not available in this environment. Schedule cleanup_expired_lobby_response_history manually.';
+      existing_job_id := null;
+  end;
+
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    select jobid
+    into existing_job_id
+    from cron.job
+    where jobname = 'cleanup-lobby-response-history'
+    limit 1;
+
+    if existing_job_id is not null then
+      perform cron.unschedule(existing_job_id);
+    end if;
+
+    perform cron.schedule(
+      'cleanup-lobby-response-history',
+      '15 5 * * *',
+      $cron$select public.cleanup_expired_lobby_response_history();$cron$
+    );
+  end if;
+end;
+$$;
+
 alter table public.lobbies enable row level security;
 alter table public.lobby_members enable row level security;
 alter table public.lobby_member_response_history enable row level security;
@@ -534,13 +616,14 @@ using (public.can_view_lobby_member(lobby_id, profile_id));
 revoke all on function public.can_view_lobby(uuid) from public;
 revoke all on function public.is_lobby_host(uuid) from public;
 revoke all on function public.can_view_lobby_member(uuid, uuid) from public;
-revoke all on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[]) from public;
+revoke all on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text) from public;
 revoke all on function public.respond_to_lobby_invite(uuid, text, text, timestamptz, timestamptz) from public;
 revoke all on function public.apply_lobby_time_suggestion(uuid, uuid) from public;
+revoke all on function public.cleanup_expired_lobby_response_history() from public;
 
 grant execute on function public.can_view_lobby(uuid) to authenticated;
 grant execute on function public.is_lobby_host(uuid) to authenticated;
 grant execute on function public.can_view_lobby_member(uuid, uuid) to authenticated;
-grant execute on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[]) to authenticated;
+grant execute on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text) to authenticated;
 grant execute on function public.respond_to_lobby_invite(uuid, text, text, timestamptz, timestamptz) to authenticated;
 grant execute on function public.apply_lobby_time_suggestion(uuid, uuid) to authenticated;

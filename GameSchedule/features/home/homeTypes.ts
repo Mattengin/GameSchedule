@@ -21,6 +21,15 @@ export type Profile = {
   discord_connected_at: string | null;
 };
 
+export type DiscordGuildRecord = {
+  profile_id: string;
+  discord_guild_id: string;
+  name: string;
+  icon_url: string | null;
+  is_owner: boolean;
+  synced_at: string;
+};
+
 export type CommunityRecord = {
   id: string;
   name: string;
@@ -61,6 +70,9 @@ export type LobbyRecord = {
   title: string;
   scheduled_for: string | null;
   scheduled_until: string | null;
+  discord_guild_id: string | null;
+  discord_guild_name: string | null;
+  discord_guild_icon_url: string | null;
   is_private: boolean;
   status: 'scheduled' | 'open' | 'closed';
   game_id: string;
