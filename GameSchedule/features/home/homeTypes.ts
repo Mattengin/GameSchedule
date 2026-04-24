@@ -61,6 +61,24 @@ export type GameRecord = {
   player_count: string;
   description: string | null;
   is_featured: boolean;
+  igdb_id?: number | null;
+  cover_url?: string | null;
+  release_date?: string | null;
+  rating?: number | null;
+  source?: 'seed' | 'igdb';
+};
+
+export type IgdbSearchResult = {
+  igdb_id: number;
+  title: string;
+  genre: string;
+  platform: string;
+  player_count: string;
+  description: string | null;
+  cover_url: string | null;
+  release_date: string | null;
+  rating: number | null;
+  source: 'igdb';
 };
 
 export type RouletteEntry = {

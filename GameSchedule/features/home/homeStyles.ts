@@ -154,6 +154,51 @@ export const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
+  igdbSearchRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    alignItems: 'center',
+  },
+  igdbSearchInput: {
+    flexGrow: 1,
+    minWidth: 240,
+  },
+  igdbResultCard: {
+    backgroundColor: '#10162A',
+    borderColor: '#28335F',
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 12,
+  },
+  igdbResultRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  igdbResultMeta: {
+    flex: 1,
+    gap: 6,
+  },
+  igdbCoverImage: {
+    backgroundColor: '#1F2744',
+    borderRadius: 14,
+    height: 108,
+    width: 80,
+  },
+  igdbCoverPlaceholder: {
+    alignItems: 'center',
+    backgroundColor: '#1F2744',
+    borderRadius: 14,
+    height: 108,
+    justifyContent: 'center',
+    width: 80,
+  },
+  igdbCoverPlaceholderText: {
+    color: '#DDE4FF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
   friendCard: {
     alignItems: 'center',
     flexDirection: 'row',

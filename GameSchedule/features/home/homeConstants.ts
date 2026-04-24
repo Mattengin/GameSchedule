@@ -16,6 +16,11 @@ export const fallbackGames: GameRecord[] = [
     player_count: '3-5 players',
     description: 'Fast team-based matches with hero abilities and short queue times.',
     is_featured: true,
+    igdb_id: null,
+    cover_url: null,
+    release_date: null,
+    rating: null,
+    source: 'seed',
   },
   {
     id: 'drift-legends-x',
@@ -25,6 +30,11 @@ export const fallbackGames: GameRecord[] = [
     player_count: '2-8 players',
     description: 'Arcade racing nights with custom lobbies and private party queues.',
     is_featured: false,
+    igdb_id: null,
+    cover_url: null,
+    release_date: null,
+    rating: null,
+    source: 'seed',
   },
   {
     id: 'deep-raid',
@@ -34,6 +44,11 @@ export const fallbackGames: GameRecord[] = [
     player_count: '2-4 players',
     description: 'High-risk co-op missions with short planning sessions and long-term loot.',
     is_featured: true,
+    igdb_id: null,
+    cover_url: null,
+    release_date: null,
+    rating: null,
+    source: 'seed',
   },
   {
     id: 'skyforge-party',
@@ -43,6 +58,11 @@ export const fallbackGames: GameRecord[] = [
     player_count: '4-6 players',
     description: 'Dungeon runs and weekly guild goals for a repeat squad.',
     is_featured: false,
+    igdb_id: null,
+    cover_url: null,
+    release_date: null,
+    rating: null,
+    source: 'seed',
   },
 ];
 

@@ -40,6 +40,7 @@ import type {
   AvailabilityWindow,
   CommunityRecord,
   FriendRequestRecord,
+  IgdbSearchResult,
   LobbyInviteHistoryRecord,
   LobbyInviteStatus,
   LobbyMemberRecord,
@@ -75,6 +76,7 @@ import {
   setDatePart,
   unwrapRelation,
 } from '../features/home/homeUtils';
+import { importIgdbGame, searchIgdbGames } from '../services/igdbFunctions';
 import { supabase } from '../services/supabaseClient';
 
 registerTranslation('en', en);
@@ -124,13 +126,31 @@ export default function HomeScreen() {
     gameSearch,
     gamesError,
     gamesLoading,
+    igdbError,
+    igdbHasSearched,
+    igdbImportBusyId,
+    igdbMessage,
+    igdbResults,
+    igdbSearchCooldownSeconds,
+    igdbSearchLoading,
+    igdbSearchQuery,
+    importedIgdbIds,
     libraryGames,
+    loadGames,
     rouletteEntries,
     roulettePoolGames,
     setFavoriteGameIds,
     setGameActionBusyId,
     setGameActionMessage,
     setGameSearch,
+    setIgdbError,
+    setIgdbHasSearched,
+    setIgdbImportBusyId,
+    setIgdbMessage,
+    setIgdbResults,
+    setIgdbSearchCooldownUntil,
+    setIgdbSearchLoading,
+    setIgdbSearchQuery,
     setRouletteEntries,
   } = useGamesState(session);
 
@@ -885,6 +905,68 @@ export default function HomeScreen() {
       setSelectedLobbyGameId,
       setSelectedLobbyInviteProfileIds,
     ],
+  );
+
+  const handleSearchIgdb = React.useCallback(async () => {
+    const query = igdbSearchQuery.trim();
+    const cooldownEnd = Date.now() + 2000;
+
+    if (!query) {
+      setIgdbError('Enter a game title before searching IGDB.');
+      setIgdbMessage('');
+      setIgdbResults([]);
+      setIgdbHasSearched(false);
+      return;
+    }
+
+    setIgdbSearchLoading(true);
+    setIgdbSearchCooldownUntil(cooldownEnd);
+    setIgdbError('');
+    setIgdbMessage('');
+    setIgdbHasSearched(true);
+
+    try {
+      const results = await searchIgdbGames(query);
+      setIgdbResults(results);
+    } catch (error) {
+      setIgdbResults([]);
+      setIgdbError(error instanceof Error ? error.message : 'Unable to search IGDB right now.');
+    } finally {
+      setIgdbSearchLoading(false);
+    }
+  }, [
+    igdbSearchQuery,
+    setIgdbError,
+    setIgdbHasSearched,
+    setIgdbSearchCooldownUntil,
+    setIgdbMessage,
+    setIgdbResults,
+    setIgdbSearchLoading,
+  ]);
+
+  const handleImportIgdbGame = React.useCallback(
+    async (game: IgdbSearchResult) => {
+      const wasAlreadyImported = importedIgdbIds.includes(game.igdb_id);
+
+      setIgdbImportBusyId(game.igdb_id);
+      setIgdbError('');
+      setIgdbMessage('');
+
+      try {
+        const importedGame = await importIgdbGame(game);
+        await loadGames();
+        setIgdbMessage(
+          wasAlreadyImported
+            ? `${importedGame.title} import refreshed.`
+            : `${importedGame.title} imported into your library.`,
+        );
+      } catch (error) {
+        setIgdbError(error instanceof Error ? error.message : 'Unable to import that game right now.');
+      } finally {
+        setIgdbImportBusyId(null);
+      }
+    },
+    [importedIgdbIds, loadGames, setIgdbError, setIgdbImportBusyId, setIgdbMessage],
   );
 
   const handleCreateLobby = async () => {
@@ -1847,8 +1929,20 @@ export default function HomeScreen() {
       gameSearch={gameSearch}
       gamesError={gamesError}
       gamesLoading={gamesLoading}
+      igdbError={igdbError}
+      igdbHasSearched={igdbHasSearched}
+      igdbImportBusyId={igdbImportBusyId}
+      igdbMessage={igdbMessage}
+      igdbResults={igdbResults}
+      igdbSearchCooldownSeconds={igdbSearchCooldownSeconds}
+      igdbSearchLoading={igdbSearchLoading}
+      igdbSearchQuery={igdbSearchQuery}
+      importedIgdbIds={importedIgdbIds}
       onChangeGameSearch={setGameSearch}
+      onChangeIgdbSearchQuery={setIgdbSearchQuery}
+      onImportIgdbGame={handleImportIgdbGame}
       onPrepareLobbyDraft={prepareLobbyDraft}
+      onSearchIgdb={handleSearchIgdb}
       onToggleFavorite={toggleFavorite}
       onToggleRoulettePool={toggleRoulettePool}
       rouletteEntries={rouletteEntries}

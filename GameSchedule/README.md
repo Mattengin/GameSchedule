@@ -215,6 +215,16 @@ Current SQL scripts:
 - load games from Supabase
 - fallback local seed if table is empty or unreadable
 - search by title, genre, platform, and description
+- IGDB search/import MVP added through Supabase Edge Functions
+- `igdb-search` returns normalized search results from the live IGDB catalog
+- `igdb-import-game` upserts selected IGDB titles into `public.games`
+- imported IGDB games keep working with favorites, roulette, and lobby creation because `public.games` remains the app source of truth
+- `public.games` now supports:
+  - `igdb_id`
+  - `cover_url`
+  - `release_date`
+  - `rating`
+  - `source`
 - featured games on dashboard
 
 ### Step 4: Favorites + Roulette Pool
@@ -799,9 +809,9 @@ We discussed using IGDB for game metadata.
 
 Conclusion:
 
-- IGDB is a good future fit for the library
-- it should **not** be called directly from the Expo client
-- it should sit behind a backend layer such as a Supabase Edge Function
+- IGDB is now the chosen game metadata provider
+- it is **not** called directly from the Expo client
+- it sits behind Supabase Edge Functions
 
 Reasoning:
 
@@ -809,10 +819,85 @@ Reasoning:
 - secrets must stay server-side
 - IGDB has CORS and rate-limit constraints
 
-Recommended future architecture:
+Implemented architecture:
 
-- Expo app -> Supabase Edge Function -> IGDB/Twitch
-- cache/import selected results into `public.games`
+- Expo app -> Supabase Edge Functions -> IGDB/Twitch
+- `igdb-search` searches the live IGDB catalog server-side
+- `igdb-import-game` imports selected results into `public.games`
+- app features continue to use `public.games` after import
+
+Current Twitch Developer Console registration values agreed for the IGDB app:
+
+- `Name`: `GameSchedule IGDB`
+- `OAuth Redirect URLs`:
+  - `https://mattengin.github.io/GameSchedule/`
+  - `http://localhost:3000/`
+- `Category`: `Website Integration`
+- `Client Type`: `Confidential`
+
+Important registration note:
+
+- we intentionally did **not** keep the Supabase function callback URL in the Twitch app registration for now
+- the first IGDB integration path uses Twitch **client credentials**, which is server-to-server and does not depend on a browser redirect
+- the live GitHub Pages URL and `http://localhost:3000/` were kept as the minimal clean registration set for future flexibility
+
+What we need from Twitch after app creation:
+
+- `Client ID`
+- `Client Secret`
+
+Where those credentials belong:
+
+- `Client ID` can be referenced by the backend integration and may also be safe in limited public contexts
+- `Client Secret` must stay server-side only
+- do **not** commit the Twitch client secret to the repo
+- do **not** place the Twitch client secret in any `EXPO_PUBLIC_*` variable
+
+Planned IGDB data surface for the first backend integration:
+
+- game name
+- summary
+- cover image
+- genres
+- platforms
+- release dates
+- rating
+- game modes
+- enough mode data to derive a simple player-count label
+
+First-pass IGDB scope intentionally does **not** include:
+
+- screenshots
+- artwork galleries
+- videos
+- companies / franchise data
+- deep multiplayer normalization
+
+Longer-term IGDB fields we may pull later if needed:
+
+- storyline
+- artwork
+- themes
+- player perspectives
+- involved companies
+- franchises / collections
+- websites
+- videos
+- age ratings
+- language support
+
+Current repo status:
+
+- local app wiring for IGDB search/import is implemented
+- local regression coverage for search/import plus downstream game actions is in place
+- QA `games` schema has been updated for IGDB-backed fields
+- QA Edge Function secrets `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` are set
+- QA `igdb-search` and `igdb-import-game` are deployed
+- current hardening now includes:
+  - server-side 429 handling in `igdb-search`
+  - a short client-side search cooldown so users do not hammer the API from one tab
+  - focused regression coverage for the friendly rate-limit error path
+- prod has **not** been mirrored for IGDB yet
 
 ## Discord / Social Graph Discussion
 

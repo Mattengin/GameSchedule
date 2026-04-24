@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Image, View } from 'react-native';
 import { Button, Card, Chip, Divider, HelperText, ProgressBar, Searchbar, Surface, Text } from 'react-native-paper';
 import { styles } from './homeStyles';
-import type { GameRecord, RouletteEntry } from './homeTypes';
-import { SectionTitle, StatCard } from './homeUtils';
+import type { GameRecord, IgdbSearchResult, RouletteEntry } from './homeTypes';
+import { SectionTitle, StatCard, formatReleaseDateLabel } from './homeUtils';
 
 type NotificationItem = {
   age: string;
@@ -130,8 +130,20 @@ type GamesSectionProps = {
   gameSearch: string;
   gamesError: string;
   gamesLoading: boolean;
+  igdbError: string;
+  igdbHasSearched: boolean;
+  igdbImportBusyId: number | null;
+  igdbMessage: string;
+  igdbResults: IgdbSearchResult[];
+  igdbSearchCooldownSeconds: number;
+  igdbSearchLoading: boolean;
+  igdbSearchQuery: string;
+  importedIgdbIds: number[];
   onChangeGameSearch: (value: string) => void;
+  onChangeIgdbSearchQuery: (value: string) => void;
+  onImportIgdbGame: (game: IgdbSearchResult) => void;
   onPrepareLobbyDraft: (gameId: string) => void;
+  onSearchIgdb: () => void;
   onToggleFavorite: (gameId: string) => void;
   onToggleRoulettePool: (gameId: string) => void;
   rouletteEntries: RouletteEntry[];
@@ -145,8 +157,20 @@ export function GamesSection({
   gameSearch,
   gamesError,
   gamesLoading,
+  igdbError,
+  igdbHasSearched,
+  igdbImportBusyId,
+  igdbMessage,
+  igdbResults,
+  igdbSearchCooldownSeconds,
+  igdbSearchLoading,
+  igdbSearchQuery,
+  importedIgdbIds,
   onChangeGameSearch,
+  onChangeIgdbSearchQuery,
+  onImportIgdbGame,
   onPrepareLobbyDraft,
+  onSearchIgdb,
   onToggleFavorite,
   onToggleRoulettePool,
   rouletteEntries,
@@ -163,6 +187,104 @@ export function GamesSection({
         onChangeText={onChangeGameSearch}
         testID="games-search-input"
       />
+      <Card style={styles.panel}>
+        <Card.Content>
+          <SectionTitle
+            title="Import from IGDB"
+            subtitle="Search the live IGDB catalog, then import the games you want into your local library."
+          />
+          <View style={styles.igdbSearchRow}>
+            <Searchbar
+              placeholder="Search IGDB by game title"
+              value={igdbSearchQuery}
+              onChangeText={onChangeIgdbSearchQuery}
+              onSubmitEditing={() => {
+                onSearchIgdb();
+              }}
+              style={styles.igdbSearchInput}
+              testID="igdb-search-input"
+            />
+            <Button
+              mode="contained"
+              onPress={onSearchIgdb}
+              loading={igdbSearchLoading}
+              disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0}
+              testID="igdb-search-button">
+              {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
+            </Button>
+          </View>
+          {igdbError ? (
+            <HelperText type="error" visible>
+              {igdbError}
+            </HelperText>
+          ) : null}
+          {igdbSearchCooldownSeconds > 0 ? (
+            <HelperText type="info" visible>
+              Give IGDB a second between searches so we stay under the live API rate limit.
+            </HelperText>
+          ) : null}
+          {igdbMessage ? (
+            <HelperText type="info" visible style={styles.successText}>
+              {igdbMessage}
+            </HelperText>
+          ) : null}
+          {igdbResults.map((game) => {
+            const alreadyImported = importedIgdbIds.includes(game.igdb_id);
+
+            return (
+              <Card key={game.igdb_id} style={styles.igdbResultCard} testID={`igdb-result-${game.igdb_id}`}>
+                <Card.Content>
+                  <View style={styles.igdbResultRow}>
+                    {game.cover_url ? (
+                      <Image
+                        source={{ uri: game.cover_url }}
+                        style={styles.igdbCoverImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <Surface style={styles.igdbCoverPlaceholder} elevation={0}>
+                        <Text style={styles.igdbCoverPlaceholderText}>IGDB</Text>
+                      </Surface>
+                    )}
+                    <View style={styles.igdbResultMeta}>
+                      <Text variant="titleMedium">{game.title}</Text>
+                      <Text style={styles.friendNote}>
+                        {game.genre} | {game.platform}
+                      </Text>
+                      <View style={styles.quickPath}>
+                        <Chip compact>{game.player_count}</Chip>
+                        {game.release_date ? (
+                          <Chip compact>Released {formatReleaseDateLabel(game.release_date)}</Chip>
+                        ) : null}
+                        {typeof game.rating === 'number' ? (
+                          <Chip compact>Rating {Math.round(game.rating)}</Chip>
+                        ) : null}
+                        {alreadyImported ? <Chip compact icon="check-circle">Imported</Chip> : null}
+                      </View>
+                      <Text style={styles.listText}>{game.description ?? 'No IGDB summary available yet.'}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.cardActions}>
+                    <Button
+                      mode="contained-tonal"
+                      onPress={() => onImportIgdbGame(game)}
+                      loading={igdbImportBusyId === game.igdb_id}
+                      disabled={igdbImportBusyId !== null}
+                      testID={`igdb-import-button-${game.igdb_id}`}>
+                      {alreadyImported ? 'Refresh import' : 'Import game'}
+                    </Button>
+                  </View>
+                </Card.Content>
+              </Card>
+            );
+          })}
+          {igdbHasSearched && !igdbSearchLoading && !igdbError && igdbResults.length === 0 ? (
+            <Text style={styles.friendNote} testID="igdb-empty-state">
+              No IGDB games matched that search yet.
+            </Text>
+          ) : null}
+        </Card.Content>
+      </Card>
       <View style={styles.quickPath}>
         <Chip icon="filter-variant">Genre</Chip>
         <Chip icon="devices">Platform</Chip>
@@ -183,7 +305,7 @@ export function GamesSection({
         const inRoulettePool = rouletteEntries.some((entry) => entry.game_id === game.id);
 
         return (
-          <Card key={game.id} style={styles.panel}>
+          <Card key={game.id} style={styles.panel} testID={`game-library-card-${game.id}`}>
             <Card.Content>
               <Text variant="titleLarge">{game.title}</Text>
               <Text style={styles.supportingText}>{game.genre}</Text>
@@ -200,21 +322,26 @@ export function GamesSection({
                 {inRoulettePool ? <Chip icon="dice-multiple">In roulette pool</Chip> : null}
               </View>
               <View style={styles.cardActions}>
-                <Button mode="contained-tonal" onPress={() => onPrepareLobbyDraft(game.id)}>
+                <Button
+                  mode="contained-tonal"
+                  onPress={() => onPrepareLobbyDraft(game.id)}
+                  testID={`game-library-create-lobby-${game.id}`}>
                   Create lobby
                 </Button>
                 <Button
                   mode="text"
                   onPress={() => onToggleFavorite(game.id)}
                   loading={gameActionBusyId === `favorite:${game.id}`}
-                  disabled={gameActionBusyId !== null}>
+                  disabled={gameActionBusyId !== null}
+                  testID={`game-library-favorite-${game.id}`}>
                   {isFavorite ? 'Unfavorite' : 'Favorite'}
                 </Button>
                 <Button
                   mode="text"
                   onPress={() => onToggleRoulettePool(game.id)}
                   loading={gameActionBusyId === `pool:${game.id}`}
-                  disabled={gameActionBusyId !== null}>
+                  disabled={gameActionBusyId !== null}
+                  testID={`game-library-pool-${game.id}`}>
                   {inRoulettePool ? 'Remove from pool' : 'Add to pool'}
                 </Button>
               </View>

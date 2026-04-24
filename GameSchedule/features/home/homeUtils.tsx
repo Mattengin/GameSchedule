@@ -186,6 +186,23 @@ export const formatBirthdayLabel = (month: number | null | undefined, day: numbe
   });
 };
 
+export const formatReleaseDateLabel = (releaseDate: string | null | undefined) => {
+  if (!releaseDate) {
+    return '';
+  }
+
+  const parsedDate = new Date(releaseDate);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+
+  return parsedDate.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+};
+
 export const getDefaultEndDate = (startDate: Date) => {
   const endDate = new Date(startDate);
   endDate.setHours(endDate.getHours() + 1);
