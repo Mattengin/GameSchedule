@@ -14,6 +14,9 @@ export type Profile = {
   avatar_url: string | null;
   display_name: string | null;
   onboarding_complete: boolean;
+  birthday_month: number | null;
+  birthday_day: number | null;
+  birthday_visibility: 'private' | 'public';
   primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;

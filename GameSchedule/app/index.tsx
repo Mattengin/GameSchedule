@@ -48,6 +48,7 @@ import type {
   SectionKey,
 } from '../features/home/homeTypes';
 import {
+  createBirthdayDate,
   EventTimePicker,
   SectionTitle,
   TimeRangePicker,
@@ -56,9 +57,11 @@ import {
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
   formatAvailabilityRange,
+  formatBirthdayLabel,
   formatDbTime,
   formatEventRange,
   formatEventTime,
+  getBirthdayDate,
   getDefaultEndDate,
   getDiscordCallbackPath,
   getDiscordIdentityFromSession,
@@ -91,6 +94,8 @@ export default function HomeScreen() {
     username: '',
     displayName: '',
     avatarUrl: '',
+    birthday: undefined as Date | undefined,
+    birthdayVisibility: 'private' as 'private' | 'public',
   });
   const [profileBusy, setProfileBusy] = React.useState(false);
   const [profileError, setProfileError] = React.useState('');
@@ -602,6 +607,8 @@ export default function HomeScreen() {
         username: '',
         displayName: '',
         avatarUrl: '',
+        birthday: undefined,
+        birthdayVisibility: 'private',
       });
       return;
     }
@@ -610,6 +617,8 @@ export default function HomeScreen() {
       username: profile.username ?? '',
       displayName: profile.display_name ?? '',
       avatarUrl: profile.avatar_url ?? '',
+      birthday: getBirthdayDate(profile.birthday_month, profile.birthday_day),
+      birthdayVisibility: profile.birthday_visibility ?? 'private',
     });
   }, [profile]);
 
@@ -689,6 +698,17 @@ export default function HomeScreen() {
   const getLobbyProfileAvatarUrl = React.useCallback(
     (profileId: string) => resolveAvatarUrl(getLobbyProfile(profileId)),
     [getLobbyProfile],
+  );
+
+  const getPublicBirthdayLabel = React.useCallback(
+    (candidate: Pick<Profile, 'birthday_month' | 'birthday_day' | 'birthday_visibility'> | null | undefined) => {
+      if (!candidate || candidate.birthday_visibility !== 'public') {
+        return '';
+      }
+
+      return formatBirthdayLabel(candidate.birthday_month, candidate.birthday_day);
+    },
+    [],
   );
 
   const getMemberHistory = React.useCallback(
@@ -1620,13 +1640,16 @@ export default function HomeScreen() {
                       style={styles.avatar}
                     />
                   )}
-                  <View style={styles.friendMeta}>
-                    <Text variant="titleMedium">{candidateName}</Text>
-                    <Text style={styles.friendNote}>
-                      {candidate.username ? `@${candidate.username}` : 'No username yet'} |{' '}
-                      {candidate.community_role === 'owner' ? 'Squad organizer' : 'Squad member'}
-                    </Text>
-                  </View>
+              <View style={styles.friendMeta}>
+                <Text variant="titleMedium">{candidateName}</Text>
+                <Text style={styles.friendNote}>
+                  {candidate.username ? `@${candidate.username}` : 'No username yet'} |{' '}
+                  {candidate.community_role === 'owner' ? 'Squad organizer' : 'Squad member'}
+                </Text>
+                {getPublicBirthdayLabel(candidate) ? (
+                  <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(candidate)}</Text>
+                ) : null}
+              </View>
                   <Button
                     mode="contained-tonal"
                     onPress={() => sendFriendRequest(candidate)}
@@ -1722,6 +1745,9 @@ export default function HomeScreen() {
                 <Text style={styles.friendNote}>
                   {friend.username ? `@${friend.username}` : 'Profile still needs a username'}
                 </Text>
+                {getPublicBirthdayLabel(friend) ? (
+                  <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(friend)}</Text>
+                ) : null}
               </View>
               <Button
                 mode="text"
@@ -2782,6 +2808,11 @@ export default function HomeScreen() {
               ? `This linked identity is now driving discovery and optional meetup-server tags. ${discordGuilds.length} server${discordGuilds.length === 1 ? '' : 's'} synced.`
               : 'Next step is wiring Discord OAuth so identity and discovery start with the account players already use.'}
           </Text>
+          <Text style={styles.friendNote}>
+            Birthday: {profile?.birthday_month && profile?.birthday_day
+              ? `${formatBirthdayLabel(profile.birthday_month, profile.birthday_day)} | ${profile.birthday_visibility === 'public' ? 'Public' : 'Private'}`
+              : 'Not set'}
+          </Text>
           {profile?.discord_user_id && discordGuilds.length === 0 ? (
             <Text style={styles.friendNote}>
               No Discord servers are synced yet. Refresh once to load the servers you can tag during lobby creation.
@@ -2887,6 +2918,58 @@ export default function HomeScreen() {
             style={styles.input}
             testID="profile-edit-avatar-url-input"
           />
+          <DatePickerInput
+            locale="en"
+            label="Birthday (optional)"
+            value={profileForm.birthday}
+            onChange={(nextDate) => {
+              setProfileForm((current) => ({
+                ...current,
+                birthday: nextDate
+                  ? createBirthdayDate(nextDate.getMonth() + 1, nextDate.getDate())
+                  : undefined,
+              }));
+            }}
+            inputMode="start"
+            mode="outlined"
+            withModal
+            style={styles.input}
+            testID="profile-birthday-picker-input"
+          />
+          <Text style={styles.friendNote}>
+            Month and day only. The picker uses a full date, but we ignore the year for birthday gaming.
+          </Text>
+          <SegmentedButtons
+            value={profileForm.birthdayVisibility}
+            onValueChange={(value) =>
+              setProfileForm((current) => ({
+                ...current,
+                birthdayVisibility: value as 'private' | 'public',
+              }))
+            }
+            style={styles.segmented}
+            buttons={[
+              { value: 'private', label: 'Private' },
+              { value: 'public', label: 'Public' },
+            ]}
+          />
+          <Text style={styles.friendNote}>
+            Public birthdays can show up on friend cards and community suggestions.
+          </Text>
+          {profileForm.birthday ? (
+            <Button
+              mode="text"
+              onPress={() =>
+                setProfileForm((current) => ({
+                  ...current,
+                  birthday: undefined,
+                  birthdayVisibility: 'private',
+                }))
+              }
+              testID="profile-birthday-clear-button">
+              Clear birthday
+            </Button>
+          ) : null}
           {profileError ? (
             <HelperText type="error" visible>
               {profileError}
@@ -3113,6 +3196,8 @@ export default function HomeScreen() {
     const username = profileForm.username.trim();
     const displayName = profileForm.displayName.trim();
     const avatarUrl = profileForm.avatarUrl.trim();
+    const birthdayMonth = profileForm.birthday ? profileForm.birthday.getMonth() + 1 : null;
+    const birthdayDay = profileForm.birthday ? profileForm.birthday.getDate() : null;
 
     if (!username || !displayName) {
       setProfileError('Username and display name are required.');
@@ -3130,6 +3215,9 @@ export default function HomeScreen() {
         username,
         display_name: displayName,
         avatar_url: avatarUrl || null,
+        birthday_month: birthdayMonth,
+        birthday_day: birthdayDay,
+        birthday_visibility: birthdayMonth && birthdayDay ? profileForm.birthdayVisibility : 'private',
         onboarding_complete: true,
       })
       .eq('id', session.user.id)

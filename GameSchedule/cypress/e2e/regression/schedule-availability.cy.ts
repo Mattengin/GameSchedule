@@ -8,6 +8,9 @@ type MockAccount = {
     avatar_url: string | null;
     display_name: string;
     onboarding_complete: boolean;
+    birthday_month?: number | null;
+    birthday_day?: number | null;
+    birthday_visibility?: 'private' | 'public';
   };
 };
 

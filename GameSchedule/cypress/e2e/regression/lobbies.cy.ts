@@ -14,6 +14,9 @@ type MockProfile = {
   avatar_url: string | null;
   display_name: string;
   onboarding_complete: boolean;
+  birthday_month?: number | null;
+  birthday_day?: number | null;
+  birthday_visibility?: 'private' | 'public';
   primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;
@@ -167,6 +170,9 @@ const makeAccount = (
       avatar_url: null,
       display_name: options?.displayName ?? username,
       onboarding_complete: true,
+      birthday_month: null,
+      birthday_day: null,
+      birthday_visibility: 'private',
       primary_community_id: null,
       discord_user_id: null,
       discord_username: null,

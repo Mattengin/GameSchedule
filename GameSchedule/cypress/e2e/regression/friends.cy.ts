@@ -4,6 +4,9 @@ type MockProfile = {
   avatar_url: string | null;
   display_name: string;
   onboarding_complete: boolean;
+  birthday_month?: number | null;
+  birthday_day?: number | null;
+  birthday_visibility?: 'private' | 'public';
   primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;
@@ -155,25 +158,6 @@ const registerMockFriends = (currentUser: MockAccount, otherUser: MockAccount) =
   }).as('logoutRequest');
 
   cy.intercept('GET', '**/rest/v1/profiles*', (req) => {
-    if (req.url.includes('username.ilike') || req.url.includes('display_name.ilike')) {
-      const query = decodeURIComponent(req.url).toLowerCase();
-      const matches = Array.from(authStore.values())
-        .map((account) => account.profile)
-        .filter(
-          (profile) =>
-            profile.id !== currentUser.userId &&
-            (profile.username?.toLowerCase().includes('nova') ||
-              profile.display_name?.toLowerCase().includes('nova') ||
-              query.includes('nova')),
-        );
-
-      req.reply({
-        statusCode: 200,
-        body: matches,
-      });
-      return;
-    }
-
     const idValue = getQueryValue(req.url, 'id');
     if (idValue) {
       const account = authStore.get(idValue);
@@ -202,6 +186,27 @@ const registerMockFriends = (currentUser: MockAccount, otherUser: MockAccount) =
       body: [],
     });
   }).as('profilesRequest');
+
+  cy.intercept('POST', '**/rest/v1/rpc/search_profiles', (req) => {
+    const body = (req.body as { p_query?: string; p_limit?: number } | null) ?? {};
+    const query = (body.p_query ?? '').trim().toLowerCase();
+    const limit = Math.max(1, Math.min(body.p_limit ?? 6, 20));
+
+    const matches = Array.from(authStore.values())
+      .map((account) => account.profile)
+      .filter(
+        (profile) =>
+          profile.id !== currentUser.userId &&
+          (profile.username?.toLowerCase().includes(query) ||
+            profile.display_name?.toLowerCase().includes(query)),
+      )
+      .slice(0, limit);
+
+    req.reply({
+      statusCode: 200,
+      body: query.length >= 2 ? matches : [],
+    });
+  }).as('searchProfilesRpc');
 
   cy.intercept('GET', '**/rest/v1/communities*', (req) => {
     const idValue = getQueryValue(req.url, 'id');

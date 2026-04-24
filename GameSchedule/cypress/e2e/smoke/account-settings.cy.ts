@@ -4,6 +4,9 @@ type MockProfile = {
   avatar_url: string | null;
   display_name: string;
   onboarding_complete: boolean;
+  birthday_month?: number | null;
+  birthday_day?: number | null;
+  birthday_visibility?: 'private' | 'public';
   primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;
@@ -47,6 +50,9 @@ const makeAccount = (email: string, password: string): MockAccount => {
       avatar_url: null,
       display_name: 'Test Pilot',
       onboarding_complete: true,
+      birthday_month: null,
+      birthday_day: null,
+      birthday_visibility: 'private',
       primary_community_id: null,
       discord_user_id: `discord-${userId}`,
       discord_username: 'Test Pilot',
@@ -150,6 +156,18 @@ const registerMockAccountSettings = (account: MockAccount) => {
         typeof body.onboarding_complete === 'boolean'
           ? body.onboarding_complete
           : matchedAccount.profile.onboarding_complete,
+      birthday_month:
+        body.birthday_month === null || typeof body.birthday_month === 'number'
+          ? body.birthday_month
+          : matchedAccount.profile.birthday_month,
+      birthday_day:
+        body.birthday_day === null || typeof body.birthday_day === 'number'
+          ? body.birthday_day
+          : matchedAccount.profile.birthday_day,
+      birthday_visibility:
+        body.birthday_visibility === 'private' || body.birthday_visibility === 'public'
+          ? body.birthday_visibility
+          : matchedAccount.profile.birthday_visibility,
       discord_user_id:
         body.discord_user_id === null || typeof body.discord_user_id === 'string'
           ? body.discord_user_id
@@ -287,6 +305,9 @@ describe('account settings', () => {
       display_name: 'Test Pilot',
       avatar_url: null,
       onboarding_complete: true,
+      birthday_month: null,
+      birthday_day: null,
+      birthday_visibility: 'private',
       primary_community_id: null,
       discord_user_id: `discord-${account.userId}`,
       discord_username: 'Test Pilot',
@@ -317,6 +338,9 @@ describe('account settings', () => {
         expect(body.username).to.equal('proplayer');
         expect(body.display_name).to.equal('Pro Player');
         expect(body.avatar_url).to.equal('https://example.com/avatar.png');
+        expect(body.birthday_month).to.equal(null);
+        expect(body.birthday_day).to.equal(null);
+        expect(body.birthday_visibility).to.equal('private');
         expect(body.onboarding_complete).to.equal(true);
       });
 

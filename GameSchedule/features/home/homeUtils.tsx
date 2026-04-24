@@ -160,6 +160,32 @@ export const createDefaultLobbyEndDate = () => {
   return date;
 };
 
+export const createBirthdayDate = (month: number, day: number) => {
+  const date = new Date(2000, month - 1, day);
+  date.setHours(12, 0, 0, 0);
+  return date;
+};
+
+export const getBirthdayDate = (month: number | null | undefined, day: number | null | undefined) => {
+  if (!month || !day) {
+    return undefined;
+  }
+
+  return createBirthdayDate(month, day);
+};
+
+export const formatBirthdayLabel = (month: number | null | undefined, day: number | null | undefined) => {
+  const birthdayDate = getBirthdayDate(month, day);
+  if (!birthdayDate) {
+    return '';
+  }
+
+  return birthdayDate.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+  });
+};
+
 export const getDefaultEndDate = (startDate: Date) => {
   const endDate = new Date(startDate);
   endDate.setHours(endDate.getHours() + 1);

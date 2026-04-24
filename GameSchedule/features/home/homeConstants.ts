@@ -70,4 +70,4 @@ export const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
 export const discordClientId = process.env.EXPO_PUBLIC_DISCORD_CLIENT_ID?.trim() ?? '';
 export const discordStateStorageKey = 'gameschedule-discord-oauth-state';
 export const profileSelectFields =
-  'id, username, avatar_url, display_name, onboarding_complete, primary_community_id, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';
+  'id, username, avatar_url, display_name, onboarding_complete, birthday_month, birthday_day, birthday_visibility, primary_community_id, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';

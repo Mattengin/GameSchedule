@@ -200,12 +200,10 @@ export function useSocialState({
       setFriendSearchLoading(true);
 
       const query = friendSearch.trim();
-      const { data, error } = await supabase
-        .from('profiles')
-        .select(profileSelectFields)
-        .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
-        .neq('id', session.user.id)
-        .limit(6);
+      const { data, error } = await supabase.rpc('search_profiles', {
+        p_query: query,
+        p_limit: 6,
+      });
 
       if (error) {
         setFriendError(error.message);
