@@ -4155,124 +4155,126 @@ export default function HomeScreen() {
   return (
     <View style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.eyebrow}>Friend Management App</Text>
-        <Text variant="headlineLarge" style={styles.pageTitle}>
-          Social gaming handoff prototype
-        </Text>
-        <Text style={styles.pageSubtitle}>
-          Mobile-first placeholder experience for onboarding, invites, roulette, lobbies, schedule,
-          and profile work.
-        </Text>
+        <View style={styles.contentShell}>
+          <Text style={styles.eyebrow}>Friend Management App</Text>
+          <Text variant="headlineLarge" style={styles.pageTitle}>
+            Social gaming handoff prototype
+          </Text>
+          <Text style={styles.pageSubtitle}>
+            Mobile-first placeholder experience for onboarding, invites, roulette, lobbies, schedule,
+            and profile work.
+          </Text>
 
-        <View style={styles.headerRow}>
-          <Chip icon="shield-account" testID="profile-chip">
-            {profileLoading
-              ? 'Loading profile...'
-              : profile?.display_name ?? profile?.username ?? session.user.email ?? 'Signed in user'}
-          </Chip>
-          <Button mode="text" onPress={handleLogout} disabled={authBusy} testID="logout-button">
-            Log out
-          </Button>
+          <View style={styles.headerRow}>
+            <Chip icon="shield-account" testID="profile-chip">
+              {profileLoading
+                ? 'Loading profile...'
+                : profile?.display_name ?? profile?.username ?? session.user.email ?? 'Signed in user'}
+            </Chip>
+            <Button mode="text" onPress={handleLogout} disabled={authBusy} testID="logout-button">
+              Log out
+            </Button>
+          </View>
+
+          {profile ? (
+            <Card style={styles.panel} testID="profile-summary-card">
+              <Card.Content style={styles.profileSummary}>
+                <Text variant="titleMedium">
+                  Welcome back, {profile.display_name ?? profile.username ?? 'Player'}
+                </Text>
+                <Text style={styles.friendNote}>
+                  Username: {profile.username ?? 'Not set yet'}
+                </Text>
+                <Text style={styles.friendNote}>
+                  Onboarding: {profile.onboarding_complete ? 'Complete' : 'In progress'}
+                </Text>
+              </Card.Content>
+            </Card>
+          ) : null}
+
+          {profile && !profile.onboarding_complete ? (
+            <Card style={styles.panel}>
+              <Card.Content style={styles.profileSummary}>
+                <SectionTitle
+                  title="Complete your profile"
+                  subtitle="Set stable app profile data before friends, lobbies, and scheduling start depending on it."
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Username"
+                  value={profileForm.username}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      username: value.replace(/\s+/g, '').toLowerCase(),
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-username-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Display name"
+                  value={profileForm.displayName}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      displayName: value,
+                    }))
+                  }
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-display-name-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Avatar URL (optional)"
+                  value={profileForm.avatarUrl}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      avatarUrl: value,
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-avatar-url-input"
+                />
+                {profileError ? (
+                  <HelperText type="error" visible>
+                    {profileError}
+                  </HelperText>
+                ) : null}
+                {profileMessage ? (
+                  <HelperText type="info" visible style={styles.successText}>
+                    {profileMessage}
+                  </HelperText>
+                ) : null}
+                <Button
+                  mode="contained"
+                  onPress={handleProfileSave}
+                  loading={profileBusy}
+                  disabled={profileBusy}
+                  testID="profile-save-button">
+                  Save profile
+                </Button>
+              </Card.Content>
+            </Card>
+          ) : null}
+
+          <SegmentedButtons
+            value={section}
+            onValueChange={(value) => setSection(value as SectionKey)}
+            density="small"
+            style={styles.segmented}
+            buttons={sections}
+          />
+
+          {content}
         </View>
-
-        {profile ? (
-          <Card style={styles.panel} testID="profile-summary-card">
-            <Card.Content style={styles.profileSummary}>
-              <Text variant="titleMedium">
-                Welcome back, {profile.display_name ?? profile.username ?? 'Player'}
-              </Text>
-              <Text style={styles.friendNote}>
-                Username: {profile.username ?? 'Not set yet'}
-              </Text>
-              <Text style={styles.friendNote}>
-                Onboarding: {profile.onboarding_complete ? 'Complete' : 'In progress'}
-              </Text>
-            </Card.Content>
-          </Card>
-        ) : null}
-
-        {profile && !profile.onboarding_complete ? (
-          <Card style={styles.panel}>
-            <Card.Content style={styles.profileSummary}>
-              <SectionTitle
-                title="Complete your profile"
-                subtitle="Set stable app profile data before friends, lobbies, and scheduling start depending on it."
-              />
-              <TextInput
-                mode="outlined"
-                label="Username"
-                value={profileForm.username}
-                onChangeText={(value) =>
-                  setProfileForm((current) => ({
-                    ...current,
-                    username: value.replace(/\s+/g, '').toLowerCase(),
-                  }))
-                }
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={styles.input}
-                testID="profile-username-input"
-              />
-              <TextInput
-                mode="outlined"
-                label="Display name"
-                value={profileForm.displayName}
-                onChangeText={(value) =>
-                  setProfileForm((current) => ({
-                    ...current,
-                    displayName: value,
-                  }))
-                }
-                autoCorrect={false}
-                style={styles.input}
-                testID="profile-display-name-input"
-              />
-              <TextInput
-                mode="outlined"
-                label="Avatar URL (optional)"
-                value={profileForm.avatarUrl}
-                onChangeText={(value) =>
-                  setProfileForm((current) => ({
-                    ...current,
-                    avatarUrl: value,
-                  }))
-                }
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={styles.input}
-                testID="profile-avatar-url-input"
-              />
-              {profileError ? (
-                <HelperText type="error" visible>
-                  {profileError}
-                </HelperText>
-              ) : null}
-              {profileMessage ? (
-                <HelperText type="info" visible style={styles.successText}>
-                  {profileMessage}
-                </HelperText>
-              ) : null}
-              <Button
-                mode="contained"
-                onPress={handleProfileSave}
-                loading={profileBusy}
-                disabled={profileBusy}
-                testID="profile-save-button">
-                Save profile
-              </Button>
-            </Card.Content>
-          </Card>
-        ) : null}
-
-        <SegmentedButtons
-          value={section}
-          onValueChange={(value) => setSection(value as SectionKey)}
-          density="small"
-          style={styles.segmented}
-          buttons={sections}
-        />
-
-        {content}
       </ScrollView>
 
       <Portal>

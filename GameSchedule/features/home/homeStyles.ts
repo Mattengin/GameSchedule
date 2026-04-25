@@ -1,4 +1,7 @@
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
+
+const isWeb = Platform.OS === 'web';
+const webDesktopShellMaxWidth = 1180;
 
 export const styles = StyleSheet.create({
   loginScreen: {
@@ -41,9 +44,14 @@ export const styles = StyleSheet.create({
     backgroundColor: '#0B1020',
   },
   content: {
-    paddingHorizontal: 18,
-    paddingTop: 64,
+    paddingHorizontal: isWeb ? 24 : 18,
+    paddingTop: isWeb ? 40 : 64,
     paddingBottom: 120,
+  },
+  contentShell: {
+    width: '100%',
+    alignSelf: 'center',
+    maxWidth: isWeb ? webDesktopShellMaxWidth : undefined,
     gap: 16,
   },
   eyebrow: {
@@ -77,6 +85,7 @@ export const styles = StyleSheet.create({
     borderColor: '#2C3560',
     borderRadius: 28,
     borderWidth: 1,
+    width: isWeb ? '100%' : undefined,
     padding: 20,
     gap: 14,
   },
@@ -106,6 +115,8 @@ export const styles = StyleSheet.create({
   statCard: {
     minWidth: 100,
     flexGrow: 1,
+    flexBasis: isWeb ? 220 : undefined,
+    maxWidth: isWeb ? 320 : undefined,
     backgroundColor: '#14192D',
     borderRadius: 22,
     borderWidth: 1,
@@ -123,6 +134,7 @@ export const styles = StyleSheet.create({
   panel: {
     backgroundColor: '#151A2D',
     borderRadius: 24,
+    width: isWeb ? '100%' : undefined,
   },
   sectionHeader: {
     gap: 4,
@@ -188,7 +200,9 @@ export const styles = StyleSheet.create({
   },
   igdbSearchInput: {
     flexGrow: 1,
+    flexBasis: isWeb ? 620 : undefined,
     minWidth: 240,
+    maxWidth: isWeb ? 760 : undefined,
   },
   igdbDismissRow: {
     alignItems: 'flex-end',
@@ -334,6 +348,7 @@ export const styles = StyleSheet.create({
     gap: 12,
     marginTop: 14,
     padding: 14,
+    width: isWeb ? '100%' : undefined,
   },
   schedulerStepHeader: {
     alignItems: 'center',
@@ -362,8 +377,10 @@ export const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     flexGrow: 1,
+    flexBasis: isWeb ? 240 : undefined,
     gap: 8,
     minWidth: 150,
+    maxWidth: isWeb ? 280 : undefined,
     padding: 12,
   },
   gamePickCardSelected: {
@@ -384,6 +401,9 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     gap: 12,
+    width: isWeb ? '100%' : undefined,
+    maxWidth: isWeb ? 720 : undefined,
+    alignSelf: isWeb ? 'center' : undefined,
   },
   rouletteValue: {
     color: '#FFFFFF',
@@ -405,6 +425,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 12,
     padding: 14,
+    width: isWeb ? '100%' : undefined,
   },
   availabilitySummaryValue: {
     color: '#F5F7FF',
@@ -430,6 +451,7 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 12,
     padding: 14,
+    width: isWeb ? '100%' : undefined,
   },
   eventTimeHeader: {
     alignItems: 'flex-start',
