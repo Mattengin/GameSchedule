@@ -54,6 +54,84 @@ export const styles = StyleSheet.create({
     maxWidth: isWeb ? webDesktopShellMaxWidth : undefined,
     gap: 16,
   },
+  sectionStack: {
+    gap: 16,
+  },
+  desktopSplitLayout: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  desktopMainColumn: {
+    flex: 1,
+    minWidth: 0,
+    gap: 16,
+  },
+  desktopSideColumn: {
+    flexBasis: 420,
+    flexGrow: 1,
+    minWidth: 320,
+    maxWidth: 440,
+    gap: 16,
+  },
+  desktopBalancedColumn: {
+    flex: 1,
+    minWidth: 320,
+    gap: 16,
+  },
+  desktopPanelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  desktopPanelTile: {
+    flexGrow: 1,
+    flexBasis: 340,
+    minWidth: 320,
+  },
+  desktopFullSpan: {
+    width: '100%',
+    flexBasis: '100%',
+  },
+  desktopHeroStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'stretch',
+    gap: 16,
+  },
+  desktopHeroPane: {
+    flex: 1.35,
+    minWidth: 420,
+    alignSelf: 'stretch',
+  },
+  desktopStatsPane: {
+    flex: 1,
+    minWidth: 300,
+    gap: 12,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+  },
+  desktopStatsStack: {
+    flexDirection: 'column',
+    flexWrap: 'nowrap',
+  },
+  desktopCardStretch: {
+    alignSelf: 'stretch',
+  },
+  desktopFriendsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  desktopFriendTile: {
+    flexGrow: 1,
+    flexBasis: 340,
+    minWidth: 320,
+    maxWidth: 420,
+  },
   eyebrow: {
     color: '#7DFFB3',
     fontSize: 12,
@@ -735,6 +813,9 @@ export const styles = StyleSheet.create({
   },
   profileSummary: {
     gap: 6,
+  },
+  profileCardStretch: {
+    height: '100%',
   },
   statusChip: {
     alignSelf: 'flex-start',

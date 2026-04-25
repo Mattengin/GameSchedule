@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
@@ -93,6 +93,8 @@ import { supabase } from '../services/supabaseClient';
 registerTranslation('en', en);
 
 export default function HomeScreen() {
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [session, setSession] = React.useState<Session | null>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
@@ -1854,92 +1856,67 @@ export default function HomeScreen() {
     />
   );
 
-  const renderFriends = () => (
-    <>
-      <SectionTitle
-        title="Friends & contacts"
-        subtitle="Low-friction squad suggestions first, then requests, favorites, and manual search."
-      />
-      {friendError ? (
-        <HelperText type="error" visible>
-          {friendError}
-        </HelperText>
-      ) : null}
-      {friendMessage ? (
-        <HelperText type="info" visible style={styles.successText}>
-          {friendMessage}
-        </HelperText>
-      ) : null}
-      {communityError ? (
-        <HelperText type="error" visible>
-          {communityError}
-        </HelperText>
-      ) : null}
-      {communityMessage ? (
-        <HelperText type="info" visible style={styles.successText}>
-          {communityMessage}
-        </HelperText>
-      ) : null}
-
-      {!profile?.primary_community_id ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">Join your squad</Text>
-            <Text style={styles.friendNote}>
-              Use a squad code from your Discord community or create one if you are the organizer.
-            </Text>
-            <TextInput
-              mode="outlined"
-              label="Squad code"
-              placeholder="Enter invite code"
-              value={communityInviteCode}
-              onChangeText={setCommunityInviteCode}
-              autoCapitalize="characters"
-              style={styles.input}
-              testID="community-invite-code-input"
-            />
-            <Button
-              mode="contained"
-              onPress={handleJoinCommunity}
-              loading={communityBusy}
-              disabled={communityBusy}
-              testID="join-community-button">
-              Join squad
-            </Button>
-            <Divider style={styles.divider} />
-            <Text variant="titleSmall" style={styles.eventTimeTitle}>
-              Create a new squad
-            </Text>
-            <TextInput
-              mode="outlined"
-              label="Squad name"
-              placeholder="Creator squad, guild night, or server name"
-              value={communityName}
-              onChangeText={setCommunityName}
-              style={styles.input}
-              testID="community-name-input"
-            />
-            <Button
-              mode="outlined"
-              onPress={handleCreateCommunity}
-              loading={communityBusy}
-              disabled={communityBusy}
-              testID="create-community-button">
-              Create squad
-            </Button>
-          </Card.Content>
-        </Card>
-      ) : (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">Suggested from your Discord community</Text>
-            <Text style={styles.friendNote}>
-              {currentCommunity
-                ? `${currentCommunity.name} | Invite code ${currentCommunity.invite_code.toUpperCase()}`
-                : 'Loading your community...'}
-            </Text>
-            {communityLoading ? <Text style={styles.friendNote}>Loading community suggestions...</Text> : null}
-            {!communityLoading && suggestedFriends.map((candidate) => {
+  const renderFriends = () => {
+    const communityCard = !profile?.primary_community_id ? (
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopCardStretch : null]}>
+        <Card.Content>
+          <Text variant="titleMedium">Join your squad</Text>
+          <Text style={styles.friendNote}>
+            Use a squad code from your Discord community or create one if you are the organizer.
+          </Text>
+          <TextInput
+            mode="outlined"
+            label="Squad code"
+            placeholder="Enter invite code"
+            value={communityInviteCode}
+            onChangeText={setCommunityInviteCode}
+            autoCapitalize="characters"
+            style={styles.input}
+            testID="community-invite-code-input"
+          />
+          <Button
+            mode="contained"
+            onPress={handleJoinCommunity}
+            loading={communityBusy}
+            disabled={communityBusy}
+            testID="join-community-button">
+            Join squad
+          </Button>
+          <Divider style={styles.divider} />
+          <Text variant="titleSmall" style={styles.eventTimeTitle}>
+            Create a new squad
+          </Text>
+          <TextInput
+            mode="outlined"
+            label="Squad name"
+            placeholder="Creator squad, guild night, or server name"
+            value={communityName}
+            onChangeText={setCommunityName}
+            style={styles.input}
+            testID="community-name-input"
+          />
+          <Button
+            mode="outlined"
+            onPress={handleCreateCommunity}
+            loading={communityBusy}
+            disabled={communityBusy}
+            testID="create-community-button">
+            Create squad
+          </Button>
+        </Card.Content>
+      </Card>
+    ) : (
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopCardStretch : null]}>
+        <Card.Content>
+          <Text variant="titleMedium">Suggested from your Discord community</Text>
+          <Text style={styles.friendNote}>
+            {currentCommunity
+              ? `${currentCommunity.name} | Invite code ${currentCommunity.invite_code.toUpperCase()}`
+              : 'Loading your community...'}
+          </Text>
+          {communityLoading ? <Text style={styles.friendNote}>Loading community suggestions...</Text> : null}
+          {!communityLoading &&
+            suggestedFriends.map((candidate) => {
               const candidateName = candidate.display_name ?? candidate.username ?? 'Player';
               const resolvedAvatarUrl = resolveAvatarUrl(candidate);
 
@@ -1954,16 +1931,16 @@ export default function HomeScreen() {
                       style={styles.avatar}
                     />
                   )}
-              <View style={styles.friendMeta}>
-                <Text variant="titleMedium">{candidateName}</Text>
-                <Text style={styles.friendNote}>
-                  {candidate.username ? `@${candidate.username}` : 'No username yet'} |{' '}
-                  {candidate.community_role === 'owner' ? 'Squad organizer' : 'Squad member'}
-                </Text>
-                {getPublicBirthdayLabel(candidate) ? (
-                  <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(candidate)}</Text>
-                ) : null}
-              </View>
+                  <View style={styles.friendMeta}>
+                    <Text variant="titleMedium">{candidateName}</Text>
+                    <Text style={styles.friendNote}>
+                      {candidate.username ? `@${candidate.username}` : 'No username yet'} |{' '}
+                      {candidate.community_role === 'owner' ? 'Squad organizer' : 'Squad member'}
+                    </Text>
+                    {getPublicBirthdayLabel(candidate) ? (
+                      <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(candidate)}</Text>
+                    ) : null}
+                  </View>
                   <Button
                     mode="contained-tonal"
                     onPress={() => sendFriendRequest(candidate)}
@@ -1975,17 +1952,18 @@ export default function HomeScreen() {
                 </View>
               );
             })}
-            {!communityLoading && suggestedFriends.length === 0 ? (
-              <Text style={styles.friendNote}>
-                No new squad suggestions right now. Invite more people into the community or use manual search below.
-              </Text>
-            ) : null}
-          </Card.Content>
-        </Card>
-      )}
+          {!communityLoading && suggestedFriends.length === 0 ? (
+            <Text style={styles.friendNote}>
+              No new squad suggestions right now. Invite more people into the community or use manual search below.
+            </Text>
+          ) : null}
+        </Card.Content>
+      </Card>
+    );
 
-      {(friendFilter === 'pending' || incomingFriendRequests.length > 0 || outgoingFriendRequests.length > 0) ? (
-        <Card style={styles.panel}>
+    const pendingRequestsCard =
+      friendFilter === 'pending' || incomingFriendRequests.length > 0 || outgoingFriendRequests.length > 0 ? (
+        <Card style={[styles.panel, isDesktopWeb ? styles.desktopCardStretch : null]}>
           <Card.Content>
             <Text variant="titleMedium">Pending requests</Text>
             {incomingFriendRequests.map((request) => (
@@ -2024,69 +2002,10 @@ export default function HomeScreen() {
             ) : null}
           </Card.Content>
         </Card>
-      ) : null}
+      ) : null;
 
-      <SegmentedButtons
-        value={friendFilter}
-        onValueChange={(value) => setFriendFilter(value as 'all' | 'favorites' | 'pending')}
-        style={styles.segmented}
-        buttons={[
-          { value: 'all', label: 'All' },
-          { value: 'favorites', label: 'Favorites' },
-          { value: 'pending', label: 'Pending' },
-        ]}
-      />
-
-      {visibleFriends.map((friend) => {
-        const friendName = friend.display_name ?? friend.username ?? 'Player';
-        const resolvedAvatarUrl = resolveAvatarUrl(friend);
-
-        return (
-          <Card key={friend.id} style={styles.panel}>
-            <Card.Content style={styles.friendCard}>
-              {resolvedAvatarUrl ? (
-                <Avatar.Image size={46} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
-              ) : (
-                <Avatar.Text
-                  size={46}
-                  label={friendName.slice(0, 2).toUpperCase()}
-                  style={styles.avatar}
-                />
-              )}
-              <View style={styles.friendMeta}>
-                <Text variant="titleMedium">{friendName}</Text>
-                <Text style={styles.friendStatus}>{friend.is_favorite ? 'Favorite friend' : 'Friend'}</Text>
-                <Text style={styles.friendNote}>
-                  {friend.username ? `@${friend.username}` : 'Profile still needs a username'}
-                </Text>
-                {getPublicBirthdayLabel(friend) ? (
-                  <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(friend)}</Text>
-                ) : null}
-              </View>
-              <Button
-                mode="text"
-                onPress={() => toggleFriendFavorite(friend.id)}
-                loading={friendActionBusyId === `favorite-friend:${friend.id}`}
-                disabled={friendActionBusyId !== null}
-                testID={`toggle-friend-favorite-${friend.id}`}>
-                {friend.is_favorite ? 'Unfavorite' : 'Favorite'}
-              </Button>
-            </Card.Content>
-          </Card>
-        );
-      })}
-      {!friendLoading && visibleFriends.length === 0 && friendFilter !== 'pending' ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">No friends yet.</Text>
-            <Text style={styles.friendNote}>
-              Use the squad suggestions above or search manually below.
-            </Text>
-          </Card.Content>
-        </Card>
-      ) : null}
-
-      <Card style={styles.panel}>
+    const manualSearchCard = (
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopCardStretch : null]}>
         <Card.Content>
           <Text variant="titleMedium">Manual search</Text>
           <Text style={styles.friendNote}>
@@ -2153,8 +2072,118 @@ export default function HomeScreen() {
           )}
         </Card.Content>
       </Card>
-    </>
-  );
+    );
+
+    const friendCards = visibleFriends.map((friend) => {
+      const friendName = friend.display_name ?? friend.username ?? 'Player';
+      const resolvedAvatarUrl = resolveAvatarUrl(friend);
+
+      return (
+        <Card key={friend.id} style={[styles.panel, isDesktopWeb ? styles.desktopFriendTile : null]}>
+          <Card.Content style={styles.friendCard}>
+            {resolvedAvatarUrl ? (
+              <Avatar.Image size={46} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
+            ) : (
+              <Avatar.Text
+                size={46}
+                label={friendName.slice(0, 2).toUpperCase()}
+                style={styles.avatar}
+              />
+            )}
+            <View style={styles.friendMeta}>
+              <Text variant="titleMedium">{friendName}</Text>
+              <Text style={styles.friendStatus}>{friend.is_favorite ? 'Favorite friend' : 'Friend'}</Text>
+              <Text style={styles.friendNote}>
+                {friend.username ? `@${friend.username}` : 'Profile still needs a username'}
+              </Text>
+              {getPublicBirthdayLabel(friend) ? (
+                <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(friend)}</Text>
+              ) : null}
+            </View>
+            <Button
+              mode="text"
+              onPress={() => toggleFriendFavorite(friend.id)}
+              loading={friendActionBusyId === `favorite-friend:${friend.id}`}
+              disabled={friendActionBusyId !== null}
+              testID={`toggle-friend-favorite-${friend.id}`}>
+              {friend.is_favorite ? 'Unfavorite' : 'Favorite'}
+            </Button>
+          </Card.Content>
+        </Card>
+      );
+    });
+
+    return (
+      <View style={styles.sectionStack}>
+        <SectionTitle
+          title="Friends & contacts"
+          subtitle="Low-friction squad suggestions first, then requests, favorites, and manual search."
+        />
+        {friendError ? (
+          <HelperText type="error" visible>
+            {friendError}
+          </HelperText>
+        ) : null}
+        {friendMessage ? (
+          <HelperText type="info" visible style={styles.successText}>
+            {friendMessage}
+          </HelperText>
+        ) : null}
+        {communityError ? (
+          <HelperText type="error" visible>
+            {communityError}
+          </HelperText>
+        ) : null}
+        {communityMessage ? (
+          <HelperText type="info" visible style={styles.successText}>
+            {communityMessage}
+          </HelperText>
+        ) : null}
+
+        {isDesktopWeb ? (
+          <View style={styles.desktopSplitLayout}>
+            <View style={styles.desktopBalancedColumn}>
+              {communityCard}
+              {pendingRequestsCard}
+            </View>
+            <View style={styles.desktopBalancedColumn}>{manualSearchCard}</View>
+          </View>
+        ) : (
+          <>
+            {communityCard}
+            {pendingRequestsCard}
+          </>
+        )}
+
+        <SegmentedButtons
+          value={friendFilter}
+          onValueChange={(value) => setFriendFilter(value as 'all' | 'favorites' | 'pending')}
+          style={styles.segmented}
+          buttons={[
+            { value: 'all', label: 'All' },
+            { value: 'favorites', label: 'Favorites' },
+            { value: 'pending', label: 'Pending' },
+          ]}
+        />
+
+        {friendCards.length > 0 ? (
+          <View style={isDesktopWeb ? styles.desktopFriendsGrid : styles.sectionStack}>{friendCards}</View>
+        ) : null}
+        {!friendLoading && visibleFriends.length === 0 && friendFilter !== 'pending' ? (
+          <Card style={styles.panel}>
+            <Card.Content>
+              <Text variant="titleMedium">No friends yet.</Text>
+              <Text style={styles.friendNote}>
+                Use the squad suggestions above or search manually below.
+              </Text>
+            </Card.Content>
+          </Card>
+        ) : null}
+
+        {!isDesktopWeb ? manualSearchCard : null}
+      </View>
+    );
+  };
 
   const renderGames = () => (
     <GamesSection
@@ -2199,7 +2228,7 @@ export default function HomeScreen() {
   );
 
   const renderLobbies = () => (
-    <>
+    <View style={styles.sectionStack}>
       <SectionTitle
         title="Schedule a game night"
         subtitle="Create hosted sessions, review invite responses, and let invitees accept, decline, or suggest a better time."
@@ -2214,7 +2243,8 @@ export default function HomeScreen() {
           {lobbyMessage}
         </HelperText>
       ) : null}
-      <Card style={styles.panel}>
+      <View style={isDesktopWeb ? styles.desktopPanelGrid : styles.sectionStack}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Incoming invites</Text>
           <Text style={styles.friendNote}>
@@ -2374,7 +2404,7 @@ export default function HomeScreen() {
             })}
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopFullSpan : null]}>
         <Card.Content>
           <Text variant="titleMedium">Create event</Text>
           <Text style={styles.friendNote}>
@@ -2831,7 +2861,7 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Hosted lobbies</Text>
           <Text style={styles.friendNote}>
@@ -2949,6 +2979,7 @@ export default function HomeScreen() {
             })}
         </Card.Content>
       </Card>
+      </View>
       <Portal>
         <Dialog visible={discordGuildPickerVisible} onDismiss={() => setDiscordGuildPickerVisible(false)}>
           <Dialog.Title>Choose Discord server</Dialog.Title>
@@ -2984,7 +3015,7 @@ export default function HomeScreen() {
           </Dialog.Actions>
         </Dialog>
       </Portal>
-    </>
+    </View>
   );
 
   const renderSchedule = () => (
@@ -3267,12 +3298,13 @@ export default function HomeScreen() {
     const resolvedAvatarUrl = resolveAvatarUrl(profile);
 
     return (
-      <>
-      <SectionTitle
-        title="Profile & settings"
-        subtitle="Edit your profile, link Discord, update account security, and keep setup simple."
-      />
-      <Card style={styles.panel}>
+      <View style={styles.sectionStack}>
+        <SectionTitle
+          title="Profile & settings"
+          subtitle="Edit your profile, link Discord, update account security, and keep setup simple."
+        />
+        <View style={isDesktopWeb ? styles.desktopPanelGrid : styles.sectionStack}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileHeader}>
           {resolvedAvatarUrl ? (
             <Avatar.Image size={68} source={{ uri: resolvedAvatarUrl }} style={styles.avatarLarge} />
@@ -3293,7 +3325,7 @@ export default function HomeScreen() {
           </View>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Discord</Text>
           <Text style={styles.friendNote}>
@@ -3372,7 +3404,7 @@ export default function HomeScreen() {
           ) : null}
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Profile details</Text>
           <Text style={styles.friendNote}>
@@ -3511,7 +3543,7 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Account & security</Text>
           <Text style={styles.friendNote}>
@@ -3589,7 +3621,7 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Favorite games</Text>
           <View style={styles.quickPath}>
@@ -3603,7 +3635,7 @@ export default function HomeScreen() {
           </View>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Preferences</Text>
           <Text style={styles.listText}>Dark dashboard theme enabled</Text>
@@ -3611,7 +3643,8 @@ export default function HomeScreen() {
           <Text style={styles.listText}>Anonymous decline and do-not-invite lists pending backend</Text>
         </Card.Content>
       </Card>
-      </>
+      </View>
+      </View>
     );
   };
 
