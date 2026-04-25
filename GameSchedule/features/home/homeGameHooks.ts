@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { fallbackGames } from './homeConstants';
 import type { GameRecord, IgdbSearchResult, RelatedGameSummary, RouletteEntry } from './homeTypes';
 import { unwrapRelation } from './homeUtils';
 import { supabase } from '../../services/supabaseClient';
@@ -28,11 +27,12 @@ const normalizeGameRecord = (game: Partial<GameRecord> & Pick<GameRecord, 'id' |
 export function useGamesState(session: Session | null) {
   const [gamesLoading, setGamesLoading] = React.useState(false);
   const [gamesError, setGamesError] = React.useState('');
-  const [libraryGames, setLibraryGames] = React.useState<GameRecord[]>(fallbackGames);
+  const [libraryGames, setLibraryGames] = React.useState<GameRecord[]>([]);
   const [gameSearch, setGameSearch] = React.useState('');
   const [favoriteGameIds, setFavoriteGameIds] = React.useState<string[]>([]);
   const [rouletteEntries, setRouletteEntries] = React.useState<RouletteEntry[]>([]);
   const [gameActionBusyId, setGameActionBusyId] = React.useState<string | null>(null);
+  const [gameActionError, setGameActionError] = React.useState('');
   const [gameActionMessage, setGameActionMessage] = React.useState('');
   const [igdbSearchQuery, setIgdbSearchQuery] = React.useState('');
   const [igdbResults, setIgdbResults] = React.useState<IgdbSearchResult[]>([]);
@@ -46,7 +46,8 @@ export function useGamesState(session: Session | null) {
 
   const loadGames = React.useCallback(async () => {
     if (!session?.user) {
-      setLibraryGames(fallbackGames);
+      setGamesError('');
+      setLibraryGames([]);
       setGamesLoading(false);
       return;
     }
@@ -55,25 +56,45 @@ export function useGamesState(session: Session | null) {
     setGamesError('');
 
     const { data, error } = await supabase
-      .from('games')
-      .select('id, title, genre, platform, player_count, description, is_featured, igdb_id, cover_url, release_date, rating, source')
-      .order('is_featured', { ascending: false })
-      .order('title', { ascending: true });
+      .from('profile_games')
+      .select(
+        'created_at, game_id, games!inner(id, title, genre, platform, player_count, description, is_featured, igdb_id, cover_url, release_date, rating, source)',
+      )
+      .eq('profile_id', session.user.id)
+      .order('created_at', { ascending: false });
 
     if (error) {
       setGamesError(error.message);
-      setLibraryGames(fallbackGames);
+      setLibraryGames([]);
     } else if (data && data.length > 0) {
       setLibraryGames(
-        data.map((game) =>
+        data
+          .map((entry) =>
+            unwrapRelation(
+              (entry as {
+                games: (Partial<GameRecord> &
+                  Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform' | 'player_count' | 'is_featured'>)[] |
+                  (Partial<GameRecord> &
+                    Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform' | 'player_count' | 'is_featured'>) |
+                  null;
+              }).games,
+            ),
+          )
+          .filter(
+            (
+              game,
+            ): game is Partial<GameRecord> &
+              Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform' | 'player_count' | 'is_featured'> =>
+              Boolean(game),
+          )
+          .map((game) =>
           normalizeGameRecord(
-            game as Partial<GameRecord> &
-              Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform' | 'player_count' | 'is_featured'>,
+            game,
           ),
-        ),
+          ),
       );
     } else {
-      setLibraryGames(fallbackGames);
+      setLibraryGames([]);
     }
 
     setGamesLoading(false);
@@ -179,6 +200,7 @@ export function useGamesState(session: Session | null) {
     favoriteGameIds,
     filteredGames,
     gameActionBusyId,
+    gameActionError,
     gameActionMessage,
     gameSearch,
     gamesError,
@@ -199,6 +221,7 @@ export function useGamesState(session: Session | null) {
     roulettePoolGames,
     setFavoriteGameIds,
     setGameActionBusyId,
+    setGameActionError,
     setGameActionMessage,
     setGameSearch,
     setGamesError,

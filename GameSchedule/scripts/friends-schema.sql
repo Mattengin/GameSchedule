@@ -21,11 +21,6 @@ alter table public.friend_requests enable row level security;
 alter table public.friends enable row level security;
 
 drop policy if exists "Authenticated users can read all profiles" on public.profiles;
-create policy "Authenticated users can read all profiles"
-on public.profiles
-for select
-to authenticated
-using (true);
 
 drop policy if exists "Users can read their friend requests" on public.friend_requests;
 create policy "Users can read their friend requests"

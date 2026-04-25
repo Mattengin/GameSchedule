@@ -90,7 +90,7 @@ export function DashboardSection({
         <Card.Content>
           <SectionTitle
             title="Featured games"
-            subtitle="Live from your Supabase library when rows exist, otherwise using fallback seed data."
+            subtitle="Pulled from the games you already chose to keep in your library."
           />
           <View style={styles.quickPath}>
             {libraryGames
@@ -99,6 +99,9 @@ export function DashboardSection({
               .map((game) => (
                 <Chip key={game.id}>{game.title}</Chip>
               ))}
+            {libraryGames.length === 0 ? (
+              <Text style={styles.friendNote}>Add games to library to start building your personal list.</Text>
+            ) : null}
           </View>
         </Card.Content>
       </Card>
@@ -125,7 +128,9 @@ export function DashboardSection({
 type GamesSectionProps = {
   favoriteGameIds: string[];
   filteredGames: GameRecord[];
+  libraryGamesCount: number;
   gameActionBusyId: string | null;
+  gameActionError: string;
   gameActionMessage: string;
   gameSearch: string;
   gamesError: string;
@@ -144,6 +149,7 @@ type GamesSectionProps = {
   onClearIgdbSearchResults: () => void;
   onImportIgdbGame: (game: IgdbSearchResult) => void;
   onPrepareLobbyDraft: (gameId: string) => void;
+  onRequestRemoveFromLibrary: (game: GameRecord) => void;
   onSearchIgdb: () => void;
   onToggleFavorite: (gameId: string) => void;
   onToggleRoulettePool: (gameId: string) => void;
@@ -153,7 +159,9 @@ type GamesSectionProps = {
 export function GamesSection({
   favoriteGameIds,
   filteredGames,
+  libraryGamesCount,
   gameActionBusyId,
+  gameActionError,
   gameActionMessage,
   gameSearch,
   gamesError,
@@ -172,6 +180,7 @@ export function GamesSection({
   onClearIgdbSearchResults,
   onImportIgdbGame,
   onPrepareLobbyDraft,
+  onRequestRemoveFromLibrary,
   onSearchIgdb,
   onToggleFavorite,
   onToggleRoulettePool,
@@ -179,6 +188,7 @@ export function GamesSection({
 }: GamesSectionProps) {
   const normalizedIgdbSearchQuery = igdbSearchQuery.trim();
   const isIgdbSearchQueryTooShort = normalizedIgdbSearchQuery.length > 0 && normalizedIgdbSearchQuery.length < 2;
+  const hasLibraryGames = libraryGamesCount > 0;
   const canDismissIgdbSearchOutput =
     !igdbSearchLoading && (igdbResults.length > 0 || Boolean(igdbError) || Boolean(igdbMessage) || igdbHasSearched);
 
@@ -186,7 +196,7 @@ export function GamesSection({
     <>
       <SectionTitle
         title="Game library"
-        subtitle="Supabase-backed library with local fallback data until the table is seeded."
+        subtitle="Your personal library. Import what you want to keep, then use it for favorites, roulette, and lobbies."
       />
       <Searchbar
         placeholder="Search title, genre, or platform"
@@ -315,12 +325,17 @@ export function GamesSection({
       </View>
       {gamesError ? (
         <HelperText type="info" visible style={styles.helperText}>
-          Falling back to local game seed: {gamesError}
+          Unable to refresh your library right now: {gamesError}
         </HelperText>
       ) : null}
       {gameActionMessage ? (
         <HelperText type="info" visible style={styles.successText}>
           {gameActionMessage}
+        </HelperText>
+      ) : null}
+      {gameActionError ? (
+        <HelperText type="error" visible>
+          {gameActionError}
         </HelperText>
       ) : null}
       {filteredGames.map((game) => {
@@ -367,12 +382,30 @@ export function GamesSection({
                   testID={`game-library-pool-${game.id}`}>
                   {inRoulettePool ? 'Remove from pool' : 'Add to pool'}
                 </Button>
+                <Button
+                  mode="text"
+                  onPress={() => onRequestRemoveFromLibrary(game)}
+                  loading={gameActionBusyId === `remove:${game.id}`}
+                  disabled={gameActionBusyId !== null}
+                  testID={`game-library-remove-${game.id}`}>
+                  Remove from library
+                </Button>
               </View>
             </Card.Content>
           </Card>
         );
       })}
-      {!gamesLoading && filteredGames.length === 0 ? (
+      {!gamesLoading && !hasLibraryGames ? (
+        <Card style={styles.panel} testID="games-empty-library-state">
+          <Card.Content>
+            <Text variant="titleMedium">Add games to library</Text>
+            <Text style={styles.friendNote}>
+              Use the IGDB search above to import the games you actually want to keep.
+            </Text>
+          </Card.Content>
+        </Card>
+      ) : null}
+      {!gamesLoading && hasLibraryGames && filteredGames.length === 0 ? (
         <Card style={styles.panel} testID="games-empty-state">
           <Card.Content>
             <Text variant="titleMedium">No games matched your search.</Text>

@@ -51,41 +51,7 @@ alter table public.profiles
 
 alter table public.profiles enable row level security;
 
-create or replace function public.search_profiles(
-  p_query text,
-  p_limit integer default 6
-)
-returns setof public.profiles
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  normalized_query text := lower(trim(coalesce(p_query, '')));
-  safe_limit integer := greatest(1, least(coalesce(p_limit, 6), 20));
-begin
-  if auth.uid() is null then
-    raise exception 'Authentication required';
-  end if;
-
-  if char_length(normalized_query) < 2 then
-    return;
-  end if;
-
-  return query
-  select profiles.*
-  from public.profiles profiles
-  where profiles.id <> auth.uid()
-    and (
-      coalesce(lower(profiles.username), '') like '%' || normalized_query || '%'
-      or coalesce(lower(profiles.display_name), '') like '%' || normalized_query || '%'
-    )
-  order by
-    coalesce(lower(profiles.display_name), lower(profiles.username), ''),
-    profiles.created_at desc
-  limit safe_limit;
-end;
-$$;
+drop policy if exists "Authenticated users can read all profiles" on public.profiles;
 
 drop policy if exists "Users can view their own profile" on public.profiles;
 create policy "Users can view their own profile"
@@ -108,6 +74,3 @@ for update
 to public
 using (auth.uid() = id)
 with check (auth.uid() = id);
-
-revoke all on function public.search_profiles(text, integer) from public;
-grant execute on function public.search_profiles(text, integer) to authenticated;

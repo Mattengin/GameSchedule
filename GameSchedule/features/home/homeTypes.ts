@@ -25,6 +25,15 @@ export type Profile = {
   discord_connected_at: string | null;
 };
 
+export type PublicProfileCard = {
+  id: string;
+  username: string | null;
+  avatar_url: string | null;
+  display_name: string | null;
+  birthday_label: string | null;
+  is_discord_connected: boolean;
+};
+
 export type DiscordGuildRecord = {
   profile_id: string;
   discord_guild_id: string;
@@ -50,7 +59,7 @@ export type CommunityMemberRecord = {
   created_at: string;
 };
 
-export type SuggestedFriendRecord = Profile & {
+export type SuggestedFriendRecord = PublicProfileCard & {
   community_role: 'owner' | 'member';
 };
 

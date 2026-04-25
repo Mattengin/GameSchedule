@@ -89,6 +89,18 @@ Deno.serve(async (request) => {
       throw new Error(upsertError?.message ?? 'IGDB import did not return a game.');
     }
 
+    const { error: libraryMembershipError } = await adminClient.from('profile_games').upsert(
+      {
+        profile_id: user.id,
+        game_id: game.id,
+      },
+      { onConflict: 'profile_id,game_id' },
+    );
+
+    if (libraryMembershipError) {
+      throw new Error(libraryMembershipError.message);
+    }
+
     return new Response(JSON.stringify({ game }), {
       status: 200,
       headers: jsonHeaders,

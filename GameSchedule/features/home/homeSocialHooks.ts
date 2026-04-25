@@ -1,17 +1,16 @@
 import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { profileSelectFields } from './homeConstants';
 import type {
   CommunityMemberRecord,
   CommunityRecord,
   FriendRequestRecord,
   FriendshipRecord,
-  Profile,
+  PublicProfileCard,
   SuggestedFriendRecord,
 } from './homeTypes';
 import { supabase } from '../../services/supabaseClient';
 
-type AcceptedFriend = Profile & {
+type AcceptedFriend = PublicProfileCard & {
   is_favorite: boolean;
 };
 
@@ -30,17 +29,35 @@ export function useSocialState({
   const [friendActionBusyId, setFriendActionBusyId] = React.useState<string | null>(null);
   const [friendships, setFriendships] = React.useState<FriendshipRecord[]>([]);
   const [friendRequests, setFriendRequests] = React.useState<FriendRequestRecord[]>([]);
-  const [friendDirectory, setFriendDirectory] = React.useState<Record<string, Profile>>({});
-  const [friendSearchResults, setFriendSearchResults] = React.useState<Profile[]>([]);
+  const [friendDirectory, setFriendDirectory] = React.useState<Record<string, PublicProfileCard>>({});
+  const [friendSearchResults, setFriendSearchResults] = React.useState<PublicProfileCard[]>([]);
   const [currentCommunity, setCurrentCommunity] = React.useState<CommunityRecord | null>(null);
   const [communityMembers, setCommunityMembers] = React.useState<CommunityMemberRecord[]>([]);
-  const [communityProfiles, setCommunityProfiles] = React.useState<Profile[]>([]);
+  const [communityProfiles, setCommunityProfiles] = React.useState<PublicProfileCard[]>([]);
   const [communityLoading, setCommunityLoading] = React.useState(false);
   const [communityBusy, setCommunityBusy] = React.useState(false);
   const [communityError, setCommunityError] = React.useState('');
   const [communityMessage, setCommunityMessage] = React.useState('');
   const [communityInviteCode, setCommunityInviteCode] = React.useState('');
   const [communityName, setCommunityName] = React.useState('');
+
+  const loadVisibleProfiles = React.useCallback(async (profileIds: string[]) => {
+    if (profileIds.length === 0) {
+      return {
+        data: [] as PublicProfileCard[],
+        error: null,
+      };
+    }
+
+    const { data, error } = await supabase.rpc('get_visible_profiles', {
+      p_profile_ids: profileIds,
+    });
+
+    return {
+      data: (data as PublicProfileCard[] | null) ?? [],
+      error,
+    };
+  }, []);
 
   React.useEffect(() => {
     if (!session?.user) {
@@ -98,15 +115,12 @@ export function useSocialState({
         return;
       }
 
-      const { data: profilesData, error: profilesError } = await supabase
-        .from('profiles')
-        .select(profileSelectFields)
-        .in('id', profileIds);
+      const { data: profilesData, error: profilesError } = await loadVisibleProfiles(profileIds);
 
       if (profilesError) {
         setFriendError(profilesError.message);
       } else {
-        const nextDirectory = ((profilesData as Profile[] | null) ?? []).reduce<Record<string, Profile>>(
+        const nextDirectory = profilesData.reduce<Record<string, PublicProfileCard>>(
           (accumulator, currentProfile) => {
             accumulator[currentProfile.id] = currentProfile;
             return accumulator;
@@ -121,7 +135,7 @@ export function useSocialState({
     };
 
     loadFriendsData();
-  }, [session]);
+  }, [loadVisibleProfiles, session]);
 
   React.useEffect(() => {
     if (!session?.user || !primaryCommunityId) {
@@ -172,25 +186,23 @@ export function useSocialState({
         return;
       }
 
-      const { data: communityProfilesData, error: communityProfilesError } = await supabase
-        .from('profiles')
-        .select(profileSelectFields)
-        .in('id', memberProfileIds);
+      const { data: communityProfilesData, error: communityProfilesError } =
+        await loadVisibleProfiles(memberProfileIds);
 
       if (communityProfilesError) {
         setCommunityError(communityProfilesError.message);
       } else {
-        setCommunityProfiles((communityProfilesData as Profile[] | null) ?? []);
+        setCommunityProfiles(communityProfilesData);
       }
 
       setCommunityLoading(false);
     };
 
     loadCommunityData();
-  }, [primaryCommunityId, session]);
+  }, [loadVisibleProfiles, primaryCommunityId, session]);
 
   React.useEffect(() => {
-    if (!session?.user || friendSearch.trim().length < 2) {
+    if (!session?.user || !primaryCommunityId || friendSearch.trim().length < 2) {
       setFriendSearchResults([]);
       setFriendSearchLoading(false);
       return;
@@ -209,14 +221,14 @@ export function useSocialState({
         setFriendError(error.message);
         setFriendSearchResults([]);
       } else {
-        setFriendSearchResults((data as Profile[] | null) ?? []);
+        setFriendSearchResults((data as PublicProfileCard[] | null) ?? []);
       }
 
       setFriendSearchLoading(false);
     }, 250);
 
     return () => clearTimeout(timeoutId);
-  }, [friendSearch, session]);
+  }, [friendSearch, primaryCommunityId, session]);
 
   const acceptedFriends = React.useMemo<AcceptedFriend[]>(
     () =>
@@ -275,7 +287,7 @@ export function useSocialState({
     return communityProfiles
       .filter(
         (candidate) =>
-          Boolean(candidate.discord_user_id) &&
+          candidate.is_discord_connected &&
           candidate.id !== session?.user?.id &&
           !existingFriendIds.has(candidate.id) &&
           !pendingIds.has(candidate.id),

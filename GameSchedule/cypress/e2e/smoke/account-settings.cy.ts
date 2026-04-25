@@ -228,6 +228,11 @@ const registerMockAccountSettings = (account: MockAccount) => {
     body: [],
   }).as('gamesRequest');
 
+  cy.intercept('GET', '**/rest/v1/profile_games*', {
+    statusCode: 200,
+    body: [],
+  }).as('profileGamesRequest');
+
   cy.intercept('GET', '**/rest/v1/profile_discord_guilds*', {
     statusCode: 200,
     body: discordGuildStore.filter((guild) => guild.profile_id === account.userId),

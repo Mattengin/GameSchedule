@@ -171,6 +171,11 @@ const registerMockSchedule = (options: { invalidLobbyTime?: boolean } = {}) => {
     body: [],
   }).as('gamesRequest');
 
+  cy.intercept('GET', '**/rest/v1/profile_games*', {
+    statusCode: 200,
+    body: [],
+  }).as('profileGamesRequest');
+
   cy.intercept('GET', '**/rest/v1/favorite_games*', {
     statusCode: 200,
     body: [],

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { profileSelectFields } from './homeConstants';
 import type {
   BusyBlock,
   DiscordGuildRecord,
@@ -8,7 +7,7 @@ import type {
   LobbyInviteHistoryRecord,
   LobbyMemberRecord,
   LobbyRecord,
-  Profile,
+  PublicProfileCard,
   RelatedLobbyGameSummary,
 } from './homeTypes';
 import {
@@ -20,7 +19,7 @@ import {
 } from './homeUtils';
 import { supabase } from '../../services/supabaseClient';
 
-type AcceptedFriend = Profile & {
+type AcceptedFriend = PublicProfileCard & {
   is_favorite: boolean;
 };
 
@@ -42,7 +41,7 @@ export function useLobbyState({
   const [inviteBusyBlocks, setInviteBusyBlocks] = React.useState<BusyBlock[]>([]);
   const [lobbyMembers, setLobbyMembers] = React.useState<LobbyMemberRecord[]>([]);
   const [lobbyInviteHistory, setLobbyInviteHistory] = React.useState<LobbyInviteHistoryRecord[]>([]);
-  const [lobbyProfileDirectory, setLobbyProfileDirectory] = React.useState<Record<string, Profile>>({});
+  const [lobbyProfileDirectory, setLobbyProfileDirectory] = React.useState<Record<string, PublicProfileCard>>({});
   const [selectedLobbyGameId, setSelectedLobbyGameId] = React.useState('');
   const [selectedLobbyInviteProfileIds, setSelectedLobbyInviteProfileIds] = React.useState<string[]>([]);
   const [editingLobbyId, setEditingLobbyId] = React.useState<string | null>(null);
@@ -61,6 +60,24 @@ export function useLobbyState({
     discordGuildId: '',
     visibility: 'private' as 'private' | 'public',
   });
+
+  const loadVisibleProfiles = React.useCallback(async (profileIds: string[]) => {
+    if (profileIds.length === 0) {
+      return {
+        data: [] as PublicProfileCard[],
+        error: null,
+      };
+    }
+
+    const { data, error } = await supabase.rpc('get_visible_profiles', {
+      p_profile_ids: profileIds,
+    });
+
+    return {
+      data: (data as PublicProfileCard[] | null) ?? [],
+      error,
+    };
+  }, []);
 
   const loadDiscordGuilds = React.useCallback(async () => {
     if (!session?.user) {
@@ -182,10 +199,7 @@ export function useLobbyState({
       return;
     }
 
-    const { data: profilesData, error: profilesError } = await supabase
-      .from('profiles')
-      .select(profileSelectFields)
-      .in('id', profileIds);
+    const { data: profilesData, error: profilesError } = await loadVisibleProfiles(profileIds);
 
     if (profilesError) {
       setLobbyProfileDirectory({});
@@ -194,7 +208,7 @@ export function useLobbyState({
       return;
     }
 
-    const nextDirectory = ((profilesData as Profile[] | null) ?? []).reduce<Record<string, Profile>>(
+    const nextDirectory = profilesData.reduce<Record<string, PublicProfileCard>>(
       (accumulator, currentProfile) => {
         accumulator[currentProfile.id] = currentProfile;
         return accumulator;
@@ -204,7 +218,7 @@ export function useLobbyState({
 
     setLobbyProfileDirectory(nextDirectory);
     setLobbiesLoading(false);
-  }, [session]);
+  }, [loadVisibleProfiles, session]);
 
   React.useEffect(() => {
     void loadLobbies();
@@ -223,6 +237,24 @@ export function useLobbyState({
     setLobbyForm((current) => ({
       ...current,
       title: current.title || `${libraryGames[0].title} Lobby`,
+    }));
+  }, [libraryGames, selectedLobbyGameId]);
+
+  React.useEffect(() => {
+    if (!selectedLobbyGameId) {
+      return;
+    }
+
+    const selectedGameStillExists = libraryGames.some((game) => game.id === selectedLobbyGameId);
+    if (selectedGameStillExists) {
+      return;
+    }
+
+    const nextGame = libraryGames[0] ?? null;
+    setSelectedLobbyGameId(nextGame?.id ?? '');
+    setLobbyForm((current) => ({
+      ...current,
+      title: nextGame ? `${nextGame.title} Lobby` : '',
     }));
   }, [libraryGames, selectedLobbyGameId]);
 

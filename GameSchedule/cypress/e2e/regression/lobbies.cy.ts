@@ -95,6 +95,15 @@ type MockDiscordGuild = {
   synced_at: string;
 };
 
+type MockPublicProfileCard = {
+  id: string;
+  username: string | null;
+  avatar_url: string | null;
+  display_name: string | null;
+  birthday_label: string | null;
+  is_discord_connected: boolean;
+};
+
 const games: MockGame[] = [
   {
     id: 'helix-arena',
@@ -226,6 +235,27 @@ const makeAuthBody = (account: MockAccount) => {
     },
   };
 };
+
+const formatBirthdayLabel = (month: number | null | undefined, day: number | null | undefined) => {
+  if (!month || !day) {
+    return null;
+  }
+
+  const date = new Date(2000, month - 1, day);
+  return `${date.toLocaleDateString('en-US', { month: 'long' })} ${day}`;
+};
+
+const toPublicProfileCard = (profile: MockProfile): MockPublicProfileCard => ({
+  id: profile.id,
+  username: profile.username ?? null,
+  avatar_url: profile.avatar_url ?? profile.discord_avatar_url ?? null,
+  display_name: profile.display_name ?? null,
+  birthday_label:
+    profile.birthday_visibility === 'public'
+      ? formatBirthdayLabel(profile.birthday_month, profile.birthday_day)
+      : null,
+  is_discord_connected: Boolean(profile.discord_user_id),
+});
 
 const getQueryValue = (url: string, key: string) => {
   const decodedUrl = decodeURIComponent(url);
@@ -486,6 +516,20 @@ const registerMockLobbies = () => {
     });
   }).as('profilesRequest');
 
+  cy.intercept('POST', '**/rest/v1/rpc/get_visible_profiles', (req) => {
+    const requestedIds = ((req.body as { p_profile_ids?: string[] | null } | null)?.p_profile_ids ?? []).filter(
+      Boolean,
+    );
+
+    req.reply({
+      statusCode: 200,
+      body: requestedIds
+        .map((profileId) => getAccountById(profileId)?.profile ?? null)
+        .filter((profile): profile is MockProfile => Boolean(profile))
+        .map(toPublicProfileCard),
+    });
+  }).as('visibleProfilesRpc');
+
   cy.intercept('GET', '**/rest/v1/friends*', (req) => {
     req.reply({
       statusCode: 200,
@@ -502,6 +546,16 @@ const registerMockLobbies = () => {
     statusCode: 200,
     body: games,
   }).as('gamesRequest');
+
+  cy.intercept('GET', '**/rest/v1/profile_games*', {
+    statusCode: 200,
+    body: games.map((game) => ({
+      profile_id: currentSessionUserId,
+      game_id: game.id,
+      created_at: nextIsoTimestamp(),
+      games: game,
+    })),
+  }).as('profileGamesRequest');
 
   cy.intercept('GET', '**/rest/v1/favorite_games*', {
     statusCode: 200,

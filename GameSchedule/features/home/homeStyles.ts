@@ -319,6 +319,13 @@ export const styles = StyleSheet.create({
     gap: 10,
     marginTop: 14,
   },
+  inputShell: {
+    backgroundColor: '#171D35',
+    borderColor: '#2C3560',
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 12,
+  },
   schedulerStep: {
     backgroundColor: '#10162A',
     borderColor: '#28335F',

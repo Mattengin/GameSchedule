@@ -4,7 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import { Button, Chip, Surface, Text } from 'react-native-paper';
 import { DatePickerInput, TimePickerModal } from 'react-native-paper-dates';
 import { styles } from './homeStyles';
-import type { BusyBlock, LobbyRecord, Profile } from './homeTypes';
+import type { BusyBlock, LobbyRecord } from './homeTypes';
 
 export const getWebBasePath = () => {
   if (Platform.OS !== 'web') {
@@ -216,7 +216,7 @@ export const getBusyFallbackEndDate = (startDate: Date) => {
 };
 
 export const resolveAvatarUrl = (
-  record: Pick<Profile, 'avatar_url' | 'discord_avatar_url'> | null | undefined,
+  record: { avatar_url: string | null; discord_avatar_url?: string | null } | null | undefined,
 ) => {
   const directAvatarUrl = record?.avatar_url?.trim();
   if (directAvatarUrl) {

@@ -207,17 +207,31 @@ Current SQL scripts:
 - profile save flow
 - onboarding completion persistence
 - duplicate username handling
+- `public.profiles` is now treated as a self-only account/settings table
+- non-self social reads now go through scoped public-profile RPCs instead of raw table access
+- public social profile cards are limited to:
+  - `id`
+  - `username`
+  - `display_name`
+  - resolved `avatar_url`
+  - derived `birthday_label`
+  - `is_discord_connected`
 
 ### Step 3: Game Library
 
-- live `games` table integration
-- seeded game rows
-- load games from Supabase
-- fallback local seed if table is empty or unreadable
+- shared `public.games` catalog kept as the canonical game record store
+- new per-user `profile_games` membership model controls which games appear in a user library
+- no starter games are auto-added for signed-in users
+- empty-library state now tells users to `Add games to library` through IGDB import
+- load library rows from `profile_games -> games`
 - search by title, genre, platform, and description
 - IGDB search/import MVP added through Supabase Edge Functions
 - `igdb-search` returns normalized search results from the live IGDB catalog
-- `igdb-import-game` upserts selected IGDB titles into `public.games`
+- `igdb-import-game` upserts selected IGDB titles into `public.games` and adds the imported title to the current user’s `profile_games`
+- `remove_game_from_library(text)` removes a game from the current user’s library only, with confirmation in the UI
+- duplicate copies are blocked at two levels:
+  - shared catalog dedupe by `igdb_id` / title reuse
+  - per-user library dedupe by `profile_games(profile_id, game_id)`
 - imported IGDB games keep working with favorites, roulette, and lobby creation because `public.games` remains the app source of truth
 - `public.games` now supports:
   - `igdb_id`
@@ -295,13 +309,14 @@ Current SQL scripts:
 - `communities` table
 - `community_members` table
 - `profiles.primary_community_id`
-- authenticated search across `public.profiles`
+- `get_visible_profiles(uuid[])` for limited friend/community/lobby profile reads
+- `search_profiles(text, integer)` now searches only within the caller's primary community
 - Friends tab now uses live Supabase-backed data
 - Discord is now the recommended auth path for social discovery
 - Discord-community squad suggestions added above the classic request flow
 - join/create-community onboarding when a signed-in user has no squad yet
 - single-squad invite code flow for low-friction discovery
-- search by username/display name
+- manual search by username/display name is now scoped to the user's primary community
 - send friend requests
 - incoming pending requests
 - outgoing pending requests

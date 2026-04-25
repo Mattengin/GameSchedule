@@ -11,7 +11,7 @@ describe('games library', () => {
 
   const openGamesSection = () => {
     cy.contains('Games').click();
-    cy.contains(/supabase-backed library/i).should('be.visible');
+    cy.contains(/your personal library/i).should('be.visible');
   };
 
   it('loads seeded games from the library after sign in', () => {

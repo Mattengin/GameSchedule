@@ -11,6 +11,8 @@ GameSchedule/.env
 GameSchedule/node_modules/
 GameSchedule/.expo/
 GameSchedule/supabase/.temp/
+GameSchedule/cypress/screenshots/*
+!GameSchedule/cypress/screenshots/.gitkeep
 .codex-tools/
 *.qa-query.json
 *.qa-migration.json

@@ -46,6 +46,7 @@ type MockAccount = {
 const authStore = new Map<string, MockAccount>();
 const favoriteStore = new Map<string, string[]>();
 const rouletteStore = new Map<string, string[]>();
+const profileGamesStore = new Map<string, string[]>();
 const baseGames: MockGame[] = [
   {
     id: 'helix-arena',
@@ -92,6 +93,7 @@ const baseGames: MockGame[] = [
 ];
 
 let games: MockGame[] = [];
+let currentSessionUserId: string | null = null;
 
 const igdbResultsByQuery: Record<string, MockIgdbGame[]> = {
   portal: [
@@ -232,6 +234,26 @@ const makeImportedGameRecord = (game: MockIgdbGame): MockGame => ({
   source: 'igdb',
 });
 
+const setOwnedGames = (userId: string, gameIds: string[]) => {
+  profileGamesStore.set(
+    userId,
+    gameIds.filter((gameId, index, values) => values.indexOf(gameId) === index),
+  );
+};
+
+const addOwnedGame = (userId: string, gameId: string) => {
+  const current = profileGamesStore.get(userId) ?? [];
+  profileGamesStore.set(userId, current.includes(gameId) ? current : [...current, gameId]);
+};
+
+const removeOwnedGame = (userId: string, gameId: string) => {
+  const current = profileGamesStore.get(userId) ?? [];
+  profileGamesStore.set(
+    userId,
+    current.filter((ownedGameId) => ownedGameId !== gameId),
+  );
+};
+
 const normalizeSearchText = (value: string) =>
   value
     .toLowerCase()
@@ -299,6 +321,8 @@ const registerMockGameSocial = () => {
     authStore.set(account.userId, account);
     favoriteStore.set(account.userId, []);
     rouletteStore.set(account.userId, []);
+    profileGamesStore.set(account.userId, profileGamesStore.get(account.userId) ?? []);
+    currentSessionUserId = account.userId;
 
     req.reply({
       statusCode: 200,
@@ -314,6 +338,8 @@ const registerMockGameSocial = () => {
     authStore.set(account.userId, account);
     favoriteStore.set(account.userId, favoriteStore.get(account.userId) ?? []);
     rouletteStore.set(account.userId, rouletteStore.get(account.userId) ?? []);
+    profileGamesStore.set(account.userId, profileGamesStore.get(account.userId) ?? []);
+    currentSessionUserId = account.userId;
 
     req.reply({
       statusCode: 200,
@@ -321,9 +347,12 @@ const registerMockGameSocial = () => {
     });
   }).as('signinRequest');
 
-  cy.intercept('POST', '**/auth/v1/logout', {
-    statusCode: 204,
-    body: {},
+  cy.intercept('POST', '**/auth/v1/logout', (req) => {
+    currentSessionUserId = null;
+    req.reply({
+      statusCode: 204,
+      body: {},
+    });
   }).as('logoutRequest');
 
   cy.intercept('GET', '**/rest/v1/profiles*', (req) => {
@@ -342,6 +371,30 @@ const registerMockGameSocial = () => {
       body: games,
     });
   }).as('gamesRequest');
+
+  cy.intercept('GET', '**/rest/v1/profile_games*', (req) => {
+    const userId = getQueryValue(req.url, 'profile_id') || currentSessionUserId || '';
+    const ownedGameIds = profileGamesStore.get(userId) ?? [];
+
+    req.reply({
+      statusCode: 200,
+      body: ownedGameIds
+        .map((gameId) => {
+          const game = games.find((item) => item.id === gameId);
+          if (!game) {
+            return null;
+          }
+
+          return {
+            profile_id: userId,
+            game_id: game.id,
+            created_at: new Date().toISOString(),
+            games: game,
+          };
+        })
+        .filter(Boolean),
+    });
+  }).as('profileGamesRequest');
 
   cy.intercept('POST', '**/functions/v1/igdb-search', (req) => {
     const query = String((req.body as { query?: string }).query ?? '').toLowerCase();
@@ -382,6 +435,10 @@ const registerMockGameSocial = () => {
       games = [...games, importedGame];
     }
 
+    if (currentSessionUserId) {
+      addOwnedGame(currentSessionUserId, existingIndex >= 0 ? games[existingIndex].id : importedGame.id);
+    }
+
     req.reply({
       statusCode: 200,
       body: {
@@ -389,6 +446,27 @@ const registerMockGameSocial = () => {
       },
     });
   }).as('igdbImportRequest');
+
+  cy.intercept('POST', '**/rest/v1/rpc/remove_game_from_library', (req) => {
+    const gameId = ((req.body as { p_game_id?: string } | null)?.p_game_id ?? '').trim();
+
+    if (currentSessionUserId && gameId) {
+      removeOwnedGame(currentSessionUserId, gameId);
+      favoriteStore.set(
+        currentSessionUserId,
+        (favoriteStore.get(currentSessionUserId) ?? []).filter((ownedGameId) => ownedGameId !== gameId),
+      );
+      rouletteStore.set(
+        currentSessionUserId,
+        (rouletteStore.get(currentSessionUserId) ?? []).filter((ownedGameId) => ownedGameId !== gameId),
+      );
+    }
+
+    req.reply({
+      statusCode: 200,
+      body: null,
+    });
+  }).as('removeGameFromLibraryRpc');
 
   cy.intercept('GET', '**/rest/v1/favorite_games*', (req) => {
     const userId = getQueryValue(req.url, 'profile_id');
@@ -535,23 +613,37 @@ const registerMockGameSocial = () => {
 describe('game social persistence', () => {
   const email = `cypress-game-social-${Date.now()}@example.com`;
   const password = `Password123!${Date.now()}`;
+  const userId = makeUserId(email);
 
   before(() => {
     authStore.clear();
     favoriteStore.clear();
     rouletteStore.clear();
+    profileGamesStore.clear();
   });
 
   beforeEach(() => {
     games = baseGames.map((game) => ({ ...game }));
+    authStore.clear();
+    favoriteStore.clear();
+    rouletteStore.clear();
+    profileGamesStore.clear();
+    currentSessionUserId = null;
     registerMockGameSocial();
   });
 
-  const signInAndOpenGames = () => {
+  const signInAndOpenGames = (options?: { withLibrary?: boolean }) => {
+    if (options?.withLibrary ?? true) {
+      setOwnedGames(
+        userId,
+        baseGames.map((game) => game.id),
+      );
+    }
+
     cy.visit('/');
     cy.signupUi(email, password);
     cy.contains('Games').click();
-    cy.contains(/supabase-backed library/i).should('be.visible');
+    cy.contains(/your personal library/i).should('be.visible');
   };
 
   it('favorites a game and shows it in the profile favorites section', () => {
@@ -582,6 +674,14 @@ describe('game social persistence', () => {
     cy.contains('Roulette').click();
     cy.contains(/you currently have 1 game in your pool/i).should('be.visible');
     cy.contains('Deep Raid').should('be.visible');
+  });
+
+  it('shows a clean empty state when the user has no games in their library yet', () => {
+    signInAndOpenGames({ withLibrary: false });
+
+    cy.get('[data-testid="games-empty-library-state"]').should('be.visible');
+    cy.contains(/add games to library/i).should('be.visible');
+    cy.get('[data-testid="game-library-card-helix-arena"]').should('not.exist');
   });
 
   it('removes games from favorites and roulette after they were added', () => {
@@ -630,6 +730,65 @@ describe('game social persistence', () => {
 
     cy.contains('Roulette').click();
     cy.contains('Portal 2').should('be.visible');
+  });
+
+  it('does not add duplicate copies of the same imported game to the user library', () => {
+    signInAndOpenGames({ withLibrary: false });
+
+    cy.get('[data-testid="igdb-search-input"]').clear().type('portal');
+    cy.get('[data-testid="igdb-search-button"]').click();
+    cy.get('[data-testid="igdb-import-button-1234"]').click();
+    cy.contains(/portal 2 imported into your library/i).should('be.visible');
+
+    cy.wait(2200);
+    cy.get('[data-testid="igdb-search-button"]').click();
+    cy.get('[data-testid="igdb-import-button-1234"]').click();
+    cy.contains(/portal 2 import refreshed/i).should('be.visible');
+
+    cy.get('[data-testid="game-library-card-igdb-1234"]').should('have.length', 1);
+  });
+
+  it('removes a game from the library only after confirmation and clears favorite plus pool state', () => {
+    signInAndOpenGames();
+
+    cy.get('[data-testid="game-library-card-helix-arena"]').within(() => {
+      cy.get('[data-testid="game-library-favorite-helix-arena"]').click();
+    });
+    cy.contains(/game added to favorites/i).should('be.visible');
+
+    cy.get('[data-testid="game-library-card-helix-arena"]').within(() => {
+      cy.get('[data-testid="game-library-pool-helix-arena"]').click();
+    });
+    cy.contains(/game added to roulette pool/i).should('be.visible');
+
+    cy.get('[data-testid="game-library-card-helix-arena"]').within(() => {
+      cy.get('[data-testid="game-library-remove-helix-arena"]').click();
+    });
+
+    cy.contains('Remove from library?').should('be.visible');
+    cy.get('[data-testid="cancel-remove-game-button"]').click();
+    cy.get('[data-testid="game-library-card-helix-arena"]').should('exist');
+
+    cy.get('[data-testid="game-library-card-helix-arena"]').within(() => {
+      cy.get('[data-testid="game-library-remove-helix-arena"]').click();
+    });
+    cy.get('[data-testid="confirm-remove-game-button"]').click();
+
+    cy.wait('@removeGameFromLibraryRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_game_id).to.equal('helix-arena');
+      });
+
+    cy.contains(/helix arena removed from your library/i).should('be.visible');
+    cy.get('[data-testid="game-library-card-helix-arena"]').should('not.exist');
+
+    cy.contains('Profile').click();
+    cy.contains('Favorite games').scrollIntoView().should('exist');
+    cy.contains('Helix Arena').should('not.exist');
+
+    cy.contains('Roulette').click();
+    cy.contains(/your pool is empty/i).should('be.visible');
   });
 
   it('uses an imported IGDB game to seed the lobby draft', () => {

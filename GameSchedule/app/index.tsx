@@ -41,12 +41,14 @@ import type {
   BusyBlock,
   CommunityRecord,
   FriendRequestRecord,
+  GameRecord,
   IgdbSearchResult,
   LobbyInviteHistoryRecord,
   LobbyInviteStatus,
   LobbyMemberRecord,
   LobbyRecord,
   Profile,
+  PublicProfileCard,
   SectionKey,
 } from '../features/home/homeTypes';
 import {
@@ -123,6 +125,7 @@ export default function HomeScreen() {
   });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
   const [friendFilter, setFriendFilter] = React.useState<'all' | 'favorites' | 'pending'>('all');
+  const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
   const lastDiscordProviderTokenRef = React.useRef<string | null>(null);
   const handledDiscordCallbackTokenRef = React.useRef<string | null>(null);
 
@@ -130,6 +133,7 @@ export default function HomeScreen() {
     favoriteGameIds,
     filteredGames,
     gameActionBusyId,
+    gameActionError,
     gameActionMessage,
     gameSearch,
     gamesError,
@@ -149,6 +153,7 @@ export default function HomeScreen() {
     roulettePoolGames,
     setFavoriteGameIds,
     setGameActionBusyId,
+    setGameActionError,
     setGameActionMessage,
     setGameSearch,
     setIgdbError,
@@ -159,6 +164,7 @@ export default function HomeScreen() {
     setIgdbSearchCooldownUntil,
     setIgdbSearchLoading,
     setIgdbSearchQuery,
+    setLibraryGames,
     setRouletteEntries,
   } = useGamesState(session);
 
@@ -734,13 +740,7 @@ export default function HomeScreen() {
   );
 
   const getPublicBirthdayLabel = React.useCallback(
-    (candidate: Pick<Profile, 'birthday_month' | 'birthday_day' | 'birthday_visibility'> | null | undefined) => {
-      if (!candidate || candidate.birthday_visibility !== 'public') {
-        return '';
-      }
-
-      return formatBirthdayLabel(candidate.birthday_month, candidate.birthday_day);
-    },
+    (candidate: Pick<PublicProfileCard, 'birthday_label'> | null | undefined) => candidate?.birthday_label ?? '',
     [],
   );
 
@@ -1076,6 +1076,7 @@ export default function HomeScreen() {
       setIgdbImportBusyId(game.igdb_id);
       setIgdbError('');
       setIgdbMessage('');
+      setGameActionError('');
 
       try {
         const importedGame = await importIgdbGame(game);
@@ -1091,8 +1092,52 @@ export default function HomeScreen() {
         setIgdbImportBusyId(null);
       }
     },
-    [importedIgdbIds, loadGames, setIgdbError, setIgdbImportBusyId, setIgdbMessage],
+    [importedIgdbIds, loadGames, setGameActionError, setIgdbError, setIgdbImportBusyId, setIgdbMessage],
   );
+
+  const handleRequestRemoveGameFromLibrary = React.useCallback((game: GameRecord) => {
+    setGameActionError('');
+    setGameActionMessage('');
+    setGamePendingRemoval(game);
+  }, [setGameActionError, setGameActionMessage]);
+
+  const handleConfirmRemoveGameFromLibrary = React.useCallback(async () => {
+    if (!session?.user || !gamePendingRemoval) {
+      setGamePendingRemoval(null);
+      return;
+    }
+
+    const gameToRemove = gamePendingRemoval;
+
+    setGameActionBusyId(`remove:${gameToRemove.id}`);
+    setGameActionError('');
+    setGameActionMessage('');
+
+    const { error } = await supabase.rpc('remove_game_from_library', {
+      p_game_id: gameToRemove.id,
+    });
+
+    if (error) {
+      setGameActionError(error.message);
+    } else {
+      setLibraryGames((current) => current.filter((game) => game.id !== gameToRemove.id));
+      setFavoriteGameIds((current) => current.filter((gameId) => gameId !== gameToRemove.id));
+      setRouletteEntries((current) => current.filter((entry) => entry.game_id !== gameToRemove.id));
+      setGameActionMessage(`${gameToRemove.title} removed from your library.`);
+      setGamePendingRemoval(null);
+    }
+
+    setGameActionBusyId(null);
+  }, [
+    gamePendingRemoval,
+    session,
+    setFavoriteGameIds,
+    setGameActionBusyId,
+    setGameActionError,
+    setGameActionMessage,
+    setLibraryGames,
+    setRouletteEntries,
+  ]);
 
   const handleCreateLobby = async () => {
     if (!session?.user || !selectedLobbyGame) {
@@ -1456,7 +1501,7 @@ export default function HomeScreen() {
     setLobbyBusy(false);
   };
 
-  const sendFriendRequest = async (targetProfile: Profile) => {
+  const sendFriendRequest = async (targetProfile: PublicProfileCard) => {
     if (!session?.user) {
       return;
     }
@@ -2014,7 +2059,7 @@ export default function HomeScreen() {
         <Card.Content>
           <Text variant="titleMedium">Manual search</Text>
           <Text style={styles.friendNote}>
-            Search by username or display name if someone is not showing up in your squad suggestions.
+            Search people in your squad by username or display name if they are not showing up in suggestions yet.
           </Text>
           <Searchbar
             placeholder="Search by username or display name"
@@ -2025,7 +2070,11 @@ export default function HomeScreen() {
           {friendSearch.trim().length >= 2 ? (
             <>
               <Text style={styles.friendNote}>
-                {friendSearchLoading ? 'Searching profiles...' : 'Send a request to bring someone into your lobby flow.'}
+                {friendSearchLoading
+                  ? 'Searching your squad...'
+                  : profile?.primary_community_id
+                    ? 'Send a request to bring someone into your lobby flow.'
+                    : 'Join or create a squad to search people in your community.'}
               </Text>
               {friendSearchResults.map((candidate) => {
                 const status = getFriendSearchStatus(candidate.id);
@@ -2081,6 +2130,7 @@ export default function HomeScreen() {
       favoriteGameIds={favoriteGameIds}
       filteredGames={filteredGames}
       gameActionBusyId={gameActionBusyId}
+      gameActionError={gameActionError}
       gameActionMessage={gameActionMessage}
       gameSearch={gameSearch}
       gamesError={gamesError}
@@ -2094,11 +2144,13 @@ export default function HomeScreen() {
       igdbSearchLoading={igdbSearchLoading}
       igdbSearchQuery={igdbSearchQuery}
       importedIgdbIds={importedIgdbIds}
+      libraryGamesCount={libraryGames.length}
       onChangeGameSearch={setGameSearch}
       onChangeIgdbSearchQuery={setIgdbSearchQuery}
       onClearIgdbSearchResults={handleClearIgdbSearchResults}
       onImportIgdbGame={handleImportIgdbGame}
       onPrepareLobbyDraft={prepareLobbyDraft}
+      onRequestRemoveFromLibrary={handleRequestRemoveGameFromLibrary}
       onSearchIgdb={handleSearchIgdb}
       onToggleFavorite={toggleFavorite}
       onToggleRoulettePool={toggleRoulettePool}
@@ -2308,6 +2360,13 @@ export default function HomeScreen() {
                 <Text style={styles.friendNote}>Choose from the library or start from a game card.</Text>
               </View>
             </View>
+            {libraryGames.length === 0 ? (
+              <Surface style={styles.inputShell} elevation={0}>
+                <Text style={styles.friendNote}>
+                  Add games to library from the Games tab before creating a lobby.
+                </Text>
+              </Surface>
+            ) : null}
             <View style={styles.gamePickGrid}>
               {libraryGames.slice(0, 6).map((game) => (
                 <Surface
@@ -3754,6 +3813,7 @@ export default function HomeScreen() {
     }
 
     setGameActionBusyId(`favorite:${gameId}`);
+    setGameActionError('');
     setGameActionMessage('');
 
     const isFavorite = favoriteGameIds.includes(gameId);
@@ -3768,6 +3828,8 @@ export default function HomeScreen() {
       if (!error) {
         setFavoriteGameIds((current) => current.filter((id) => id !== gameId));
         setGameActionMessage('Favorite removed.');
+      } else {
+        setGameActionError(error.message);
       }
     } else {
       const { error } = await supabase.from('favorite_games').insert({
@@ -3778,6 +3840,8 @@ export default function HomeScreen() {
       if (!error) {
         setFavoriteGameIds((current) => [...current, gameId]);
         setGameActionMessage('Game added to favorites.');
+      } else {
+        setGameActionError(error.message);
       }
     }
 
@@ -3790,6 +3854,7 @@ export default function HomeScreen() {
     }
 
     setGameActionBusyId(`pool:${gameId}`);
+    setGameActionError('');
     setGameActionMessage('');
 
     const existing = rouletteEntries.find((entry) => entry.game_id === gameId);
@@ -3804,6 +3869,8 @@ export default function HomeScreen() {
       if (!error) {
         setRouletteEntries((current) => current.filter((entry) => entry.game_id !== gameId));
         setGameActionMessage('Game removed from roulette pool.');
+      } else {
+        setGameActionError(error.message);
       }
     } else {
       const game = libraryGames.find((item) => item.id === gameId);
@@ -3826,6 +3893,8 @@ export default function HomeScreen() {
           },
         ]);
         setGameActionMessage('Game added to roulette pool.');
+      } else if (error) {
+        setGameActionError(error.message);
       }
     }
 
@@ -4071,6 +4140,44 @@ export default function HomeScreen() {
 
         {content}
       </ScrollView>
+
+      <Portal>
+        <Dialog
+          visible={Boolean(gamePendingRemoval)}
+          onDismiss={() => {
+            if (gameActionBusyId !== null) {
+              return;
+            }
+
+            setGamePendingRemoval(null);
+          }}>
+          <Dialog.Title>Remove from library?</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              {gamePendingRemoval
+                ? `${gamePendingRemoval.title} will be removed from your library only. Favorites and roulette entries for this game will be cleared for you.`
+                : 'This will remove the selected game from your library only.'}
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              onPress={() => setGamePendingRemoval(null)}
+              disabled={gameActionBusyId !== null}
+              testID="cancel-remove-game-button">
+              Cancel
+            </Button>
+            <Button
+              onPress={() => {
+                void handleConfirmRemoveGameFromLibrary();
+              }}
+              loading={Boolean(gameActionBusyId?.startsWith('remove:'))}
+              disabled={gameActionBusyId !== null}
+              testID="confirm-remove-game-button">
+              Remove
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
 
       <FAB icon="account-plus" label="Add friend" style={styles.fab} onPress={() => {}} />
     </View>
