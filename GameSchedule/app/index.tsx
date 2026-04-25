@@ -11,6 +11,7 @@ import {
   Divider,
   FAB,
   HelperText,
+  IconButton,
   List,
   Portal,
   Searchbar,
@@ -68,6 +69,7 @@ import {
   formatEventRange,
   formatEventTime,
   formatLobbyScheduleLabel,
+  formatReleaseDateLabel,
   getBusyFallbackEndDate,
   getBusyStatusLabel,
   getBirthdayDate,
@@ -1070,7 +1072,7 @@ export default function HomeScreen() {
   }, [setIgdbError, setIgdbHasSearched, setIgdbMessage, setIgdbResults]);
 
   const handleImportIgdbGame = React.useCallback(
-    async (game: IgdbSearchResult) => {
+    async (game: IgdbSearchResult, options?: { autoSelectForLobby?: boolean }) => {
       const wasAlreadyImported = importedIgdbIds.includes(game.igdb_id);
 
       setIgdbImportBusyId(game.igdb_id);
@@ -1081,10 +1083,28 @@ export default function HomeScreen() {
       try {
         const importedGame = await importIgdbGame(game);
         await loadGames();
+        if (options?.autoSelectForLobby) {
+          setSelectedLobbyGameId(importedGame.id);
+          setLobbyForm((current) => ({
+            ...current,
+            title: `${importedGame.title} Lobby`,
+            discordGuildId: current.discordGuildId,
+          }));
+          setSection('lobbies');
+          setLobbyMessage(
+            wasAlreadyImported
+              ? `${importedGame.title} refreshed and selected for this lobby.`
+              : `${importedGame.title} added to your library and selected for this lobby.`,
+          );
+        } else {
+          setLobbyMessage('');
+        }
         setIgdbMessage(
-          wasAlreadyImported
-            ? `${importedGame.title} import refreshed.`
-            : `${importedGame.title} imported into your library.`,
+          options?.autoSelectForLobby
+            ? ''
+            : wasAlreadyImported
+              ? `${importedGame.title} import refreshed.`
+              : `${importedGame.title} imported into your library.`,
         );
       } catch (error) {
         setIgdbError(error instanceof Error ? error.message : 'Unable to import that game right now.');
@@ -1092,7 +1112,18 @@ export default function HomeScreen() {
         setIgdbImportBusyId(null);
       }
     },
-    [importedIgdbIds, loadGames, setGameActionError, setIgdbError, setIgdbImportBusyId, setIgdbMessage],
+    [
+      importedIgdbIds,
+      loadGames,
+      setGameActionError,
+      setIgdbError,
+      setIgdbImportBusyId,
+      setIgdbMessage,
+      setLobbyForm,
+      setLobbyMessage,
+      setSection,
+      setSelectedLobbyGameId,
+    ],
   );
 
   const handleRequestRemoveGameFromLibrary = React.useCallback((game: GameRecord) => {
@@ -2363,8 +2394,111 @@ export default function HomeScreen() {
             {libraryGames.length === 0 ? (
               <Surface style={styles.inputShell} elevation={0}>
                 <Text style={styles.friendNote}>
-                  Add games to library from the Games tab before creating a lobby.
+                  Pick a game from your library to create a lobby.
                 </Text>
+                <Text style={styles.friendNote}>
+                  If this is your first one, import a game here and we&apos;ll use it right away.
+                </Text>
+                <View style={styles.igdbSearchRow}>
+                  <Searchbar
+                    placeholder="Search IGDB by game title"
+                    value={igdbSearchQuery}
+                    onChangeText={setIgdbSearchQuery}
+                    onSubmitEditing={() => {
+                      handleSearchIgdb();
+                    }}
+                    style={styles.igdbSearchInput}
+                    testID="lobby-igdb-search-input"
+                  />
+                  <Button
+                    mode="contained"
+                    onPress={handleSearchIgdb}
+                    loading={igdbSearchLoading}
+                    disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0 || igdbSearchQuery.trim().length < 2}
+                    testID="lobby-igdb-search-button">
+                    {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
+                  </Button>
+                </View>
+                {igdbSearchQuery.trim().length > 0 && igdbSearchQuery.trim().length < 2 ? (
+                  <HelperText type="info" visible testID="lobby-igdb-short-query-helper">
+                    Start with at least 2 letters so we can find the right game.
+                  </HelperText>
+                ) : null}
+                {igdbError ? (
+                  <HelperText type="error" visible>
+                    {igdbError}
+                  </HelperText>
+                ) : null}
+                {igdbSearchCooldownSeconds > 0 ? (
+                  <HelperText type="info" visible>
+                    Give IGDB a second between searches so we stay under the live API rate limit.
+                  </HelperText>
+                ) : null}
+                {igdbMessage ? (
+                  <HelperText type="info" visible style={styles.successText}>
+                    {igdbMessage}
+                  </HelperText>
+                ) : null}
+                {!igdbSearchLoading && (igdbResults.length > 0 || Boolean(igdbError) || Boolean(igdbMessage) || igdbHasSearched) ? (
+                  <View style={styles.igdbDismissRow}>
+                    <IconButton
+                      icon="close"
+                      size={18}
+                      onPress={handleClearIgdbSearchResults}
+                      accessibilityLabel="Close IGDB search results"
+                      testID="lobby-igdb-close-results-button"
+                    />
+                  </View>
+                ) : null}
+                {igdbResults.map((game) => {
+                  const alreadyImported = importedIgdbIds.includes(game.igdb_id);
+
+                  return (
+                    <Card key={`lobby-igdb-${game.igdb_id}`} style={styles.igdbResultCard} testID={`lobby-igdb-result-${game.igdb_id}`}>
+                      <Card.Content>
+                        <View style={styles.igdbResultRow}>
+                          {game.cover_url ? (
+                            <Avatar.Image size={52} source={{ uri: game.cover_url }} style={styles.avatar} />
+                          ) : (
+                            <Surface style={styles.igdbCoverPlaceholder} elevation={0}>
+                              <Text style={styles.igdbCoverPlaceholderText}>IGDB</Text>
+                            </Surface>
+                          )}
+                          <View style={styles.igdbResultMeta}>
+                            <Text variant="titleMedium">{game.title}</Text>
+                            <Text style={styles.friendNote}>
+                              {game.genre} | {game.platform}
+                            </Text>
+                            <View style={styles.quickPath}>
+                              <Chip compact>{game.player_count}</Chip>
+                              {game.release_date ? (
+                                <Chip compact>Released {formatReleaseDateLabel(game.release_date)}</Chip>
+                              ) : null}
+                              {typeof game.rating === 'number' ? <Chip compact>Rating {Math.round(game.rating)}</Chip> : null}
+                              {alreadyImported ? <Chip compact icon="check-circle">Imported</Chip> : null}
+                            </View>
+                            <Text style={styles.listText}>{game.description ?? 'No IGDB summary available yet.'}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.cardActions}>
+                          <Button
+                            mode="contained-tonal"
+                            onPress={() => handleImportIgdbGame(game, { autoSelectForLobby: true })}
+                            loading={igdbImportBusyId === game.igdb_id}
+                            disabled={igdbImportBusyId !== null}
+                            testID={`lobby-igdb-import-button-${game.igdb_id}`}>
+                            {alreadyImported ? 'Refresh import' : 'Import and use'}
+                          </Button>
+                        </View>
+                      </Card.Content>
+                    </Card>
+                  );
+                })}
+                {igdbHasSearched && !igdbSearchLoading && !igdbError && igdbResults.length === 0 ? (
+                  <Text style={styles.friendNote} testID="lobby-igdb-empty-state">
+                    No IGDB games matched that search yet.
+                  </Text>
+                ) : null}
               </Surface>
             ) : null}
             <View style={styles.gamePickGrid}>

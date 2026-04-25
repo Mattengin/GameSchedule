@@ -6,6 +6,24 @@ type MockGame = {
   player_count: string;
   description: string;
   is_featured: boolean;
+  igdb_id?: number | null;
+  cover_url?: string | null;
+  release_date?: string | null;
+  rating?: number | null;
+  source?: 'seed' | 'igdb';
+};
+
+type MockIgdbGame = {
+  igdb_id: number;
+  title: string;
+  genre: string;
+  platform: string;
+  player_count: string;
+  description: string | null;
+  cover_url: string | null;
+  release_date: string | null;
+  rating: number | null;
+  source: 'igdb';
 };
 
 type MockProfile = {
@@ -104,7 +122,7 @@ type MockPublicProfileCard = {
   is_discord_connected: boolean;
 };
 
-const games: MockGame[] = [
+const seedGames: MockGame[] = [
   {
     id: 'helix-arena',
     title: 'Helix Arena',
@@ -134,12 +152,32 @@ const games: MockGame[] = [
   },
 ];
 
+const games: MockGame[] = seedGames.map((game) => ({ ...game }));
+
+const igdbResultsByQuery: Record<string, MockIgdbGame[]> = {
+  portal: [
+    {
+      igdb_id: 1234,
+      title: 'Portal 2',
+      genre: 'Puzzle / Platform',
+      platform: 'PC / PlayStation / Xbox',
+      player_count: '2+ players',
+      description: 'Solve co-op puzzles with portals, timing, and a very patient robot voice.',
+      cover_url: null,
+      release_date: '2011-04-19',
+      rating: 95,
+      source: 'igdb',
+    },
+  ],
+};
+
 const authStore = new Map<string, MockAccount>();
 const lobbyStore: MockLobby[] = [];
 const lobbyMembersStore: MockLobbyMember[] = [];
 const lobbyHistoryStore: MockLobbyHistory[] = [];
 const friendshipStore: MockFriendship[] = [];
 const profileDiscordGuildStore: MockDiscordGuild[] = [];
+const profileGamesStore = new Map<string, string[]>();
 
 let currentSessionUserId: string | null = null;
 let lobbySequence = 0;
@@ -257,6 +295,21 @@ const toPublicProfileCard = (profile: MockProfile): MockPublicProfileCard => ({
   is_discord_connected: Boolean(profile.discord_user_id),
 });
 
+const makeImportedGameRecord = (game: MockIgdbGame): MockGame => ({
+  id: `igdb-${game.igdb_id}`,
+  title: game.title,
+  genre: game.genre,
+  platform: game.platform,
+  player_count: game.player_count,
+  description: game.description ?? '',
+  is_featured: false,
+  igdb_id: game.igdb_id,
+  cover_url: game.cover_url,
+  release_date: game.release_date,
+  rating: game.rating,
+  source: 'igdb',
+});
+
 const getQueryValue = (url: string, key: string) => {
   const decodedUrl = decodeURIComponent(url);
   const match = new RegExp(`${key}=eq\\.([^&]+)`).exec(decodedUrl);
@@ -278,6 +331,18 @@ const getQueryValues = (url: string, key: string) => {
 };
 
 const getAccountById = (profileId: string) => authStore.get(profileId) ?? null;
+
+const setOwnedGames = (userId: string, gameIds: string[]) => {
+  profileGamesStore.set(
+    userId,
+    gameIds.filter((gameId, index, values) => values.indexOf(gameId) === index),
+  );
+};
+
+const addOwnedGame = (userId: string, gameId: string) => {
+  const current = profileGamesStore.get(userId) ?? [];
+  profileGamesStore.set(userId, current.includes(gameId) ? current : [...current, gameId]);
+};
 
 const ensureAccount = (email: string, password: string, options?: { displayName?: string; username?: string }) => {
   const userId = makeUserId(email);
@@ -468,6 +533,7 @@ const registerMockLobbies = () => {
     const account = ensureAccount(email, password);
 
     ensureInviteGraphForHost(account);
+    profileGamesStore.set(account.userId, profileGamesStore.get(account.userId) ?? games.map((game) => game.id));
     currentSessionUserId = account.userId;
 
     req.reply({
@@ -480,6 +546,7 @@ const registerMockLobbies = () => {
     const { email, password } = req.body as { email: string; password: string };
     const account = ensureAccount(email, password);
 
+    profileGamesStore.set(account.userId, profileGamesStore.get(account.userId) ?? games.map((game) => game.id));
     currentSessionUserId = account.userId;
 
     req.reply({
@@ -547,15 +614,70 @@ const registerMockLobbies = () => {
     body: games,
   }).as('gamesRequest');
 
-  cy.intercept('GET', '**/rest/v1/profile_games*', {
-    statusCode: 200,
-    body: games.map((game) => ({
-      profile_id: currentSessionUserId,
-      game_id: game.id,
-      created_at: nextIsoTimestamp(),
-      games: game,
-    })),
+  cy.intercept('GET', '**/rest/v1/profile_games*', (req) => {
+    const userId = getQueryValue(req.url, 'profile_id') || currentSessionUserId || '';
+    const ownedGameIds = profileGamesStore.get(userId) ?? [];
+
+    req.reply({
+      statusCode: 200,
+      body: ownedGameIds
+        .map((gameId) => {
+          const game = games.find((item) => item.id === gameId);
+          if (!game) {
+            return null;
+          }
+
+          return {
+            profile_id: userId,
+            game_id: game.id,
+            created_at: nextIsoTimestamp(),
+            games: game,
+          };
+        })
+        .filter(Boolean),
+    });
   }).as('profileGamesRequest');
+
+  cy.intercept('POST', '**/functions/v1/igdb-search', (req) => {
+    const query = ((req.body as { query?: string } | null)?.query ?? '').trim().toLowerCase();
+
+    req.reply({
+      statusCode: 200,
+      body: {
+        results: igdbResultsByQuery[query] ?? [],
+      },
+    });
+  }).as('igdbSearchFunction');
+
+  cy.intercept('POST', '**/functions/v1/igdb-import-game', (req) => {
+    const body = (req.body as MockIgdbGame | null) ?? null;
+
+    if (!body?.igdb_id || !currentSessionUserId) {
+      req.reply({
+        statusCode: 400,
+        body: { error: 'Missing game payload' },
+      });
+      return;
+    }
+
+    const importedGame = makeImportedGameRecord(body);
+    const existingIndex = games.findIndex((game) => game.id === importedGame.id);
+
+    if (existingIndex >= 0) {
+      games.splice(existingIndex, 1, importedGame);
+    } else {
+      games.push(importedGame);
+    }
+
+    addOwnedGame(currentSessionUserId, importedGame.id);
+
+    req.reply({
+      statusCode: 200,
+      body: {
+        game: importedGame,
+      },
+    });
+  }).as('igdbImportFunction');
 
   cy.intercept('GET', '**/rest/v1/favorite_games*', {
     statusCode: 200,
@@ -976,6 +1098,13 @@ describe('lobbies flow', () => {
   const pixelUserId = makeUserId(pixelEmail);
 
   const signUpHost = () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    if (!profileGamesStore.has(hostAccount.userId)) {
+      setOwnedGames(hostAccount.userId, games.map((game) => game.id));
+    }
     cy.visit('/');
     cy.signupUi(hostEmail, hostPassword);
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
@@ -992,8 +1121,32 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="auth-email-input"]').should('exist');
   };
 
+  const ensureLobbyGameReady = () => {
+    cy.contains('Select a game').scrollIntoView();
+    cy.get('body').then(($body) => {
+      const gameButtons = $body.find('[data-testid^="lobby-game-"]');
+
+      if (gameButtons.length > 0) {
+        const alreadySelected = Array.from(gameButtons).some((button) => button.textContent?.includes('Selected'));
+        if (!alreadySelected) {
+          cy.get('[data-testid^="lobby-game-"]').first().click({ force: true });
+        }
+        cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
+        return;
+      }
+
+      cy.get('[data-testid="lobby-igdb-search-input"]').clear().type('portal');
+      cy.get('[data-testid="lobby-igdb-search-button"]').click();
+      cy.wait('@igdbSearchFunction');
+      cy.get('[data-testid="lobby-igdb-import-button-1234"]').click();
+      cy.wait('@igdbImportFunction');
+      cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
+    });
+  };
+
   const createLobbyWithInvitees = (inviteeIds: string[], options?: { submit?: boolean }) => {
     cy.contains(/^Lobbies$/).click({ force: true });
+    ensureLobbyGameReady();
 
     inviteeIds.forEach((profileId) => {
       cy.get(`[data-testid="${`lobby-invite-chip-${profileId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}"]`).click();
@@ -1010,6 +1163,7 @@ describe('lobbies flow', () => {
 
   beforeEach(() => {
     authStore.clear();
+    games.splice(0, games.length, ...seedGames.map((game) => ({ ...game })));
     lobbyStore.length = 0;
     lobbyMembersStore.length = 0;
     lobbyHistoryStore.length = 0;
@@ -1063,6 +1217,32 @@ describe('lobbies flow', () => {
     cy.contains(/^Lobbies$/).click({ force: true });
     scrollToDiscordMeetupStep();
     cy.get('[data-testid="lobby-discord-refresh-button"]').should('be.visible');
+  });
+
+  it('lets a user with an empty library import a game inline in lobbies and auto-select it for the draft', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+
+    setOwnedGames(hostAccount.userId, []);
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.contains(/pick a game from your library to create a lobby/i).should('be.visible');
+    cy.contains(/import a game here and we'll use it right away/i).should('be.visible');
+
+    cy.get('[data-testid="lobby-igdb-search-input"]').type('portal');
+    cy.get('[data-testid="lobby-igdb-search-button"]').click();
+
+    cy.wait('@igdbSearchFunction');
+    cy.get('[data-testid="lobby-igdb-result-1234"]').should('be.visible');
+    cy.get('[data-testid="lobby-igdb-import-button-1234"]').click();
+
+    cy.wait('@igdbImportFunction');
+    cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Portal 2 Lobby');
+    cy.contains(/^Portal 2$/).should('exist');
+    cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
   });
 
   it('lets a linked host pick a Discord server and carries it through hosted, incoming, and schedule views', () => {
@@ -1138,6 +1318,17 @@ describe('lobbies flow', () => {
 
     signUpHost();
     cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('body').then(($body) => {
+      if ($body.find('[data-testid="lobby-igdb-search-input"]').length > 0) {
+        cy.get('[data-testid="lobby-igdb-search-input"]').clear().type('portal');
+        cy.get('[data-testid="lobby-igdb-search-button"]').click();
+        cy.wait('@igdbSearchFunction');
+        cy.get('[data-testid="lobby-igdb-import-button-1234"]').click();
+        cy.wait('@igdbImportFunction');
+      } else {
+        ensureLobbyGameReady();
+      }
+    });
     cy.contains('Invite people').scrollIntoView();
     cy.contains(/^Busy$/).should('exist');
     cy.contains('Playing Helix Arena during this window').should('exist');
@@ -1346,7 +1537,7 @@ describe('lobbies flow', () => {
     signUpHost();
 
     cy.contains(/^Lobbies$/).click({ force: true });
-    cy.contains('Deep Raid').click();
+    ensureLobbyGameReady();
     cy.get('[data-testid="lobby-title-input"]').clear().type('Deep Raid Friday Run');
     cy.contains(/^Public$/).click();
     cy.get('[data-testid="create-lobby-button"]').click();
