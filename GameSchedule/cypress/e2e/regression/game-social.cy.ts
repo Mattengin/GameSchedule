@@ -39,6 +39,7 @@ type MockAccount = {
     birthday_month?: number | null;
     birthday_day?: number | null;
     birthday_visibility?: 'private' | 'public';
+    busy_visibility?: 'private' | 'public';
   };
 };
 
@@ -104,6 +105,58 @@ const igdbResultsByQuery: Record<string, MockIgdbGame[]> = {
       cover_url: 'https://images.igdb.com/igdb/image/upload/t_cover_big/co1abc.jpg',
       release_date: '2011-04-19',
       rating: 95,
+      source: 'igdb',
+    },
+  ],
+  'apex legends': [
+    {
+      igdb_id: 5100,
+      title: 'Apex Legends Mobile',
+      genre: 'Battle Royale',
+      platform: 'Mobile',
+      player_count: '2+ players',
+      description: 'A mobile version of Apex Legends with touch controls.',
+      cover_url: null,
+      release_date: '2022-05-17',
+      rating: 95,
+      source: 'igdb',
+    },
+    {
+      igdb_id: 5200,
+      title: 'Apex Legends',
+      genre: 'Battle Royale',
+      platform: 'PC / Console',
+      player_count: '2+ players',
+      description: 'A hero battle royale set in the Titanfall universe.',
+      cover_url: null,
+      release_date: '2019-02-04',
+      rating: 89,
+      source: 'igdb',
+    },
+  ],
+  mario: [
+    {
+      igdb_id: 5300,
+      title: 'Mario Party Superstars',
+      genre: 'Party',
+      platform: 'Nintendo Switch',
+      player_count: '2+ players',
+      description: 'A party collection of boards and minigames from the Nintendo 64 era.',
+      cover_url: null,
+      release_date: '2021-10-29',
+      rating: 82,
+      source: 'igdb',
+    },
+    {
+      igdb_id: 5400,
+      title: 'Mario Kart 8 Deluxe',
+      genre: 'Racing',
+      platform: 'Nintendo Switch',
+      player_count: '2+ players',
+      description: 'An expanded version of Mario Kart 8 with classic tracks and online play.',
+      cover_url: null,
+      release_date: '2017-04-28',
+      rating: 89,
       source: 'igdb',
     },
   ],
@@ -179,6 +232,65 @@ const makeImportedGameRecord = (game: MockIgdbGame): MockGame => ({
   source: 'igdb',
 });
 
+const normalizeSearchText = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const getMatchTier = (title: string, query: string) => {
+  const normalizedTitle = normalizeSearchText(title);
+  const normalizedQuery = normalizeSearchText(query);
+
+  if (!normalizedQuery) {
+    return 99;
+  }
+
+  if (normalizedTitle === normalizedQuery) {
+    return 0;
+  }
+
+  if (normalizedTitle.startsWith(`${normalizedQuery} `) || normalizedTitle.startsWith(normalizedQuery)) {
+    return 1;
+  }
+
+  if (normalizedTitle.split(' ').includes(normalizedQuery)) {
+    return 2;
+  }
+
+  if (normalizedTitle.includes(normalizedQuery)) {
+    return 3;
+  }
+
+  return 4;
+};
+
+const sortIgdbResults = (query: string, results: MockIgdbGame[]) =>
+  [...results].sort((left, right) => {
+    const leftTier = getMatchTier(left.title, query);
+    const rightTier = getMatchTier(right.title, query);
+
+    if (leftTier !== rightTier) {
+      return leftTier - rightTier;
+    }
+
+    const leftRating = left.rating ?? -1;
+    const rightRating = right.rating ?? -1;
+
+    if (leftRating !== rightRating) {
+      return rightRating - leftRating;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
+
+const getOrderedIgdbResultIds = ($elements: JQuery<HTMLElement>) =>
+  [...$elements]
+    .map((element) => element.getAttribute('data-testid'))
+    .filter((value): value is string => Boolean(value))
+    .filter((value) => /^igdb-result-\d+$/.test(value))
+    .filter((value, index, values) => values.indexOf(value) === index);
+
 const registerMockGameSocial = () => {
   cy.intercept('POST', '**/auth/v1/signup', (req) => {
     const { email, password } = req.body as { email: string; password: string };
@@ -242,7 +354,10 @@ const registerMockGameSocial = () => {
       return;
     }
 
-    const results = Object.entries(igdbResultsByQuery).find(([key]) => query.includes(key))?.[1] ?? [];
+    const results = sortIgdbResults(
+      query,
+      Object.entries(igdbResultsByQuery).find(([key]) => query.includes(key))?.[1] ?? [],
+    );
 
     req.reply({
       statusCode: 200,
@@ -529,6 +644,65 @@ describe('game social persistence', () => {
     });
 
     cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Portal 2 Lobby');
+  });
+
+  it('lets users close IGDB search results without clearing the typed query', () => {
+    signInAndOpenGames();
+
+    cy.get('[data-testid="igdb-search-input"]').clear().type('portal');
+    cy.get('[data-testid="igdb-search-button"]').click();
+
+    cy.contains('Portal 2').should('be.visible');
+    cy.get('[data-testid="igdb-close-results-button"]').click();
+
+    cy.contains('Portal 2').should('not.exist');
+    cy.get('[data-testid="igdb-search-input"]').should('have.value', 'portal');
+
+    cy.wait(2200);
+    cy.get('[data-testid="igdb-search-button"]').click();
+    cy.contains('Portal 2').should('be.visible');
+  });
+
+  it('keeps one-letter IGDB queries in a friendly helper state until the search is specific enough', () => {
+    signInAndOpenGames();
+
+    cy.get('[data-testid="igdb-search-input"]').clear().type('p');
+    cy.get('[data-testid="igdb-short-query-helper"]').should('be.visible');
+    cy.get('[data-testid="igdb-search-button"]').should('be.disabled');
+    cy.contains(/search query must be at least 2 characters/i).should('not.exist');
+
+    cy.get('[data-testid="igdb-search-input"]').type('ortal');
+    cy.get('[data-testid="igdb-short-query-helper"]').should('not.exist');
+    cy.get('[data-testid="igdb-search-button"]').should('not.be.disabled').click();
+    cy.contains('Portal 2').should('be.visible');
+  });
+
+  it('prioritizes stronger title matches over higher-rated weaker matches', () => {
+    signInAndOpenGames();
+
+    cy.get('[data-testid="igdb-search-input"]').clear().type('apex legends');
+    cy.get('[data-testid="igdb-search-button"]').click();
+
+    cy.get('[data-testid^="igdb-result-"]').then(($results) => {
+      expect(getOrderedIgdbResultIds($results).slice(0, 2)).to.deep.equal([
+        'igdb-result-5200',
+        'igdb-result-5100',
+      ]);
+    });
+  });
+
+  it('uses rating to sort similarly relevant IGDB matches', () => {
+    signInAndOpenGames();
+
+    cy.get('[data-testid="igdb-search-input"]').clear().type('mario');
+    cy.get('[data-testid="igdb-search-button"]').click();
+
+    cy.get('[data-testid^="igdb-result-"]').then(($results) => {
+      expect(getOrderedIgdbResultIds($results).slice(0, 2)).to.deep.equal([
+        'igdb-result-5400',
+        'igdb-result-5300',
+      ]);
+    });
   });
 
   it('shows a friendly message when IGDB rate-limits search and re-enables search after cooldown', () => {

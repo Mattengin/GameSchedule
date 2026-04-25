@@ -17,6 +17,7 @@ export type Profile = {
   birthday_month: number | null;
   birthday_day: number | null;
   birthday_visibility: 'private' | 'public';
+  busy_visibility: 'private' | 'public';
   primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;
@@ -130,6 +131,17 @@ export type LobbyInviteHistoryRecord = {
   suggested_end_at: string | null;
   origin: 'member' | 'host_apply';
   created_at: string;
+};
+
+export type BusyStatus = 'busy' | 'maybe_busy';
+
+export type BusyBlock = {
+  profile_id: string;
+  lobby_id: string;
+  starts_at: string;
+  ends_at: string;
+  busy_status: BusyStatus;
+  game_title: string | null;
 };
 
 export type AvailabilitySetting = {

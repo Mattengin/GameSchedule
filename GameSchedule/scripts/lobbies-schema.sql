@@ -192,6 +192,109 @@ begin
 end;
 $$;
 
+create or replace function public.get_profile_busy_blocks(
+  p_profile_ids uuid[],
+  p_window_start timestamptz,
+  p_window_end timestamptz
+)
+returns table (
+  profile_id uuid,
+  lobby_id uuid,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  busy_status text,
+  game_title text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_window_start is null or p_window_end is null or p_window_end <= p_window_start then
+    raise exception 'A valid busy-block window is required';
+  end if;
+
+  return query
+  with requested_profiles as (
+    select distinct unnest(coalesce(p_profile_ids, '{}')) as requested_profile_id
+  ),
+  visible_profiles as (
+    select requested_profiles.requested_profile_id as profile_id
+    from requested_profiles
+    where requested_profiles.requested_profile_id is not null
+      and (
+        requested_profiles.requested_profile_id = auth.uid()
+        or exists (
+          select 1
+          from public.friends
+          where friends.profile_id = auth.uid()
+            and friends.friend_profile_id = requested_profiles.requested_profile_id
+        )
+      )
+  ),
+  host_blocks as (
+    select
+      lobbies.host_profile_id as profile_id,
+      lobbies.id as lobby_id,
+      lobbies.scheduled_for as starts_at,
+      coalesce(lobbies.scheduled_until, lobbies.scheduled_for + interval '2 hours') as ends_at,
+      case when lobbies.scheduled_until is null then 'maybe_busy' else 'busy' end as busy_status,
+      case when profiles.busy_visibility = 'public' then games.title else null end as game_title
+    from public.lobbies
+    join visible_profiles
+      on visible_profiles.profile_id = lobbies.host_profile_id
+    join public.profiles
+      on profiles.id = lobbies.host_profile_id
+    left join public.games
+      on games.id = lobbies.game_id
+    where lobbies.status <> 'closed'
+      and lobbies.scheduled_for is not null
+      and tstzrange(
+        lobbies.scheduled_for,
+        coalesce(lobbies.scheduled_until, lobbies.scheduled_for + interval '2 hours'),
+        '[)'
+      ) && tstzrange(p_window_start, p_window_end, '[)')
+  ),
+  accepted_member_blocks as (
+    select
+      lobby_members.profile_id,
+      lobbies.id as lobby_id,
+      lobbies.scheduled_for as starts_at,
+      coalesce(lobbies.scheduled_until, lobbies.scheduled_for + interval '2 hours') as ends_at,
+      case when lobbies.scheduled_until is null then 'maybe_busy' else 'busy' end as busy_status,
+      case when profiles.busy_visibility = 'public' then games.title else null end as game_title
+    from public.lobby_members
+    join public.lobbies
+      on lobbies.id = lobby_members.lobby_id
+    join visible_profiles
+      on visible_profiles.profile_id = lobby_members.profile_id
+    join public.profiles
+      on profiles.id = lobby_members.profile_id
+    left join public.games
+      on games.id = lobbies.game_id
+    where lobby_members.role = 'member'
+      and lobby_members.rsvp_status = 'accepted'
+      and lobbies.status <> 'closed'
+      and lobbies.scheduled_for is not null
+      and tstzrange(
+        lobbies.scheduled_for,
+        coalesce(lobbies.scheduled_until, lobbies.scheduled_for + interval '2 hours'),
+        '[)'
+      ) && tstzrange(p_window_start, p_window_end, '[)')
+  )
+  select *
+  from host_blocks
+  union all
+  select *
+  from accepted_member_blocks
+  order by starts_at asc, profile_id asc;
+end;
+$$;
+
 drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[]);
 drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text);
 
@@ -616,6 +719,7 @@ using (public.can_view_lobby_member(lobby_id, profile_id));
 revoke all on function public.can_view_lobby(uuid) from public;
 revoke all on function public.is_lobby_host(uuid) from public;
 revoke all on function public.can_view_lobby_member(uuid, uuid) from public;
+revoke all on function public.get_profile_busy_blocks(uuid[], timestamptz, timestamptz) from public;
 revoke all on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text) from public;
 revoke all on function public.respond_to_lobby_invite(uuid, text, text, timestamptz, timestamptz) from public;
 revoke all on function public.apply_lobby_time_suggestion(uuid, uuid) from public;
@@ -624,6 +728,7 @@ revoke all on function public.cleanup_expired_lobby_response_history() from publ
 grant execute on function public.can_view_lobby(uuid) to authenticated;
 grant execute on function public.is_lobby_host(uuid) to authenticated;
 grant execute on function public.can_view_lobby_member(uuid, uuid) to authenticated;
+grant execute on function public.get_profile_busy_blocks(uuid[], timestamptz, timestamptz) to authenticated;
 grant execute on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text) to authenticated;
 grant execute on function public.respond_to_lobby_invite(uuid, text, text, timestamptz, timestamptz) to authenticated;
 grant execute on function public.apply_lobby_time_suggestion(uuid, uuid) to authenticated;

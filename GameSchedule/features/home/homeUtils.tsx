@@ -4,7 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import { Button, Chip, Surface, Text } from 'react-native-paper';
 import { DatePickerInput, TimePickerModal } from 'react-native-paper-dates';
 import { styles } from './homeStyles';
-import type { LobbyRecord, Profile } from './homeTypes';
+import type { BusyBlock, LobbyRecord, Profile } from './homeTypes';
 
 export const getWebBasePath = () => {
   if (Platform.OS !== 'web') {
@@ -209,6 +209,12 @@ export const getDefaultEndDate = (startDate: Date) => {
   return endDate;
 };
 
+export const getBusyFallbackEndDate = (startDate: Date) => {
+  const endDate = new Date(startDate);
+  endDate.setHours(endDate.getHours() + 2);
+  return endDate;
+};
+
 export const resolveAvatarUrl = (
   record: Pick<Profile, 'avatar_url' | 'discord_avatar_url'> | null | undefined,
 ) => {
@@ -277,6 +283,15 @@ export const formatDbTime = (date: Date) =>
 export const formatAvailabilityRange = (startTime: string, endTime: string) =>
   `${formatEventTime(parseDbTimeToDate(startTime, 20))} - ${formatEventTime(parseDbTimeToDate(endTime, 21))}`;
 
+export const hasExplicitLobbyEnd = (lobby: Pick<LobbyRecord, 'scheduled_until'>) => {
+  if (!lobby.scheduled_until) {
+    return false;
+  }
+
+  const explicitEnd = new Date(lobby.scheduled_until);
+  return !Number.isNaN(explicitEnd.getTime());
+};
+
 export const getLobbyEndDate = (lobby: Pick<LobbyRecord, 'scheduled_for' | 'scheduled_until'>) => {
   if (lobby.scheduled_until) {
     const explicitEnd = new Date(lobby.scheduled_until);
@@ -288,11 +303,60 @@ export const getLobbyEndDate = (lobby: Pick<LobbyRecord, 'scheduled_for' | 'sche
   if (lobby.scheduled_for) {
     const startDate = new Date(lobby.scheduled_for);
     if (!Number.isNaN(startDate.getTime())) {
-      return getDefaultEndDate(startDate);
+      return getBusyFallbackEndDate(startDate);
     }
   }
 
   return getDefaultEndDate(createDefaultLobbyStartDate());
+};
+
+export const formatLobbyScheduleLabel = (lobby: Pick<LobbyRecord, 'scheduled_for' | 'scheduled_until'>) => {
+  if (!lobby.scheduled_for) {
+    return 'Starts now';
+  }
+
+  const startDate = new Date(lobby.scheduled_for);
+  if (Number.isNaN(startDate.getTime())) {
+    return 'Starts now';
+  }
+
+  if (hasExplicitLobbyEnd(lobby)) {
+    return formatEventRange(startDate, new Date(lobby.scheduled_until!));
+  }
+
+  return `${formatCalendarDate(startDate)}, ${formatEventTime(startDate)} · No set end time`;
+};
+
+export const doesTimeRangeOverlap = (
+  firstStartAt: Date,
+  firstEndAt: Date,
+  secondStartAt: Date,
+  secondEndAt: Date,
+) => firstStartAt < secondEndAt && secondStartAt < firstEndAt;
+
+export const getBusyStatusLabel = (status: BusyBlock['busy_status']) =>
+  status === 'maybe_busy' ? 'Maybe busy' : 'Busy';
+
+export const formatBusyBlockNote = (block: BusyBlock) => {
+  const startDate = new Date(block.starts_at);
+  if (Number.isNaN(startDate.getTime())) {
+    return block.game_title
+      ? `Playing ${block.game_title}`
+      : block.busy_status === 'maybe_busy'
+        ? 'Has a flexible session around this time'
+        : 'Already booked at this time';
+  }
+
+  const timeLabel = formatEventTime(startDate);
+  if (block.busy_status === 'maybe_busy') {
+    return block.game_title
+      ? `Playing ${block.game_title} around ${timeLabel}`
+      : `Busy around ${timeLabel}`;
+  }
+
+  return block.game_title
+    ? `Playing ${block.game_title} during this window`
+    : 'Already booked at this time';
 };
 
 export function StatCard({
@@ -327,21 +391,33 @@ export function EventTimePicker({
   timeMode,
   startAt,
   endAt,
+  hasExplicitEnd,
   onSetNow,
   onSetLater,
+  onToggleHasExplicitEnd,
   onStartAtChange,
   onEndAtChange,
 }: {
   timeMode: 'now' | 'later';
   startAt: Date;
   endAt: Date;
+  hasExplicitEnd: boolean;
   onSetNow: () => void;
   onSetLater: () => void;
+  onToggleHasExplicitEnd: (nextValue: boolean) => void;
   onStartAtChange: (date: Date) => void;
   onEndAtChange: (date: Date) => void;
 }) {
   const [timePickerTarget, setTimePickerTarget] = React.useState<'start' | 'end' | null>(null);
   const activeTimeDate = timePickerTarget === 'end' ? endAt : startAt;
+  const timeSummary =
+    timeMode === 'now'
+      ? hasExplicitEnd
+        ? 'Starts now'
+        : 'Starts now · No set end time'
+      : hasExplicitEnd
+        ? formatEventRange(startAt, endAt)
+        : `${formatCalendarDate(startAt)}, ${formatEventTime(startAt)} · No set end time`;
 
   return (
     <Surface style={styles.eventTimePanel} elevation={1}>
@@ -350,10 +426,10 @@ export function EventTimePicker({
           <Text variant="titleSmall" style={styles.eventTimeTitle}>
             Event time
           </Text>
-          <Text style={styles.friendNote}>Pick a controlled calendar time. Events default to one hour.</Text>
+          <Text style={styles.friendNote}>Pick a controlled start time. End time is optional for looser sessions.</Text>
         </View>
         <Chip icon="clock-outline" style={styles.statusChip}>
-          {timeMode === 'now' ? 'Starts now' : formatEventRange(startAt, endAt)}
+          {timeSummary}
         </Chip>
       </View>
       <View style={styles.quickPath}>
@@ -362,6 +438,9 @@ export function EventTimePicker({
         </Chip>
         <Chip selected={timeMode === 'later'} onPress={onSetLater} testID="lobby-time-later-chip">
           Schedule it
+        </Chip>
+        <Chip selected={hasExplicitEnd} onPress={() => onToggleHasExplicitEnd(!hasExplicitEnd)} testID="lobby-toggle-end-time-chip">
+          {hasExplicitEnd ? 'End time on' : 'No end time'}
         </Chip>
       </View>
       {timeMode === 'later' ? (
@@ -389,13 +468,17 @@ export function EventTimePicker({
             testID="lobby-start-time-picker-button">
             Start: {formatEventTime(startAt)}
           </Button>
-          <Button
-            mode="outlined"
-            icon="clock-end"
-            onPress={() => setTimePickerTarget('end')}
-            testID="lobby-end-time-picker-button">
-            End: {formatEventTime(endAt)}
-          </Button>
+          {hasExplicitEnd ? (
+            <Button
+              mode="outlined"
+              icon="clock-end"
+              onPress={() => setTimePickerTarget('end')}
+              testID="lobby-end-time-picker-button">
+              End: {formatEventTime(endAt)}
+            </Button>
+          ) : (
+            <Text style={styles.friendNote}>Friends will see this as Maybe busy around the start time.</Text>
+          )}
           <TimePickerModal
             visible={Boolean(timePickerTarget)}
             onDismiss={() => setTimePickerTarget(null)}
@@ -418,9 +501,9 @@ export function EventTimePicker({
           />
           <View style={styles.pickerSummary}>
             <Text variant="titleSmall" style={styles.eventTimeTitle}>
-              Selected event window
+              Selected event time
             </Text>
-            <Text style={styles.friendNote}>{formatEventRange(startAt, endAt)}</Text>
+            <Text style={styles.friendNote}>{timeSummary}</Text>
           </View>
         </View>
       ) : null}
@@ -431,6 +514,8 @@ export function EventTimePicker({
 export function TimeRangePicker({
   startAt,
   endAt,
+  hasExplicitEnd = true,
+  onToggleHasExplicitEnd,
   onStartAtChange,
   onEndAtChange,
   startTestID,
@@ -438,6 +523,8 @@ export function TimeRangePicker({
 }: {
   startAt: Date;
   endAt: Date;
+  hasExplicitEnd?: boolean;
+  onToggleHasExplicitEnd?: (nextValue: boolean) => void;
   onStartAtChange: (date: Date) => void;
   onEndAtChange: (date: Date) => void;
   startTestID: string;
@@ -456,14 +543,24 @@ export function TimeRangePicker({
           testID={startTestID}>
           Start: {formatEventTime(startAt)}
         </Button>
-        <Button
-          mode="outlined"
-          icon="clock-end"
-          onPress={() => setTimePickerTarget('end')}
-          testID={endTestID}>
-          End: {formatEventTime(endAt)}
-        </Button>
+        {hasExplicitEnd ? (
+          <Button
+            mode="outlined"
+            icon="clock-end"
+            onPress={() => setTimePickerTarget('end')}
+            testID={endTestID}>
+            End: {formatEventTime(endAt)}
+          </Button>
+        ) : null}
       </View>
+      {onToggleHasExplicitEnd ? (
+        <View style={styles.quickPath}>
+          <Chip selected={hasExplicitEnd} onPress={() => onToggleHasExplicitEnd(!hasExplicitEnd)} testID={`${startTestID}-toggle-end-time`}>
+            {hasExplicitEnd ? 'End time on' : 'No end time'}
+          </Chip>
+        </View>
+      ) : null}
+      {!hasExplicitEnd ? <Text style={styles.friendNote}>This session can run open-ended.</Text> : null}
       <TimePickerModal
         visible={Boolean(timePickerTarget)}
         onDismiss={() => setTimePickerTarget(null)}

@@ -154,6 +154,32 @@ export const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
+  inviteTargetGroup: {
+    gap: 6,
+    maxWidth: 240,
+  },
+  inviteBusyMeta: {
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  friendBusyChip: {
+    backgroundColor: '#35181E',
+    borderColor: '#B84A5A',
+    borderWidth: 1,
+  },
+  friendBusyText: {
+    color: '#FFD8DE',
+    fontWeight: '700',
+  },
+  friendMaybeBusyChip: {
+    backgroundColor: '#3A2A12',
+    borderColor: '#F0C15C',
+    borderWidth: 1,
+  },
+  friendMaybeBusyText: {
+    color: '#FFE7AE',
+    fontWeight: '700',
+  },
   igdbSearchRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -163,6 +189,11 @@ export const styles = StyleSheet.create({
   igdbSearchInput: {
     flexGrow: 1,
     minWidth: 240,
+  },
+  igdbDismissRow: {
+    alignItems: 'flex-end',
+    marginTop: 6,
+    marginBottom: -2,
   },
   igdbResultCard: {
     backgroundColor: '#10162A',

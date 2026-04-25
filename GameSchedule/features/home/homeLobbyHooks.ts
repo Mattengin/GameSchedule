@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { profileSelectFields } from './homeConstants';
 import type {
+  BusyBlock,
   DiscordGuildRecord,
   GameRecord,
   LobbyInviteHistoryRecord,
@@ -11,6 +12,7 @@ import type {
   RelatedLobbyGameSummary,
 } from './homeTypes';
 import {
+  getBusyFallbackEndDate,
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
   getDefaultEndDate,
@@ -37,6 +39,7 @@ export function useLobbyState({
   const [lobbyMessage, setLobbyMessage] = React.useState('');
   const [lobbies, setLobbies] = React.useState<LobbyRecord[]>([]);
   const [discordGuilds, setDiscordGuilds] = React.useState<DiscordGuildRecord[]>([]);
+  const [inviteBusyBlocks, setInviteBusyBlocks] = React.useState<BusyBlock[]>([]);
   const [lobbyMembers, setLobbyMembers] = React.useState<LobbyMemberRecord[]>([]);
   const [lobbyInviteHistory, setLobbyInviteHistory] = React.useState<LobbyInviteHistoryRecord[]>([]);
   const [lobbyProfileDirectory, setLobbyProfileDirectory] = React.useState<Record<string, Profile>>({});
@@ -46,12 +49,14 @@ export function useLobbyState({
   const [rescheduleDraft, setRescheduleDraft] = React.useState({
     startAt: createDefaultLobbyStartDate().toISOString(),
     endAt: createDefaultLobbyEndDate().toISOString(),
+    hasExplicitEnd: true,
   });
   const [lobbyForm, setLobbyForm] = React.useState({
     title: '',
     timeMode: 'later' as 'now' | 'later',
     startAt: createDefaultLobbyStartDate().toISOString(),
     endAt: createDefaultLobbyEndDate().toISOString(),
+    hasExplicitEnd: true,
     scheduledFor: '',
     discordGuildId: '',
     visibility: 'private' as 'private' | 'public',
@@ -274,6 +279,22 @@ export function useLobbyState({
     return Number.isNaN(parsedDate.getTime()) ? getDefaultEndDate(selectedLobbyStartAt) : parsedDate;
   }, [lobbyForm.endAt, selectedLobbyStartAt]);
 
+  const selectedLobbyBusyWindowStartAt = React.useMemo(() => {
+    if (lobbyForm.timeMode === 'now') {
+      return new Date();
+    }
+
+    return selectedLobbyStartAt;
+  }, [lobbyForm.timeMode, selectedLobbyStartAt]);
+
+  const selectedLobbyBusyWindowEndAt = React.useMemo(() => {
+    if (lobbyForm.hasExplicitEnd) {
+      return lobbyForm.timeMode === 'now' ? getDefaultEndDate(selectedLobbyBusyWindowStartAt) : selectedLobbyEndAt;
+    }
+
+    return getBusyFallbackEndDate(selectedLobbyBusyWindowStartAt);
+  }, [lobbyForm.hasExplicitEnd, lobbyForm.timeMode, selectedLobbyBusyWindowStartAt, selectedLobbyEndAt]);
+
   const rescheduleStartAt = React.useMemo(() => {
     const parsedDate = new Date(rescheduleDraft.startAt);
     return Number.isNaN(parsedDate.getTime()) ? createDefaultLobbyStartDate() : parsedDate;
@@ -284,11 +305,48 @@ export function useLobbyState({
     return Number.isNaN(parsedDate.getTime()) ? getDefaultEndDate(rescheduleStartAt) : parsedDate;
   }, [rescheduleDraft.endAt, rescheduleStartAt]);
 
+  React.useEffect(() => {
+    const inviteeIds = inviteReadyFriends.map((friend) => friend.id);
+
+    if (!session?.user || inviteeIds.length === 0) {
+      setInviteBusyBlocks([]);
+      return;
+    }
+
+    let isActive = true;
+
+    const loadInviteBusyBlocks = async () => {
+      const { data, error } = await supabase.rpc('get_profile_busy_blocks', {
+        p_profile_ids: inviteeIds,
+        p_window_start: selectedLobbyBusyWindowStartAt.toISOString(),
+        p_window_end: selectedLobbyBusyWindowEndAt.toISOString(),
+      });
+
+      if (!isActive) {
+        return;
+      }
+
+      if (error) {
+        setInviteBusyBlocks([]);
+        return;
+      }
+
+      setInviteBusyBlocks((data as BusyBlock[] | null) ?? []);
+    };
+
+    void loadInviteBusyBlocks();
+
+    return () => {
+      isActive = false;
+    };
+  }, [inviteReadyFriends, selectedLobbyBusyWindowEndAt, selectedLobbyBusyWindowStartAt, session]);
+
   return {
     discordGuilds,
     editingLobbyId,
     incomingLobbies,
     inviteReadyFriends,
+    inviteBusyBlocks,
     loadDiscordGuilds,
     loadLobbies,
     lobbyInviteHistory,
@@ -305,6 +363,8 @@ export function useLobbyState({
     rescheduleEndAt,
     rescheduleStartAt,
     selectedLobbyEndAt,
+    selectedLobbyBusyWindowEndAt,
+    selectedLobbyBusyWindowStartAt,
     selectedLobbyGame,
     selectedLobbyGameId,
     selectedLobbyInviteProfileIds,

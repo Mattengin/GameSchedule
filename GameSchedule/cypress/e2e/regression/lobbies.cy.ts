@@ -17,6 +17,7 @@ type MockProfile = {
   birthday_month?: number | null;
   birthday_day?: number | null;
   birthday_visibility?: 'private' | 'public';
+  busy_visibility?: 'private' | 'public';
   primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;
@@ -149,6 +150,19 @@ const nextIsoTimestamp = () => {
   return new Date(Date.now() + timestampSequence * 1000).toISOString();
 };
 
+const createEveningWindow = (durationHours = 2) => {
+  const startAt = new Date();
+  startAt.setHours(20, 0, 0, 0);
+
+  const endAt = new Date(startAt);
+  endAt.setHours(endAt.getHours() + durationHours);
+
+  return {
+    startAt: startAt.toISOString(),
+    endAt: endAt.toISOString(),
+  };
+};
+
 const makeAccount = (
   email: string,
   password: string,
@@ -173,6 +187,7 @@ const makeAccount = (
       birthday_month: null,
       birthday_day: null,
       birthday_visibility: 'private',
+      busy_visibility: 'public',
       primary_community_id: null,
       discord_user_id: null,
       discord_username: null,
@@ -396,6 +411,27 @@ const getAccessibleLobbyIds = (profileId: string) =>
     )
     .map((lobby) => lobby.id);
 
+const getBusyBlockEndIso = (lobby: Pick<MockLobby, 'scheduled_for' | 'scheduled_until'>) => {
+  if (lobby.scheduled_until) {
+    return lobby.scheduled_until;
+  }
+
+  if (!lobby.scheduled_for) {
+    return null;
+  }
+
+  const fallbackEnd = new Date(lobby.scheduled_for);
+  fallbackEnd.setHours(fallbackEnd.getHours() + 2);
+  return fallbackEnd.toISOString();
+};
+
+const rangesOverlap = (
+  firstStartIso: string,
+  firstEndIso: string,
+  secondStartIso: string,
+  secondEndIso: string,
+) => new Date(firstStartIso) < new Date(secondEndIso) && new Date(secondStartIso) < new Date(firstEndIso);
+
 const registerMockLobbies = () => {
   cy.intercept('POST', '**/auth/v1/signup', (req) => {
     const { email, password } = req.body as { email: string; password: string };
@@ -567,6 +603,62 @@ const registerMockLobbies = () => {
       }),
     });
   }).as('lobbyHistoryRequest');
+
+  cy.intercept('POST', '**/rest/v1/rpc/get_profile_busy_blocks', (req) => {
+    const {
+      p_profile_ids: profileIds = [],
+      p_window_start: windowStart,
+      p_window_end: windowEnd,
+    } = req.body as {
+      p_profile_ids?: string[];
+      p_window_start: string;
+      p_window_end: string;
+    };
+
+    const body = profileIds.flatMap((profileId) => {
+      const account = getAccountById(profileId);
+      const visibility = account?.profile.busy_visibility ?? 'public';
+
+      return lobbyStore
+        .filter((lobby) => {
+          if (lobby.status === 'closed' || !lobby.scheduled_for) {
+            return false;
+          }
+
+          const busyEndIso = getBusyBlockEndIso(lobby);
+          if (!busyEndIso) {
+            return false;
+          }
+
+          const isHost = lobby.host_profile_id === profileId;
+          const isAcceptedMember = lobbyMembersStore.some(
+            (member) =>
+              member.lobby_id === lobby.id &&
+              member.profile_id === profileId &&
+              member.role === 'member' &&
+              member.rsvp_status === 'accepted',
+          );
+
+          return (
+            (isHost || isAcceptedMember) &&
+            rangesOverlap(lobby.scheduled_for, busyEndIso, windowStart, windowEnd)
+          );
+        })
+        .map((lobby) => ({
+          profile_id: profileId,
+          lobby_id: lobby.id,
+          starts_at: lobby.scheduled_for,
+          ends_at: getBusyBlockEndIso(lobby),
+          busy_status: lobby.scheduled_until ? 'busy' : 'maybe_busy',
+          game_title: visibility === 'public' ? lobby.games?.title ?? null : null,
+        }));
+    });
+
+    req.reply({
+      statusCode: 200,
+      body,
+    });
+  }).as('busyBlocksRpc');
 
   cy.intercept('POST', '**/rest/v1/rpc/create_lobby_with_invites', (req) => {
     const currentAccount = getAccountById(currentSessionUserId ?? '');
@@ -971,6 +1063,66 @@ describe('lobbies flow', () => {
     cy.contains('Meet in Discord: Night Raiders').should('be.visible');
   });
 
+  it('shows Busy for invitees with overlapping fixed-time commitments and still lets the host invite them', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    const { novaAccount } = ensureInviteGraphForHost(hostAccount);
+    novaAccount.profile.busy_visibility = 'public';
+    const eveningWindow = createEveningWindow();
+
+    const busyLobby = buildLobby(
+      novaAccount,
+      'helix-arena',
+      'Nova already booked',
+      eveningWindow.startAt,
+      eveningWindow.endAt,
+      true,
+    );
+    lobbyStore.unshift(busyLobby);
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.contains('Invite people').scrollIntoView();
+    cy.contains(/^Busy$/).should('exist');
+    cy.contains('Playing Helix Arena during this window').should('exist');
+    cy.get(`[data-testid="${`lobby-invite-chip-${novaUserId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}"]`).click();
+    cy.get('[data-testid="create-lobby-button"]').click();
+
+    cy.wait('@createLobbyRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_invited_profile_ids).to.deep.equal([novaUserId]);
+      });
+  });
+
+  it('shows Maybe busy in yellow for open-ended overlapping sessions', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    const { novaAccount } = ensureInviteGraphForHost(hostAccount);
+    novaAccount.profile.busy_visibility = 'public';
+    const eveningWindow = createEveningWindow();
+
+    const maybeBusyLobby = buildLobby(
+      novaAccount,
+      'wild-rally-online',
+      'Nova open session',
+      eveningWindow.startAt,
+      null,
+      true,
+    );
+    lobbyStore.unshift(maybeBusyLobby);
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.contains('Invite people').scrollIntoView();
+    cy.contains(/^Maybe busy$/).should('exist');
+    cy.contains(/Playing Wild Rally Online around/i).should('exist');
+  });
+
   it('creates real invite rows and shows invitees grouped under hosted lobbies', () => {
     signUpHost();
 
@@ -1026,6 +1178,68 @@ describe('lobbies flow', () => {
     cy.contains('Your response history').should('exist');
     cy.contains('Actually I can play for 2 hours.').should('exist');
     cy.contains('Can only do one match tonight.').should('exist');
+  });
+
+  it('warns before accepting an overlapping invite and sends the accept on a second intentional submit', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    const { novaAccount, pixelAccount } = ensureInviteGraphForHost(hostAccount);
+    const eveningWindow = createEveningWindow();
+
+    const existingLobby = buildLobby(
+      pixelAccount,
+      'deep-raid',
+      'Deep Raid Run',
+      eveningWindow.startAt,
+      eveningWindow.endAt,
+      true,
+    );
+    lobbyStore.unshift(existingLobby);
+    lobbyMembersStore.push({
+      lobby_id: existingLobby.id,
+      profile_id: pixelAccount.userId,
+      role: 'host',
+      rsvp_status: 'accepted',
+      response_comment: null,
+      suggested_start_at: null,
+      suggested_end_at: null,
+      responded_at: nextIsoTimestamp(),
+      invited_at: nextIsoTimestamp(),
+      created_at: nextIsoTimestamp(),
+    });
+    lobbyMembersStore.push({
+      lobby_id: existingLobby.id,
+      profile_id: novaAccount.userId,
+      role: 'member',
+      rsvp_status: 'accepted',
+      response_comment: null,
+      suggested_start_at: null,
+      suggested_end_at: null,
+      responded_at: nextIsoTimestamp(),
+      invited_at: nextIsoTimestamp(),
+      created_at: nextIsoTimestamp(),
+    });
+
+    signUpHost();
+    createLobbyWithInvitees([novaUserId]);
+    logout();
+
+    logInAs(novaEmail, friendPassword);
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('[data-testid="lobby-response-accept-lobby-2"]').click();
+    cy.get('[data-testid="lobby-response-submit-lobby-2"]').click();
+    cy.contains(/already on your schedule/i).should('exist');
+
+    cy.get('[data-testid="lobby-response-submit-lobby-2"]').click();
+    cy.wait('@respondToInviteRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_status).to.equal('accepted');
+      });
+
+    cy.contains(/invite accepted/i).should('be.visible');
   });
 
   it('lets an invitee suggest a new time and lets the host apply it, resetting other invitees to pending', () => {

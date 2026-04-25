@@ -11,7 +11,8 @@ create table if not exists public.profiles (
 alter table public.profiles
   add column if not exists birthday_month integer,
   add column if not exists birthday_day integer,
-  add column if not exists birthday_visibility text not null default 'private';
+  add column if not exists birthday_visibility text not null default 'private',
+  add column if not exists busy_visibility text not null default 'public';
 
 alter table public.profiles
   drop constraint if exists profiles_birthday_visibility_check;
@@ -19,6 +20,13 @@ alter table public.profiles
 alter table public.profiles
   add constraint profiles_birthday_visibility_check
   check (birthday_visibility in ('private', 'public'));
+
+alter table public.profiles
+  drop constraint if exists profiles_busy_visibility_check;
+
+alter table public.profiles
+  add constraint profiles_busy_visibility_check
+  check (busy_visibility in ('private', 'public'));
 
 alter table public.profiles
   drop constraint if exists profiles_birthday_pair_check;

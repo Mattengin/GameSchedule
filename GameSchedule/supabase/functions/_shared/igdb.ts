@@ -124,6 +124,57 @@ const derivePlayerCount = (gameModes: RawNamedRecord[] | null | undefined) => {
   return 'Players TBA';
 };
 
+const normalizeSearchText = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const getIgdbMatchTier = (title: string, query: string) => {
+  const normalizedTitle = normalizeSearchText(title);
+  const normalizedQuery = normalizeSearchText(query);
+
+  if (!normalizedQuery) {
+    return 99;
+  }
+
+  if (normalizedTitle === normalizedQuery) {
+    return 0;
+  }
+
+  if (normalizedTitle.startsWith(`${normalizedQuery} `) || normalizedTitle.startsWith(normalizedQuery)) {
+    return 1;
+  }
+
+  if (normalizedTitle.split(' ').includes(normalizedQuery)) {
+    return 2;
+  }
+
+  if (normalizedTitle.includes(normalizedQuery)) {
+    return 3;
+  }
+
+  return 4;
+};
+
+const compareIgdbResults = (query: string, left: NormalizedIgdbGame, right: NormalizedIgdbGame) => {
+  const leftTier = getIgdbMatchTier(left.title, query);
+  const rightTier = getIgdbMatchTier(right.title, query);
+
+  if (leftTier !== rightTier) {
+    return leftTier - rightTier;
+  }
+
+  const leftRating = left.rating ?? -1;
+  const rightRating = right.rating ?? -1;
+
+  if (leftRating !== rightRating) {
+    return rightRating - leftRating;
+  }
+
+  return left.title.localeCompare(right.title);
+};
+
 const pruneIgdbRequestWindow = (now: number) => {
   while (
     igdbRequestTimestamps.length > 0 &&
@@ -231,7 +282,10 @@ export async function searchIgdbCatalog(query: string) {
     }
 
     const payload = (await response.json()) as RawIgdbGame[];
-    return payload.map(normalizeIgdbGame).filter((game): game is NormalizedIgdbGame => Boolean(game));
+    return payload
+      .map(normalizeIgdbGame)
+      .filter((game): game is NormalizedIgdbGame => Boolean(game))
+      .sort((left, right) => compareIgdbResults(query, left, right));
   } finally {
     releaseIgdbRequestSlot();
   }

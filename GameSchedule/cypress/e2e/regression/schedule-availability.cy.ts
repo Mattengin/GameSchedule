@@ -11,6 +11,7 @@ type MockAccount = {
     birthday_month?: number | null;
     birthday_day?: number | null;
     birthday_visibility?: 'private' | 'public';
+    busy_visibility?: 'private' | 'public';
   };
 };
 

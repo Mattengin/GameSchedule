@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Image, View } from 'react-native';
-import { Button, Card, Chip, Divider, HelperText, ProgressBar, Searchbar, Surface, Text } from 'react-native-paper';
+import { Button, Card, Chip, Divider, HelperText, IconButton, ProgressBar, Searchbar, Surface, Text } from 'react-native-paper';
 import { styles } from './homeStyles';
 import type { GameRecord, IgdbSearchResult, RouletteEntry } from './homeTypes';
 import { SectionTitle, StatCard, formatReleaseDateLabel } from './homeUtils';
@@ -141,6 +141,7 @@ type GamesSectionProps = {
   importedIgdbIds: number[];
   onChangeGameSearch: (value: string) => void;
   onChangeIgdbSearchQuery: (value: string) => void;
+  onClearIgdbSearchResults: () => void;
   onImportIgdbGame: (game: IgdbSearchResult) => void;
   onPrepareLobbyDraft: (gameId: string) => void;
   onSearchIgdb: () => void;
@@ -168,6 +169,7 @@ export function GamesSection({
   importedIgdbIds,
   onChangeGameSearch,
   onChangeIgdbSearchQuery,
+  onClearIgdbSearchResults,
   onImportIgdbGame,
   onPrepareLobbyDraft,
   onSearchIgdb,
@@ -175,6 +177,11 @@ export function GamesSection({
   onToggleRoulettePool,
   rouletteEntries,
 }: GamesSectionProps) {
+  const normalizedIgdbSearchQuery = igdbSearchQuery.trim();
+  const isIgdbSearchQueryTooShort = normalizedIgdbSearchQuery.length > 0 && normalizedIgdbSearchQuery.length < 2;
+  const canDismissIgdbSearchOutput =
+    !igdbSearchLoading && (igdbResults.length > 0 || Boolean(igdbError) || Boolean(igdbMessage) || igdbHasSearched);
+
   return (
     <>
       <SectionTitle
@@ -208,11 +215,16 @@ export function GamesSection({
               mode="contained"
               onPress={onSearchIgdb}
               loading={igdbSearchLoading}
-              disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0}
+              disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0 || normalizedIgdbSearchQuery.length < 2}
               testID="igdb-search-button">
               {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
             </Button>
           </View>
+          {isIgdbSearchQueryTooShort ? (
+            <HelperText type="info" visible testID="igdb-short-query-helper">
+              Start with at least 2 letters so we can find the right game.
+            </HelperText>
+          ) : null}
           {igdbError ? (
             <HelperText type="error" visible>
               {igdbError}
@@ -227,6 +239,17 @@ export function GamesSection({
             <HelperText type="info" visible style={styles.successText}>
               {igdbMessage}
             </HelperText>
+          ) : null}
+          {canDismissIgdbSearchOutput ? (
+            <View style={styles.igdbDismissRow}>
+              <IconButton
+                icon="close"
+                size={18}
+                onPress={onClearIgdbSearchResults}
+                accessibilityLabel="Close IGDB search results"
+                testID="igdb-close-results-button"
+              />
+            </View>
           ) : null}
           {igdbResults.map((game) => {
             const alreadyImported = importedIgdbIds.includes(game.igdb_id);

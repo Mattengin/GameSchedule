@@ -984,6 +984,33 @@ Operational note:
 
 - if `cron.job_run_details` starts growing noticeably, add a separate pruning routine later
 
+## Lobby-Derived Busy Status
+
+Hosted lobbies and accepted invites now create a derived busy signal without overwriting recurring weekly availability.
+
+Current behavior:
+
+- recurring availability still means `generally open for invites`
+- hosted or accepted lobbies mean `already booked`
+- fixed-time overlaps show `Busy`
+- no-end lobbies use a hidden `2 hour` fallback window and show yellow `Maybe busy`
+- lobby hosts can leave the end time unset instead of forcing a fake hard stop
+- open-ended sessions render as `No set end time` in the lobby and schedule UI
+- invite flow stays soft-warning only; hosts can still invite someone who is already booked
+- accepting an overlapping invite warns first, then allows a second intentional confirm
+- the derived read path is `public.get_profile_busy_blocks(...)`
+
+Privacy:
+
+- profiles now have `busy_visibility`
+- `public` lets friends see the game title in busy warnings
+- `private` redacts the game and only shows that the player is busy
+
+Environment status:
+
+- QA and prod now both carry the `busy_visibility` profile field
+- QA and prod now both expose `public.get_profile_busy_blocks(...)`
+
 ## Friends Flow Safety Update
 
 The first friends version allowed the client to create both friendship rows directly during accept. That was convenient for prototyping, but it was too permissive.
@@ -1099,14 +1126,10 @@ Conclusion:
 Short-term:
 
 - manually finish the Discord authorization flow and confirm the app session/profile bootstrap after return
-- mirror the latest schema updates to prod when ready, especially:
-  - `scripts/communities-schema.sql`
-  - `scripts/lobbies-schema.sql`
-  - `scripts/discord-guilds-schema.sql`
-- prod still needs the new Discord guild sync schema and cleanup cron mirrored from QA when you are ready
 - live-validate the new friends flow with two real accounts
 - live-validate the new lobby invite/comment/history flow with multiple real accounts
 - live-validate the optional Discord meetup-server selection with linked accounts
+- live-validate the new `Busy` / `Maybe busy` invite warnings with two real accounts
 - build notifications from friend requests and lobby actions
 - manually validate the new schedule picker flow against real Supabase data after the SQL is applied
 

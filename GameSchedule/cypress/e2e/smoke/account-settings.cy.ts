@@ -7,6 +7,7 @@ type MockProfile = {
   birthday_month?: number | null;
   birthday_day?: number | null;
   birthday_visibility?: 'private' | 'public';
+  busy_visibility?: 'private' | 'public';
   primary_community_id: string | null;
   discord_user_id: string | null;
   discord_username: string | null;
@@ -53,6 +54,7 @@ const makeAccount = (email: string, password: string): MockAccount => {
       birthday_month: null,
       birthday_day: null,
       birthday_visibility: 'private',
+      busy_visibility: 'public',
       primary_community_id: null,
       discord_user_id: `discord-${userId}`,
       discord_username: 'Test Pilot',
@@ -168,6 +170,10 @@ const registerMockAccountSettings = (account: MockAccount) => {
         body.birthday_visibility === 'private' || body.birthday_visibility === 'public'
           ? body.birthday_visibility
           : matchedAccount.profile.birthday_visibility,
+      busy_visibility:
+        body.busy_visibility === 'private' || body.busy_visibility === 'public'
+          ? body.busy_visibility
+          : matchedAccount.profile.busy_visibility,
       discord_user_id:
         body.discord_user_id === null || typeof body.discord_user_id === 'string'
           ? body.discord_user_id
@@ -308,6 +314,7 @@ describe('account settings', () => {
       birthday_month: null,
       birthday_day: null,
       birthday_visibility: 'private',
+      busy_visibility: 'public',
       primary_community_id: null,
       discord_user_id: `discord-${account.userId}`,
       discord_username: 'Test Pilot',
@@ -341,6 +348,7 @@ describe('account settings', () => {
         expect(body.birthday_month).to.equal(null);
         expect(body.birthday_day).to.equal(null);
         expect(body.birthday_visibility).to.equal('private');
+        expect(body.busy_visibility).to.equal('public');
         expect(body.onboarding_complete).to.equal(true);
       });
 

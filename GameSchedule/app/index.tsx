@@ -38,6 +38,7 @@ import { useSocialState } from '../features/home/homeSocialHooks';
 import { styles } from '../features/home/homeStyles';
 import type {
   AvailabilityWindow,
+  BusyBlock,
   CommunityRecord,
   FriendRequestRecord,
   IgdbSearchResult,
@@ -57,15 +58,21 @@ import {
   clearOAuthHashFromUrl,
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
+  doesTimeRangeOverlap,
   formatAvailabilityRange,
   formatBirthdayLabel,
+  formatBusyBlockNote,
   formatDbTime,
   formatEventRange,
   formatEventTime,
+  formatLobbyScheduleLabel,
+  getBusyFallbackEndDate,
+  getBusyStatusLabel,
   getBirthdayDate,
   getDefaultEndDate,
   getDiscordCallbackPath,
   getDiscordIdentityFromSession,
+  hasExplicitLobbyEnd,
   getLobbyEndDate,
   getSessionProviderToken,
   getWebBasePath,
@@ -98,6 +105,7 @@ export default function HomeScreen() {
     avatarUrl: '',
     birthday: undefined as Date | undefined,
     birthdayVisibility: 'private' as 'private' | 'public',
+    busyVisibility: 'public' as 'private' | 'public',
   });
   const [profileBusy, setProfileBusy] = React.useState(false);
   const [profileError, setProfileError] = React.useState('');
@@ -200,6 +208,7 @@ export default function HomeScreen() {
     discordGuilds,
     editingLobbyId,
     incomingLobbies,
+    inviteBusyBlocks,
     inviteReadyFriends,
     loadDiscordGuilds,
     loadLobbies,
@@ -213,6 +222,7 @@ export default function HomeScreen() {
     lobbyMessage,
     lobbyProfileDirectory,
     hostedLobbies,
+    rescheduleDraft,
     rescheduleEndAt,
     rescheduleStartAt,
     selectedLobbyEndAt,
@@ -263,6 +273,7 @@ export default function HomeScreen() {
       }
     >
   >({});
+  const [acceptConflictAcknowledgementId, setAcceptConflictAcknowledgementId] = React.useState<string | null>(null);
 
   const syncDiscordGuildSnapshot = React.useCallback(
     async (
@@ -629,6 +640,7 @@ export default function HomeScreen() {
         avatarUrl: '',
         birthday: undefined,
         birthdayVisibility: 'private',
+        busyVisibility: 'public',
       });
       return;
     }
@@ -639,6 +651,7 @@ export default function HomeScreen() {
       avatarUrl: profile.avatar_url ?? '',
       birthday: getBirthdayDate(profile.birthday_month, profile.birthday_day),
       birthdayVisibility: profile.birthday_visibility ?? 'private',
+      busyVisibility: profile.busy_visibility ?? 'public',
     });
   }, [profile]);
 
@@ -739,6 +752,111 @@ export default function HomeScreen() {
   const getCurrentLobbyMembership = React.useCallback(
     (lobbyId: string) => lobbyMembers.find((member) => member.lobby_id === lobbyId && member.profile_id === session?.user?.id) ?? null,
     [lobbyMembers, session],
+  );
+
+  const prioritizeBusyBlock = React.useCallback(
+    (left: BusyBlock, right: BusyBlock) => {
+      if (left.busy_status !== right.busy_status) {
+        return left.busy_status === 'busy' ? -1 : 1;
+      }
+
+      return left.starts_at.localeCompare(right.starts_at);
+    },
+    [],
+  );
+
+  const getLobbyBusyBlock = React.useCallback(
+    (
+      lobby: Pick<LobbyRecord, 'id' | 'scheduled_for' | 'scheduled_until'> & {
+        games?: Pick<NonNullable<LobbyRecord['games']>, 'title'> | null;
+      },
+      profileId: string,
+    ): BusyBlock | null => {
+      if (!lobby.scheduled_for) {
+        return null;
+      }
+
+      const startAt = new Date(lobby.scheduled_for);
+      if (Number.isNaN(startAt.getTime())) {
+        return null;
+      }
+
+      const explicitEnd = hasExplicitLobbyEnd(lobby);
+      const endAt = explicitEnd && lobby.scheduled_until ? new Date(lobby.scheduled_until) : getBusyFallbackEndDate(startAt);
+      if (Number.isNaN(endAt.getTime())) {
+        return null;
+      }
+
+      return {
+        profile_id: profileId,
+        lobby_id: lobby.id,
+        starts_at: startAt.toISOString(),
+        ends_at: endAt.toISOString(),
+        busy_status: explicitEnd ? 'busy' : 'maybe_busy',
+        game_title: lobby.games?.title ?? null,
+      };
+    },
+    [],
+  );
+
+  const inviteBusyBlockByProfileId = React.useMemo(
+    () =>
+      inviteBusyBlocks.reduce<Record<string, BusyBlock>>((accumulator, block) => {
+        const existing = accumulator[block.profile_id];
+        if (!existing || prioritizeBusyBlock(block, existing) < 0) {
+          accumulator[block.profile_id] = block;
+        }
+
+        return accumulator;
+      }, {}),
+    [inviteBusyBlocks, prioritizeBusyBlock],
+  );
+
+  const getInviteBusyBlock = React.useCallback(
+    (profileId: string) => inviteBusyBlockByProfileId[profileId] ?? null,
+    [inviteBusyBlockByProfileId],
+  );
+
+  const getCurrentUserConflictBlock = React.useCallback(
+    (targetLobby: LobbyRecord) => {
+      if (!session?.user?.id) {
+        return null;
+      }
+
+      const targetWindow = getLobbyBusyBlock(targetLobby, session.user.id);
+      if (!targetWindow) {
+        return null;
+      }
+
+      const overlappingBlocks = lobbies
+        .filter((lobby) => lobby.id !== targetLobby.id && lobby.status !== 'closed')
+        .map((lobby) => {
+          const currentMembership = getCurrentLobbyMembership(lobby.id);
+          const isCommitted = lobby.host_profile_id === session.user.id || currentMembership?.rsvp_status === 'accepted';
+          if (!isCommitted) {
+            return null;
+          }
+
+          const block = getLobbyBusyBlock(lobby, session.user.id);
+          if (!block) {
+            return null;
+          }
+
+          return doesTimeRangeOverlap(
+            new Date(targetWindow.starts_at),
+            new Date(targetWindow.ends_at),
+            new Date(block.starts_at),
+            new Date(block.ends_at),
+          )
+            ? block
+            : null;
+        })
+        .filter((block): block is BusyBlock => Boolean(block))
+        .sort(prioritizeBusyBlock);
+
+      return overlappingBlocks[0] ?? null;
+    },
+    [getCurrentLobbyMembership, getLobbyBusyBlock, lobbies, prioritizeBusyBlock, session],
   );
 
   const createInviteResponseDraft = React.useCallback(
@@ -944,6 +1062,13 @@ export default function HomeScreen() {
     setIgdbSearchLoading,
   ]);
 
+  const handleClearIgdbSearchResults = React.useCallback(() => {
+    setIgdbResults([]);
+    setIgdbError('');
+    setIgdbMessage('');
+    setIgdbHasSearched(false);
+  }, [setIgdbError, setIgdbHasSearched, setIgdbMessage, setIgdbResults]);
+
   const handleImportIgdbGame = React.useCallback(
     async (game: IgdbSearchResult) => {
       const wasAlreadyImported = importedIgdbIds.includes(game.igdb_id);
@@ -981,26 +1106,38 @@ export default function HomeScreen() {
 
     if (lobbyForm.timeMode === 'later') {
       const parsedDate = new Date(lobbyForm.startAt);
-      const parsedEndDate = new Date(lobbyForm.endAt);
-
-      if (Number.isNaN(parsedDate.getTime()) || Number.isNaN(parsedEndDate.getTime())) {
-        setLobbiesError('Pick a valid event date and time.');
+      if (Number.isNaN(parsedDate.getTime())) {
+        setLobbiesError('Pick a valid event start time.');
         setLobbyMessage('');
         return;
       }
 
-      if (parsedEndDate <= parsedDate) {
-        setLobbiesError('Pick an end time after the start time.');
-        setLobbyMessage('');
-        return;
+      if (lobbyForm.hasExplicitEnd) {
+        const parsedEndDate = new Date(lobbyForm.endAt);
+
+        if (Number.isNaN(parsedEndDate.getTime())) {
+          setLobbiesError('Pick a valid event end time.');
+          setLobbyMessage('');
+          return;
+        }
+
+        if (parsedEndDate <= parsedDate) {
+          setLobbiesError('Pick an end time after the start time.');
+          setLobbyMessage('');
+          return;
+        }
+
+        scheduledUntil = parsedEndDate.toISOString();
       }
 
       scheduledFor = parsedDate.toISOString();
-      scheduledUntil = parsedEndDate.toISOString();
     } else {
       const now = new Date();
       scheduledFor = now.toISOString();
-      scheduledUntil = getDefaultEndDate(now).toISOString();
+
+      if (lobbyForm.hasExplicitEnd) {
+        scheduledUntil = getDefaultEndDate(now).toISOString();
+      }
     }
 
     setLobbyBusy(true);
@@ -1037,6 +1174,7 @@ export default function HomeScreen() {
       timeMode: 'later',
       startAt: createDefaultLobbyStartDate().toISOString(),
       endAt: createDefaultLobbyEndDate().toISOString(),
+      hasExplicitEnd: true,
       scheduledFor: '',
       discordGuildId: '',
       visibility: 'private',
@@ -1171,6 +1309,7 @@ export default function HomeScreen() {
     setRescheduleDraft({
       startAt: safeStartDate.toISOString(),
       endAt: endDate.toISOString(),
+      hasExplicitEnd: hasExplicitLobbyEnd(lobby),
     });
     setLobbiesError('');
     setLobbyMessage('');
@@ -1182,7 +1321,7 @@ export default function HomeScreen() {
       return;
     }
 
-    if (rescheduleEndAt <= rescheduleStartAt) {
+    if (rescheduleDraft.hasExplicitEnd && rescheduleEndAt <= rescheduleStartAt) {
       setLobbiesError('Pick an end time after the start time.');
       setLobbyMessage('');
       return;
@@ -1196,7 +1335,7 @@ export default function HomeScreen() {
       .from('lobbies')
       .update({
         scheduled_for: rescheduleStartAt.toISOString(),
-        scheduled_until: rescheduleEndAt.toISOString(),
+        scheduled_until: rescheduleDraft.hasExplicitEnd ? rescheduleEndAt.toISOString() : null,
       })
       .eq('id', lobby.id);
 
@@ -1241,6 +1380,22 @@ export default function HomeScreen() {
       suggestedEndAt = parsedEndAt.toISOString();
     }
 
+    if (responseDraft.decision === 'accepted') {
+      const conflictBlock = getCurrentUserConflictBlock(lobby);
+      if (conflictBlock && acceptConflictAcknowledgementId !== lobby.id) {
+        setLobbiesError('');
+        setLobbyMessage(
+          conflictBlock.busy_status === 'busy'
+            ? `${conflictBlock.game_title ? `${conflictBlock.game_title} is already on your schedule` : 'You already have another game scheduled'} at this time. Tap Save accept again if keeping both is intentional.`
+            : `${conflictBlock.game_title ? `${conflictBlock.game_title} may still be running` : 'You may already be busy'} around this time because that session has no set end. Tap Save accept again if you want to keep both.`,
+        );
+        setAcceptConflictAcknowledgementId(lobby.id);
+        return;
+      }
+    } else if (acceptConflictAcknowledgementId === lobby.id) {
+      setAcceptConflictAcknowledgementId(null);
+    }
+
     setLobbyBusy(true);
     setLobbiesError('');
     setLobbyMessage('');
@@ -1264,6 +1419,7 @@ export default function HomeScreen() {
       delete nextDrafts[lobby.id];
       return nextDrafts;
     });
+    setAcceptConflictAcknowledgementId(null);
     await loadLobbies();
     setLobbyMessage(
       responseDraft.decision === 'accepted'
@@ -1940,6 +2096,7 @@ export default function HomeScreen() {
       importedIgdbIds={importedIgdbIds}
       onChangeGameSearch={setGameSearch}
       onChangeIgdbSearchQuery={setIgdbSearchQuery}
+      onClearIgdbSearchResults={handleClearIgdbSearchResults}
       onImportIgdbGame={handleImportIgdbGame}
       onPrepareLobbyDraft={prepareLobbyDraft}
       onSearchIgdb={handleSearchIgdb}
@@ -1992,6 +2149,7 @@ export default function HomeScreen() {
               }
 
               const responseDraft = getInviteResponseDraft(lobby, membership);
+              const conflictBlock = getCurrentUserConflictBlock(lobby);
               const history = getMemberHistory(lobby.id, membership.profile_id);
               const { chipStyle, textStyle } = getLobbyStatusColors(membership.rsvp_status, true);
               const parsedDraftStartAt = new Date(responseDraft.startAt);
@@ -2009,10 +2167,7 @@ export default function HomeScreen() {
                     <View style={styles.friendMeta}>
                       <Text variant="titleMedium">{lobby.title}</Text>
                       <Text style={styles.friendNote}>
-                        {lobby.games?.title ?? 'Game unavailable'} |{' '}
-                        {lobby.scheduled_for
-                          ? formatEventRange(new Date(lobby.scheduled_for), getLobbyEndDate(lobby))
-                          : 'Starts now'}
+                        {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                       </Text>
                       <Text style={styles.friendNote}>Host: {getLobbyProfileLabel(lobby.host_profile_id)}</Text>
                       {getLobbyDiscordServerLabel(lobby) ? (
@@ -2023,6 +2178,19 @@ export default function HomeScreen() {
                       {formatInviteStatusLabel(membership.rsvp_status)}
                     </Chip>
                   </View>
+                  {conflictBlock ? (
+                    <View style={styles.inviteBusyMeta}>
+                      <Chip
+                        compact
+                        style={conflictBlock.busy_status === 'busy' ? styles.friendBusyChip : styles.friendMaybeBusyChip}
+                        textStyle={
+                          conflictBlock.busy_status === 'busy' ? styles.friendBusyText : styles.friendMaybeBusyText
+                        }>
+                        {getBusyStatusLabel(conflictBlock.busy_status)}
+                      </Chip>
+                      <Text style={styles.friendNote}>{formatBusyBlockNote(conflictBlock)}</Text>
+                    </View>
+                  ) : null}
                   <View style={styles.inviteDecisionRow}>
                     <Chip
                       selected={responseDraft.decision === 'accepted'}
@@ -2187,6 +2355,7 @@ export default function HomeScreen() {
               timeMode={lobbyForm.timeMode}
               startAt={selectedLobbyStartAt}
               endAt={selectedLobbyEndAt}
+              hasExplicitEnd={lobbyForm.hasExplicitEnd}
               onSetNow={() =>
                 setLobbyForm((current) => ({
                   ...current,
@@ -2197,6 +2366,16 @@ export default function HomeScreen() {
                 setLobbyForm((current) => ({
                   ...current,
                   timeMode: 'later',
+                }))
+              }
+              onToggleHasExplicitEnd={(nextValue) =>
+                setLobbyForm((current) => ({
+                  ...current,
+                  hasExplicitEnd: nextValue,
+                  endAt:
+                    nextValue && new Date(current.endAt) <= new Date(current.startAt)
+                      ? getDefaultEndDate(new Date(current.startAt)).toISOString()
+                      : current.endAt,
                 }))
               }
               onStartAtChange={(startAt) => {
@@ -2236,21 +2415,39 @@ export default function HomeScreen() {
             </View>
             {inviteReadyFriends.length > 0 ? (
               <View style={styles.quickPath}>
-                {inviteReadyFriends.map((friend) => (
-                  <Chip
-                    key={friend.id}
-                    selected={selectedLobbyInviteProfileIds.includes(friend.id)}
-                    onPress={() =>
-                      setSelectedLobbyInviteProfileIds((current) =>
-                        current.includes(friend.id)
-                          ? current.filter((profileId) => profileId !== friend.id)
-                          : [...current, friend.id],
-                      )
-                    }
-                    testID={getInviteChipTestId(friend.id)}>
-                    {friend.label}
-                  </Chip>
-                ))}
+                {inviteReadyFriends.map((friend) => {
+                  const busyBlock = getInviteBusyBlock(friend.id);
+
+                  return (
+                    <View key={friend.id} style={styles.inviteTargetGroup}>
+                      <Chip
+                        selected={selectedLobbyInviteProfileIds.includes(friend.id)}
+                        onPress={() =>
+                          setSelectedLobbyInviteProfileIds((current) =>
+                            current.includes(friend.id)
+                              ? current.filter((profileId) => profileId !== friend.id)
+                              : [...current, friend.id],
+                          )
+                        }
+                        testID={getInviteChipTestId(friend.id)}>
+                        {friend.label}
+                      </Chip>
+                      {busyBlock ? (
+                        <View style={styles.inviteBusyMeta}>
+                          <Chip
+                            compact
+                            style={busyBlock.busy_status === 'busy' ? styles.friendBusyChip : styles.friendMaybeBusyChip}
+                            textStyle={
+                              busyBlock.busy_status === 'busy' ? styles.friendBusyText : styles.friendMaybeBusyText
+                            }>
+                            {getBusyStatusLabel(busyBlock.busy_status)}
+                          </Chip>
+                          <Text style={styles.friendNote}>{formatBusyBlockNote(busyBlock)}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  );
+                })}
               </View>
             ) : (
               <Text style={styles.friendNote}>
@@ -2399,8 +2596,13 @@ export default function HomeScreen() {
             </Chip>
             <Chip icon="clock-outline">
               {lobbyForm.timeMode === 'now'
-                ? 'Starts now'
-                : formatEventRange(selectedLobbyStartAt, selectedLobbyEndAt)}
+                ? lobbyForm.hasExplicitEnd
+                  ? 'Starts now'
+                  : 'Starts now · No set end time'
+                : formatLobbyScheduleLabel({
+                    scheduled_for: selectedLobbyStartAt.toISOString(),
+                    scheduled_until: lobbyForm.hasExplicitEnd ? selectedLobbyEndAt.toISOString() : null,
+                  })}
             </Chip>
             <Chip icon="account">
               Host: {profile?.display_name ?? profile?.username ?? 'You'}
@@ -2456,10 +2658,7 @@ export default function HomeScreen() {
                     <View style={styles.friendMeta}>
                       <Text variant="titleMedium">{lobby.title}</Text>
                       <Text style={styles.friendNote}>
-                        {lobby.games?.title ?? 'Game unavailable'} |{' '}
-                        {lobby.scheduled_for
-                          ? formatEventRange(new Date(lobby.scheduled_for), getLobbyEndDate(lobby))
-                          : 'Starts now'}
+                        {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                       </Text>
                       <Text style={styles.friendNote}>{lobby.is_private ? 'Private lobby' : 'Public lobby'}</Text>
                       {getLobbyDiscordServerLabel(lobby) ? (
@@ -2605,15 +2804,12 @@ export default function HomeScreen() {
         <Card.Content>
           <Text variant="titleMedium">Upcoming games</Text>
           <Text style={styles.friendNote}>
-            Edit the start and end time for scheduled lobbies without rebuilding the event.
+            Hosted and accepted lobbies count as booked time. Sessions without a set end show as Maybe busy to friends.
           </Text>
           {lobbies.length === 0 ? (
             <Text style={styles.friendNote}>No scheduled lobbies yet. Create one from the Lobbies tab.</Text>
           ) : null}
           {lobbies.map((lobby) => {
-            const startDate = lobby.scheduled_for ? new Date(lobby.scheduled_for) : createDefaultLobbyStartDate();
-            const safeStartDate = Number.isNaN(startDate.getTime()) ? createDefaultLobbyStartDate() : startDate;
-            const endDate = getLobbyEndDate(lobby);
             const isHost = lobby.host_profile_id === session?.user?.id;
             const currentMembership = getCurrentLobbyMembership(lobby.id);
             const isEditing = isHost && editingLobbyId === lobby.id;
@@ -2627,7 +2823,7 @@ export default function HomeScreen() {
                   <View style={styles.friendMeta}>
                     <Text variant="titleMedium">{lobby.title}</Text>
                     <Text style={styles.friendNote}>
-                      {lobby.games?.title ?? 'Game unavailable'} | {formatEventRange(safeStartDate, endDate)}
+                      {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                     </Text>
                     {getLobbyDiscordServerLabel(lobby) ? (
                       <Text style={styles.friendNote}>{getLobbyDiscordServerLabel(lobby)}</Text>
@@ -2635,6 +2831,11 @@ export default function HomeScreen() {
                     {!isHost && currentMembership ? (
                       <Text style={styles.friendNote}>
                         Your current response: {formatInviteStatusLabel(currentMembership.rsvp_status)}
+                      </Text>
+                    ) : null}
+                    {!hasExplicitLobbyEnd(lobby) ? (
+                      <Text style={styles.friendNote}>
+                        Friends will see this as Maybe busy because the session has no set end time.
                       </Text>
                     ) : null}
                   </View>
@@ -2663,6 +2864,7 @@ export default function HomeScreen() {
                           setRescheduleDraft((current) => ({
                             startAt: setDatePart(rescheduleStartAt, nextDate).toISOString(),
                             endAt: setDatePart(rescheduleEndAt, nextDate).toISOString(),
+                            hasExplicitEnd: current.hasExplicitEnd,
                           }));
                         }
                       }}
@@ -2675,6 +2877,17 @@ export default function HomeScreen() {
                     <TimeRangePicker
                       startAt={rescheduleStartAt}
                       endAt={rescheduleEndAt}
+                      hasExplicitEnd={rescheduleDraft.hasExplicitEnd}
+                      onToggleHasExplicitEnd={(nextValue) =>
+                        setRescheduleDraft((current) => ({
+                          ...current,
+                          hasExplicitEnd: nextValue,
+                          endAt:
+                            nextValue && new Date(current.endAt) <= new Date(current.startAt)
+                              ? getDefaultEndDate(new Date(current.startAt)).toISOString()
+                              : current.endAt,
+                        }))
+                      }
                       onStartAtChange={(startAt) => {
                         const currentDurationMs = Math.max(
                           rescheduleEndAt.getTime() - rescheduleStartAt.getTime(),
@@ -2682,10 +2895,11 @@ export default function HomeScreen() {
                         );
                         const nextEndAt = new Date(startAt.getTime() + currentDurationMs);
 
-                        setRescheduleDraft({
+                        setRescheduleDraft((current) => ({
+                          ...current,
                           startAt: startAt.toISOString(),
                           endAt: nextEndAt.toISOString(),
-                        });
+                        }));
                       }}
                       onEndAtChange={(endAt) =>
                         setRescheduleDraft((current) => ({
@@ -2907,6 +3121,9 @@ export default function HomeScreen() {
               ? `${formatBirthdayLabel(profile.birthday_month, profile.birthday_day)} | ${profile.birthday_visibility === 'public' ? 'Public' : 'Private'}`
               : 'Not set'}
           </Text>
+          <Text style={styles.friendNote}>
+            Busy status: {profile?.busy_visibility === 'private' ? 'Private' : 'Public'}
+          </Text>
           {profile?.discord_user_id && discordGuilds.length === 0 ? (
             <Text style={styles.friendNote}>
               No Discord servers are synced yet. Refresh once to load the servers you can tag during lobby creation.
@@ -3049,6 +3266,23 @@ export default function HomeScreen() {
           />
           <Text style={styles.friendNote}>
             Public birthdays can show up on friend cards and community suggestions.
+          </Text>
+          <SegmentedButtons
+            value={profileForm.busyVisibility}
+            onValueChange={(value) =>
+              setProfileForm((current) => ({
+                ...current,
+                busyVisibility: value as 'private' | 'public',
+              }))
+            }
+            style={styles.segmented}
+            buttons={[
+              { value: 'private', label: 'Busy private' },
+              { value: 'public', label: 'Busy public' },
+            ]}
+          />
+          <Text style={styles.friendNote}>
+            Public busy status lets friends see which game is blocking your time. Private keeps it to a simple busy warning.
           </Text>
           {profileForm.birthday ? (
             <Button
@@ -3312,6 +3546,7 @@ export default function HomeScreen() {
         birthday_month: birthdayMonth,
         birthday_day: birthdayDay,
         birthday_visibility: birthdayMonth && birthdayDay ? profileForm.birthdayVisibility : 'private',
+        busy_visibility: profileForm.busyVisibility,
         onboarding_complete: true,
       })
       .eq('id', session.user.id)
