@@ -259,6 +259,16 @@ const registerMockAccountSettings = (account: MockAccount) => {
     body: [],
   }).as('friendsRequest');
 
+  cy.intercept('GET', '**/rest/v1/friend_groups*', {
+    statusCode: 200,
+    body: [],
+  }).as('friendGroupsRequest');
+
+  cy.intercept('GET', '**/rest/v1/friend_group_members*', {
+    statusCode: 200,
+    body: [],
+  }).as('friendGroupMembersRequest');
+
   cy.intercept('GET', '**/rest/v1/friend_requests*', {
     statusCode: 200,
     body: [],
@@ -396,6 +406,12 @@ describe('account settings', () => {
     signInAndOpenProfile();
 
     cy.contains(/^Discord$/).should('be.visible');
+    cy.contains(/discord linking is optional/i).should('be.visible');
+    cy.contains(/discord is currently used for identity, avatar fallback, and account continuity/i).should(
+      'be.visible',
+    );
+    cy.contains(/it does not sync servers or build a discord-based friend graph/i).should('be.visible');
+    cy.contains(/you can disconnect discord at any time from here/i).should('be.visible');
     cy.get('[data-testid="discord-disconnect-button"]').should('be.visible');
     cy.get('[data-testid="discord-refresh-servers-button"]').should('not.exist');
 
@@ -412,6 +428,9 @@ describe('account settings', () => {
 
     cy.wait('@discordGuildCleanupRequest');
     cy.contains(/^Not connected$/).should('be.visible');
+    cy.contains(
+      /if you connect discord, the app will use your discord identity for sign-in continuity and avatar\/profile matching/i,
+    ).should('be.visible');
     cy.get('[data-testid="discord-connect-button"]').should('be.visible');
   });
 
@@ -423,6 +442,16 @@ describe('account settings', () => {
     cy.location('search').should('eq', '');
     cy.location('href').should('not.include', 'error=');
     cy.contains(/friend management app/i).should('be.visible');
+    cy.contains(
+      /social sign-in providers share identity data needed for authentication and basic profile setup/i,
+    ).should('be.visible');
+    cy.contains(/discord is used for sign-in, linked identity, and avatar\/profile matching/i).should(
+      'be.visible',
+    );
+    cy.contains(/it is not used for server syncing or friend discovery/i).should('be.visible');
+    cy.contains(/fallback: use email\/password if you are testing or not ready to link discord/i).should(
+      'be.visible',
+    );
   });
 });
 

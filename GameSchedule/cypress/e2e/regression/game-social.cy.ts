@@ -618,6 +618,16 @@ const registerMockGameSocial = () => {
     body: [],
   }).as('friendsRequest');
 
+  cy.intercept('GET', '**/rest/v1/friend_groups*', {
+    statusCode: 200,
+    body: [],
+  }).as('friendGroupsRequest');
+
+  cy.intercept('GET', '**/rest/v1/friend_group_members*', {
+    statusCode: 200,
+    body: [],
+  }).as('friendGroupMembersRequest');
+
   cy.intercept('GET', '**/rest/v1/friend_requests*', {
     statusCode: 200,
     body: [],

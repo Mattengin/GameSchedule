@@ -218,6 +218,16 @@ const registerMobileLayoutMocks = (account: MockAccount, profileGames: MockProfi
     body: [],
   }).as('friendsRequest');
 
+  cy.intercept('GET', '**/rest/v1/friend_groups*', {
+    statusCode: 200,
+    body: [],
+  }).as('friendGroupsRequest');
+
+  cy.intercept('GET', '**/rest/v1/friend_group_members*', {
+    statusCode: 200,
+    body: [],
+  }).as('friendGroupMembersRequest');
+
   cy.intercept('GET', '**/rest/v1/friend_requests*', {
     statusCode: 200,
     body: [],
@@ -372,7 +382,7 @@ describe('mobile layout smoke', () => {
     clickSectionNav('roulette');
     cy.contains(/^Game roulette$/).scrollIntoView().should('be.visible');
     cy.get('[data-testid="roulette-scope-button"]').click();
-    cy.contains('Choose games').should('be.visible');
+    cy.contains('Filter games').should('be.visible');
     cy.contains('Clear all').scrollIntoView().click({ force: true });
     cy.get('[data-testid="roulette-scope-game-deep-raid"]').scrollIntoView().click({ force: true });
     cy.contains('Done').click({ force: true });

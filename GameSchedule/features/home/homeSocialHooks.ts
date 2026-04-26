@@ -1,16 +1,15 @@
 import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type {
+  AcceptedFriend,
   FriendCodeLookupResult,
+  FriendGroupMembershipRecord,
+  FriendGroupRecord,
   FriendRequestRecord,
   FriendshipRecord,
   PublicProfileCard,
 } from './homeTypes';
 import { supabase } from '../../services/supabaseClient';
-
-type AcceptedFriend = PublicProfileCard & {
-  is_favorite: boolean;
-};
 
 export function useSocialState({
   session,
@@ -26,6 +25,8 @@ export function useSocialState({
   const [friendMessage, setFriendMessage] = React.useState('');
   const [friendActionBusyId, setFriendActionBusyId] = React.useState<string | null>(null);
   const [friendships, setFriendships] = React.useState<FriendshipRecord[]>([]);
+  const [friendGroups, setFriendGroups] = React.useState<FriendGroupRecord[]>([]);
+  const [friendGroupMemberships, setFriendGroupMemberships] = React.useState<FriendGroupMembershipRecord[]>([]);
   const [friendRequests, setFriendRequests] = React.useState<FriendRequestRecord[]>([]);
   const [friendDirectory, setFriendDirectory] = React.useState<Record<string, PublicProfileCard>>({});
 
@@ -54,6 +55,8 @@ export function useSocialState({
       setFriendCodeLookupLoading(false);
       setFriendCodeLookupResult(null);
       setFriendships([]);
+      setFriendGroups([]);
+      setFriendGroupMemberships([]);
       setFriendRequests([]);
       setFriendDirectory({});
       return;
@@ -63,11 +66,25 @@ export function useSocialState({
       setFriendLoading(true);
       setFriendError('');
 
-      const [{ data: friendshipsData, error: friendshipsError }, { data: requestsData, error: requestsError }] =
+      const [
+        { data: friendshipsData, error: friendshipsError },
+        { data: groupsData, error: groupsError },
+        { data: membershipsData, error: membershipsError },
+        { data: requestsData, error: requestsError },
+      ] =
         await Promise.all([
           supabase
             .from('friends')
             .select('profile_id, friend_profile_id, is_favorite')
+            .eq('profile_id', session.user.id),
+          supabase
+            .from('friend_groups')
+            .select('id, profile_id, name, created_at')
+            .eq('profile_id', session.user.id)
+            .order('created_at', { ascending: true }),
+          supabase
+            .from('friend_group_members')
+            .select('group_id, profile_id, friend_profile_id, created_at')
             .eq('profile_id', session.user.id),
           supabase
             .from('friend_requests')
@@ -76,13 +93,21 @@ export function useSocialState({
             .order('created_at', { ascending: false }),
         ]);
 
-      if (friendshipsError || requestsError) {
-        setFriendError(friendshipsError?.message ?? requestsError?.message ?? 'Unable to load friends.');
+      if (friendshipsError || groupsError || membershipsError || requestsError) {
+        setFriendError(
+          friendshipsError?.message ??
+            groupsError?.message ??
+            membershipsError?.message ??
+            requestsError?.message ??
+            'Unable to load friends.',
+        );
         setFriendLoading(false);
         return;
       }
 
       const nextFriendships = (friendshipsData as FriendshipRecord[] | null) ?? [];
+      const nextFriendGroups = (groupsData as FriendGroupRecord[] | null) ?? [];
+      const nextFriendGroupMemberships = (membershipsData as FriendGroupMembershipRecord[] | null) ?? [];
       const nextRequests = (requestsData as FriendRequestRecord[] | null) ?? [];
       const profileIds = Array.from(
         new Set(
@@ -98,6 +123,8 @@ export function useSocialState({
       );
 
       setFriendships(nextFriendships);
+      setFriendGroups(nextFriendGroups);
+      setFriendGroupMemberships(nextFriendGroupMemberships);
       setFriendRequests(nextRequests);
 
       if (profileIds.length === 0) {
@@ -176,13 +203,23 @@ export function useSocialState({
             return null;
           }
 
+          const linkedGroups = friendGroupMemberships
+            .filter((membership) => membership.friend_profile_id === friendship.friend_profile_id)
+            .map((membership) => friendGroups.find((group) => group.id === membership.group_id) ?? null)
+            .filter((group): group is FriendGroupRecord => Boolean(group))
+            .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
+            .map((group) => ({
+              id: group.id,
+              name: group.name,
+            }));
+
           return {
             ...linkedProfile,
-            is_favorite: friendship.is_favorite,
+            groups: linkedGroups,
           };
         })
         .filter((friend): friend is AcceptedFriend => Boolean(friend)),
-    [friendDirectory, friendships],
+    [friendDirectory, friendGroupMemberships, friendGroups, friendships],
   );
 
   const incomingFriendRequests = React.useMemo(
@@ -247,6 +284,8 @@ export function useSocialState({
     friendCodeLookupResult,
     friendDirectory,
     friendError,
+    friendGroupMemberships,
+    friendGroups,
     friendLoading,
     friendMessage,
     friendRequests,
@@ -260,6 +299,8 @@ export function useSocialState({
     setFriendCodeInput,
     setFriendDirectory,
     setFriendError,
+    setFriendGroupMemberships,
+    setFriendGroups,
     setFriendMessage,
     setFriendRequests,
     setFriendships,

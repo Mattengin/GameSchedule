@@ -38,8 +38,11 @@ import { LobbyGameCarousel } from '../features/home/LobbyGameCarousel';
 import { useSocialState } from '../features/home/homeSocialHooks';
 import { styles } from '../features/home/homeStyles';
 import type {
+  AcceptedFriend,
   AvailabilityWindow,
   BusyBlock,
+  FriendGroupMembershipRecord,
+  FriendGroupRecord,
   FriendRequestRecord,
   GameRecord,
   IgdbSearchResult,
@@ -122,7 +125,16 @@ export default function HomeScreen() {
     confirmPassword: '',
   });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
-  const [friendFilter, setFriendFilter] = React.useState<'all' | 'favorites' | 'pending'>('all');
+  const [friendFilter, setFriendFilter] = React.useState<'all' | 'groups' | 'pending'>('all');
+  const [selectedFriendGroupId, setSelectedFriendGroupId] = React.useState<string | null>(null);
+  const [selectedLobbyFriendGroupId, setSelectedLobbyFriendGroupId] = React.useState<string | null>(null);
+  const [friendGroupsDialogVisible, setFriendGroupsDialogVisible] = React.useState(false);
+  const [friendGroupAssignmentVisible, setFriendGroupAssignmentVisible] = React.useState(false);
+  const [selectedFriendForGroupAssignmentId, setSelectedFriendForGroupAssignmentId] =
+    React.useState<string | null>(null);
+  const [newFriendGroupName, setNewFriendGroupName] = React.useState('');
+  const [editingFriendGroupId, setEditingFriendGroupId] = React.useState<string | null>(null);
+  const [editingFriendGroupName, setEditingFriendGroupName] = React.useState('');
   const [friendCodeRegenerateConfirmVisible, setFriendCodeRegenerateConfirmVisible] =
     React.useState(false);
   const [friendCodeRegenerateCooldownUntil, setFriendCodeRegenerateCooldownUntil] = React.useState<number | null>(
@@ -178,9 +190,10 @@ export default function HomeScreen() {
     friendCodeLookupLoading,
     friendCodeLookupResult,
     friendError,
+    friendGroupMemberships,
+    friendGroups,
     friendLoading,
     friendMessage,
-    friendships,
     getFriendRequestLabel,
     getFriendSearchStatus,
     incomingFriendRequests,
@@ -190,6 +203,8 @@ export default function HomeScreen() {
     setFriendCodeInput,
     setFriendDirectory,
     setFriendError,
+    setFriendGroupMemberships,
+    setFriendGroups,
     setFriendMessage,
     setFriendRequests,
     setFriendships,
@@ -553,17 +568,91 @@ export default function HomeScreen() {
     setReadNotificationIds((current) => Array.from(new Set([...current, ...notificationIds])));
   }, []);
 
+  const sortedFriendGroups = React.useMemo(
+    () =>
+      [...friendGroups].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })),
+    [friendGroups],
+  );
+
+  const selectedFriendForGroupAssignment = React.useMemo(
+    () =>
+      selectedFriendForGroupAssignmentId
+        ? acceptedFriends.find((friend) => friend.id === selectedFriendForGroupAssignmentId) ?? null
+        : null,
+    [acceptedFriends, selectedFriendForGroupAssignmentId],
+  );
+
+  React.useEffect(() => {
+    if (sortedFriendGroups.length === 0) {
+      setSelectedFriendGroupId(null);
+      return;
+    }
+
+    if (friendFilter === 'groups' && !selectedFriendGroupId) {
+      setSelectedFriendGroupId(sortedFriendGroups[0].id);
+      return;
+    }
+
+    if (selectedFriendGroupId && !sortedFriendGroups.some((group) => group.id === selectedFriendGroupId)) {
+      setSelectedFriendGroupId(friendFilter === 'groups' ? sortedFriendGroups[0].id : null);
+    }
+  }, [friendFilter, selectedFriendGroupId, sortedFriendGroups]);
+
+  React.useEffect(() => {
+    if (
+      selectedLobbyFriendGroupId &&
+      !sortedFriendGroups.some((group) => group.id === selectedLobbyFriendGroupId)
+    ) {
+      setSelectedLobbyFriendGroupId(null);
+    }
+  }, [selectedLobbyFriendGroupId, sortedFriendGroups]);
+
+  React.useEffect(() => {
+    if (
+      selectedFriendForGroupAssignment &&
+      !acceptedFriends.some((friend) => friend.id === selectedFriendForGroupAssignment.id)
+    ) {
+      setSelectedFriendForGroupAssignmentId(null);
+      setFriendGroupAssignmentVisible(false);
+    }
+  }, [acceptedFriends, selectedFriendForGroupAssignment]);
+
   const visibleFriends = React.useMemo(() => {
     if (friendFilter === 'pending') {
       return [];
     }
 
-    if (friendFilter === 'favorites') {
-      return acceptedFriends.filter((friend) => friend.is_favorite);
+    if (friendFilter === 'groups') {
+      if (!selectedFriendGroupId) {
+        return [];
+      }
+
+      return acceptedFriends.filter((friend) =>
+        friend.groups.some((group) => group.id === selectedFriendGroupId),
+      );
     }
 
     return acceptedFriends;
-  }, [acceptedFriends, friendFilter]);
+  }, [acceptedFriends, friendFilter, selectedFriendGroupId]);
+
+  const visibleInviteReadyFriends = React.useMemo(() => {
+    if (!selectedLobbyFriendGroupId) {
+      return inviteReadyFriends;
+    }
+
+    return inviteReadyFriends.filter((friend) =>
+      friend.groups.some((group) => group.id === selectedLobbyFriendGroupId),
+    );
+  }, [inviteReadyFriends, selectedLobbyFriendGroupId]);
+
+  React.useEffect(() => {
+    if (!selectedLobbyFriendGroupId) {
+      return;
+    }
+
+    const visibleFriendIds = new Set(visibleInviteReadyFriends.map((friend) => friend.id));
+    setSelectedLobbyInviteProfileIds((current) => current.filter((profileId) => visibleFriendIds.has(profileId)));
+  }, [selectedLobbyFriendGroupId, setSelectedLobbyInviteProfileIds, visibleInviteReadyFriends]);
 
   const lobbyMembersByLobbyId = React.useMemo(
     () =>
@@ -1621,45 +1710,201 @@ export default function HomeScreen() {
     setFriendActionBusyId(null);
   };
 
-  const toggleFriendFavorite = async (friendProfileId: string) => {
+  const handleCreateFriendGroup = React.useCallback(async () => {
     if (!session?.user) {
       return;
     }
 
-    const currentFriendship = friendships.find(
-      (friendship) => friendship.friend_profile_id === friendProfileId,
-    );
-
-    if (!currentFriendship) {
+    const trimmedName = newFriendGroupName.trim();
+    if (!trimmedName) {
+      setFriendError('Enter a group name first.');
       return;
     }
 
-    setFriendActionBusyId(`favorite-friend:${friendProfileId}`);
+    setFriendActionBusyId('create-friend-group');
     setFriendError('');
     setFriendMessage('');
 
-    const nextFavorite = !currentFriendship.is_favorite;
-    const { error } = await supabase
-      .from('friends')
-      .update({ is_favorite: nextFavorite })
-      .eq('profile_id', session.user.id)
-      .eq('friend_profile_id', friendProfileId);
+    const { data, error } = await supabase
+      .from('friend_groups')
+      .insert({
+        profile_id: session.user.id,
+        name: trimmedName,
+      })
+      .select('id, profile_id, name, created_at')
+      .single();
 
     if (error) {
-      setFriendError(error.message);
+      setFriendError(error.code === '23505' ? 'You already have a group with that name.' : error.message);
     } else {
-      setFriendships((current) =>
-        current.map((friendship) =>
-          friendship.friend_profile_id === friendProfileId
-            ? { ...friendship, is_favorite: nextFavorite }
-            : friendship,
-        ),
-      );
-      setFriendMessage(nextFavorite ? 'Friend added to favorites.' : 'Friend removed from favorites.');
+      setFriendGroups((current) => [
+        ...current,
+        data as FriendGroupRecord,
+      ]);
+      setNewFriendGroupName('');
+      setFriendMessage(`${trimmedName} group created.`);
     }
 
     setFriendActionBusyId(null);
-  };
+  }, [newFriendGroupName, session, setFriendActionBusyId, setFriendError, setFriendGroups, setFriendMessage]);
+
+  const handleSaveFriendGroupName = React.useCallback(async () => {
+    if (!session?.user || !editingFriendGroupId) {
+      return;
+    }
+
+    const trimmedName = editingFriendGroupName.trim();
+    if (!trimmedName) {
+      setFriendError('Enter a group name first.');
+      return;
+    }
+
+    setFriendActionBusyId(`rename-friend-group:${editingFriendGroupId}`);
+    setFriendError('');
+    setFriendMessage('');
+
+    const { error } = await supabase
+      .from('friend_groups')
+      .update({ name: trimmedName })
+      .eq('id', editingFriendGroupId)
+      .eq('profile_id', session.user.id);
+
+    if (error) {
+      setFriendError(error.code === '23505' ? 'You already have a group with that name.' : error.message);
+    } else {
+      setFriendGroups((current) =>
+        current.map((group) => (group.id === editingFriendGroupId ? { ...group, name: trimmedName } : group)),
+      );
+      setEditingFriendGroupId(null);
+      setEditingFriendGroupName('');
+      setFriendMessage('Group renamed.');
+    }
+
+    setFriendActionBusyId(null);
+  }, [
+    editingFriendGroupId,
+    editingFriendGroupName,
+    session,
+    setFriendActionBusyId,
+    setFriendError,
+    setFriendGroups,
+    setFriendMessage,
+  ]);
+
+  const handleDeleteFriendGroup = React.useCallback(
+    async (group: FriendGroupRecord) => {
+      if (!session?.user) {
+        return;
+      }
+
+      setFriendActionBusyId(`delete-friend-group:${group.id}`);
+      setFriendError('');
+      setFriendMessage('');
+
+      const { error } = await supabase
+        .from('friend_groups')
+        .delete()
+        .eq('id', group.id)
+        .eq('profile_id', session.user.id);
+
+      if (error) {
+        setFriendError(error.message);
+      } else {
+        setFriendGroups((current) => current.filter((entry) => entry.id !== group.id));
+        setFriendGroupMemberships((current) => current.filter((membership) => membership.group_id !== group.id));
+        if (editingFriendGroupId === group.id) {
+          setEditingFriendGroupId(null);
+          setEditingFriendGroupName('');
+        }
+        setFriendMessage(`${group.name} deleted.`);
+      }
+
+      setFriendActionBusyId(null);
+    },
+    [
+      editingFriendGroupId,
+      session,
+      setFriendActionBusyId,
+      setFriendError,
+      setFriendGroupMemberships,
+      setFriendGroups,
+      setFriendMessage,
+    ],
+  );
+
+  const handleToggleFriendGroupMembership = React.useCallback(
+    async (friend: AcceptedFriend, group: FriendGroupRecord) => {
+      if (!session?.user) {
+        return;
+      }
+
+      const existingMembership = friendGroupMemberships.find(
+        (membership) => membership.group_id === group.id && membership.friend_profile_id === friend.id,
+      );
+
+      setFriendActionBusyId(`friend-group-membership:${group.id}:${friend.id}`);
+      setFriendError('');
+      setFriendMessage('');
+
+      if (existingMembership) {
+        const { error } = await supabase
+          .from('friend_group_members')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('profile_id', session.user.id)
+          .eq('friend_profile_id', friend.id);
+
+        if (error) {
+          setFriendError(error.message);
+        } else {
+          setFriendGroupMemberships((current) =>
+            current.filter(
+              (membership) =>
+                !(
+                  membership.group_id === group.id &&
+                  membership.profile_id === session.user.id &&
+                  membership.friend_profile_id === friend.id
+                ),
+            ),
+          );
+          setFriendMessage(`${friend.display_name ?? friend.username ?? 'Player'} removed from ${group.name}.`);
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('friend_group_members')
+          .insert({
+            group_id: group.id,
+            profile_id: session.user.id,
+            friend_profile_id: friend.id,
+          })
+          .select('group_id, profile_id, friend_profile_id, created_at')
+          .single();
+
+        if (error) {
+          setFriendError(
+            error.code === '23503'
+              ? 'Only accepted friends can be added to a group.'
+              : error.code === '23505'
+                ? 'That friend is already in this group.'
+                : error.message,
+          );
+        } else {
+          setFriendGroupMemberships((current) => [...current, data as FriendGroupMembershipRecord]);
+          setFriendMessage(`${friend.display_name ?? friend.username ?? 'Player'} added to ${group.name}.`);
+        }
+      }
+
+      setFriendActionBusyId(null);
+    },
+    [
+      friendGroupMemberships,
+      session,
+      setFriendActionBusyId,
+      setFriendError,
+      setFriendGroupMemberships,
+      setFriendMessage,
+    ],
+  );
 
   const getInviteChipTestId = React.useCallback(
     (profileId: string) => `lobby-invite-chip-${profileId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
@@ -1856,81 +2101,320 @@ export default function HomeScreen() {
             )}
             <View style={styles.friendMeta}>
               <Text variant="titleMedium">{friendName}</Text>
-              <Text style={styles.friendStatus}>{friend.is_favorite ? 'Favorite friend' : 'Friend'}</Text>
+              <Text style={styles.friendStatus}>Friend</Text>
               <Text style={styles.friendNote}>
                 {friend.username ? `@${friend.username}` : 'Profile still needs a username'}
               </Text>
               {getPublicBirthdayLabel(friend) ? (
                 <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(friend)}</Text>
               ) : null}
+              {friend.groups.length > 0 ? (
+                <View style={styles.friendGroupChipRow}>
+                  {friend.groups.map((group) => (
+                    <Chip key={`${friend.id}-${group.id}`} compact>
+                      {group.name}
+                    </Chip>
+                  ))}
+                </View>
+              ) : null}
             </View>
             <Button
               mode="text"
-              onPress={() => toggleFriendFavorite(friend.id)}
-              loading={friendActionBusyId === `favorite-friend:${friend.id}`}
+              onPress={() => {
+                setSelectedFriendForGroupAssignmentId(friend.id);
+                setFriendGroupAssignmentVisible(true);
+              }}
               disabled={friendActionBusyId !== null}
-              testID={`toggle-friend-favorite-${friend.id}`}>
-              {friend.is_favorite ? 'Unfavorite' : 'Favorite'}
+              testID={`friend-groups-button-${friend.id}`}>
+              Groups
             </Button>
           </Card.Content>
         </Card>
       );
     });
 
-    return (
-      <View style={styles.sectionStack}>
-        <SectionTitle
-          title="Friends & contacts"
-          subtitle="Share codes on purpose, keep requests intentional, and manage your current friends in one place."
-        />
-        {friendError ? (
-          <HelperText type="error" visible>
-            {friendError}
-          </HelperText>
-        ) : null}
-        {friendMessage ? (
-          <HelperText type="info" visible style={styles.successText}>
-            {friendMessage}
-          </HelperText>
-        ) : null}
-
-        {isDesktopWeb ? (
-          <View style={styles.desktopSplitLayout}>
-            <View style={styles.desktopBalancedColumn}>{pendingRequestsCard}</View>
-            <View style={styles.desktopBalancedColumn}>{lookupCard}</View>
-          </View>
-        ) : (
-          <>
-            {pendingRequestsCard}
-            {lookupCard}
-          </>
-        )}
-
-        <SegmentedButtons
-          value={friendFilter}
-          onValueChange={(value) => setFriendFilter(value as 'all' | 'favorites' | 'pending')}
-          style={styles.segmented}
-          buttons={[
-            { value: 'all', label: 'All' },
-            { value: 'favorites', label: 'Favorites' },
-            { value: 'pending', label: 'Pending' },
-          ]}
-        />
-
-        {friendCards.length > 0 ? (
-          <View style={isDesktopWeb ? styles.desktopFriendsGrid : styles.sectionStack}>{friendCards}</View>
-        ) : null}
-        {!friendLoading && visibleFriends.length === 0 && friendFilter !== 'pending' ? (
-          <Card style={styles.panel}>
-            <Card.Content>
-              <Text variant="titleMedium">No friends yet.</Text>
+    const groupFilterCard =
+      friendFilter === 'groups' ? (
+        <Card style={styles.panel}>
+          <Card.Content>
+            <Text variant="titleMedium">Filter by group</Text>
+            {sortedFriendGroups.length > 0 ? (
+              <View style={styles.friendGroupFilterRow}>
+                {sortedFriendGroups.map((group) => (
+                  <Chip
+                    key={group.id}
+                    selected={selectedFriendGroupId === group.id}
+                    onPress={() => setSelectedFriendGroupId(group.id)}
+                    testID={`friend-group-filter-${group.id}`}>
+                    {group.name}
+                  </Chip>
+                ))}
+              </View>
+            ) : (
               <Text style={styles.friendNote}>
-                Enter a friend code from someone you trust to send the first request.
+                Create a group first, then use it here to narrow your friend list.
               </Text>
-            </Card.Content>
-          </Card>
-        ) : null}
-      </View>
+            )}
+          </Card.Content>
+        </Card>
+      ) : null;
+
+    const emptyFriendStateCard = !friendLoading && visibleFriends.length === 0 && friendFilter !== 'pending' ? (
+      <Card style={styles.panel}>
+        <Card.Content>
+          <Text variant="titleMedium">
+            {friendFilter === 'groups' ? 'No friends in this group yet.' : 'No friends yet.'}
+          </Text>
+          <Text style={styles.friendNote}>
+            {friendFilter === 'groups'
+              ? sortedFriendGroups.length === 0
+                ? 'Create a private group, then add accepted friends to it when you want a custom bucket for invites or roulette.'
+                : 'Assign a few accepted friends to this group, and they will show up here.'
+              : 'Enter a friend code from someone you trust to send the first request.'}
+          </Text>
+        </Card.Content>
+      </Card>
+    ) : null;
+
+    return (
+      <>
+        <View style={styles.sectionStack}>
+          <SectionTitle
+            title="Friends & contacts"
+            subtitle="Share codes on purpose, keep requests intentional, and organize current friends into private groups when you want a tighter shortlist."
+          />
+          {friendError ? (
+            <HelperText type="error" visible>
+              {friendError}
+            </HelperText>
+          ) : null}
+          {friendMessage ? (
+            <HelperText type="info" visible style={styles.successText}>
+              {friendMessage}
+            </HelperText>
+          ) : null}
+
+          {isDesktopWeb ? (
+            <View style={styles.desktopSplitLayout}>
+              <View style={styles.desktopBalancedColumn}>{pendingRequestsCard}</View>
+              <View style={styles.desktopBalancedColumn}>{lookupCard}</View>
+            </View>
+          ) : (
+            <>
+              {pendingRequestsCard}
+              {lookupCard}
+            </>
+          )}
+
+          <View style={styles.friendGroupsToolbar}>
+            <Button
+              mode="outlined"
+              icon="account-group"
+              onPress={() => setFriendGroupsDialogVisible(true)}
+              testID="manage-friend-groups-button">
+              Manage groups
+            </Button>
+          </View>
+
+          <SegmentedButtons
+            value={friendFilter}
+            onValueChange={(value) => setFriendFilter(value as 'all' | 'groups' | 'pending')}
+            style={styles.segmented}
+            buttons={[
+              { value: 'all', label: 'All' },
+              { value: 'groups', label: 'Groups' },
+              { value: 'pending', label: 'Pending' },
+            ]}
+          />
+
+          {groupFilterCard}
+
+          {friendCards.length > 0 ? (
+            <View style={isDesktopWeb ? styles.desktopFriendsGrid : styles.sectionStack}>{friendCards}</View>
+          ) : null}
+          {emptyFriendStateCard}
+        </View>
+
+        <Portal>
+          <Dialog
+            visible={friendGroupsDialogVisible}
+            onDismiss={() => {
+              setFriendGroupsDialogVisible(false);
+              setEditingFriendGroupId(null);
+              setEditingFriendGroupName('');
+            }}
+            style={styles.friendGroupsDialog}
+            testID="friend-groups-dialog">
+            <Dialog.Title>Manage groups</Dialog.Title>
+            <Dialog.Content>
+              <Text style={styles.friendNote}>
+                Groups are private buckets you can reuse in Friends, Lobbies, and Roulette.
+              </Text>
+              <View style={styles.friendGroupsInputRow}>
+                <TextInput
+                  mode="outlined"
+                  label="New group"
+                  value={newFriendGroupName}
+                  onChangeText={setNewFriendGroupName}
+                  style={[styles.input, styles.friendGroupsInput]}
+                  testID="create-friend-group-input"
+                />
+                <Button
+                  mode="contained"
+                  onPress={() => {
+                    void handleCreateFriendGroup();
+                  }}
+                  loading={friendActionBusyId === 'create-friend-group'}
+                  disabled={friendActionBusyId !== null}
+                  testID="create-friend-group-button">
+                  Create
+                </Button>
+              </View>
+              <View style={styles.friendGroupsManagerList}>
+                {sortedFriendGroups.length > 0 ? (
+                  sortedFriendGroups.map((group) => {
+                    const memberCount = acceptedFriends.filter((friend) =>
+                      friend.groups.some((friendGroup) => friendGroup.id === group.id),
+                    ).length;
+                    const isEditing = editingFriendGroupId === group.id;
+
+                    return (
+                      <Surface key={group.id} style={styles.friendGroupsManagerRow} elevation={0}>
+                        {isEditing ? (
+                          <View style={styles.friendGroupsRenameRow}>
+                            <TextInput
+                              mode="outlined"
+                              label="Group name"
+                              value={editingFriendGroupName}
+                              onChangeText={setEditingFriendGroupName}
+                              style={[styles.input, styles.friendGroupsInput]}
+                              testID={`edit-friend-group-name-${group.id}`}
+                            />
+                            <View style={styles.friendGroupsRowActions}>
+                              <Button
+                                mode="contained-tonal"
+                                onPress={() => {
+                                  void handleSaveFriendGroupName();
+                                }}
+                                loading={friendActionBusyId === `rename-friend-group:${group.id}`}
+                                disabled={friendActionBusyId !== null}
+                                testID={`save-friend-group-${group.id}`}>
+                                Save
+                              </Button>
+                              <Button
+                                mode="text"
+                                onPress={() => {
+                                  setEditingFriendGroupId(null);
+                                  setEditingFriendGroupName('');
+                                }}>
+                                Cancel
+                              </Button>
+                            </View>
+                          </View>
+                        ) : (
+                          <View style={styles.friendGroupsManagerRowContent}>
+                            <View style={styles.friendMeta}>
+                              <Text variant="titleSmall">{group.name}</Text>
+                              <Text style={styles.friendNote}>
+                                {memberCount} member{memberCount === 1 ? '' : 's'}
+                              </Text>
+                            </View>
+                            <View style={styles.friendGroupsRowActions}>
+                              <IconButton
+                                icon="pencil"
+                                onPress={() => {
+                                  setEditingFriendGroupId(group.id);
+                                  setEditingFriendGroupName(group.name);
+                                }}
+                                testID={`rename-friend-group-${group.id}`}
+                              />
+                              <IconButton
+                                icon="delete-outline"
+                                onPress={() => {
+                                  void handleDeleteFriendGroup(group);
+                                }}
+                                disabled={friendActionBusyId !== null}
+                                testID={`delete-friend-group-${group.id}`}
+                              />
+                            </View>
+                          </View>
+                        )}
+                      </Surface>
+                    );
+                  })
+                ) : (
+                  <Text style={styles.friendNote}>No groups yet. Create the first one when you want a curated list.</Text>
+                )}
+              </View>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button
+                onPress={() => {
+                  setFriendGroupsDialogVisible(false);
+                  setEditingFriendGroupId(null);
+                  setEditingFriendGroupName('');
+                }}>
+                Done
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
+
+          <Dialog
+            visible={friendGroupAssignmentVisible}
+            onDismiss={() => {
+              setFriendGroupAssignmentVisible(false);
+              setSelectedFriendForGroupAssignmentId(null);
+            }}
+            style={styles.friendGroupsDialog}
+            testID="friend-group-assignment-dialog">
+            <Dialog.Title>
+              {selectedFriendForGroupAssignment
+                ? `Groups for ${selectedFriendForGroupAssignment.display_name ?? selectedFriendForGroupAssignment.username ?? 'friend'}`
+                : 'Groups'}
+            </Dialog.Title>
+            <Dialog.Content>
+              {sortedFriendGroups.length > 0 && selectedFriendForGroupAssignment ? (
+                <View style={styles.friendGroupFilterRow}>
+                  {sortedFriendGroups.map((group) => {
+                    const isMember = selectedFriendForGroupAssignment.groups.some(
+                      (friendGroup) => friendGroup.id === group.id,
+                    );
+
+                    return (
+                      <Chip
+                        key={`assignment-${group.id}`}
+                        selected={isMember}
+                        icon={isMember ? 'check-circle' : 'plus-circle-outline'}
+                        onPress={() => {
+                          void handleToggleFriendGroupMembership(selectedFriendForGroupAssignment, group);
+                        }}
+                        disabled={friendActionBusyId !== null}
+                        testID={`friend-group-membership-${group.id}-${selectedFriendForGroupAssignment.id}`}>
+                        {group.name}
+                      </Chip>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.friendNote}>
+                  {sortedFriendGroups.length === 0
+                    ? 'Create a group first, then come back here to assign it.'
+                    : 'Pick a friend first.'}
+                </Text>
+              )}
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button
+                onPress={() => {
+                  setFriendGroupAssignmentVisible(false);
+                  setSelectedFriendForGroupAssignmentId(null);
+                }}>
+                Done
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
+        </Portal>
+      </>
     );
   };
 
@@ -1968,6 +2452,7 @@ export default function HomeScreen() {
   const renderRoulette = () => (
     <RouletteSection
       acceptedFriends={acceptedFriends}
+      friendGroups={sortedFriendGroups}
       libraryGames={libraryGames}
       onOpenGames={() => setSection('games')}
       onUseForLobby={prepareLobbyDraft}
@@ -2388,13 +2873,33 @@ export default function HomeScreen() {
                   Invite people
                 </Text>
                 <Text style={styles.friendNote}>
-                  Invite accepted friends. Their responses will persist in `lobby_members`.
+                  Invite accepted friends, or narrow the list with one of your private groups first.
                 </Text>
               </View>
             </View>
             {inviteReadyFriends.length > 0 ? (
+              <>
+                {sortedFriendGroups.length > 0 ? (
+                  <View style={styles.friendGroupFilterRow}>
+                    <Chip
+                      selected={selectedLobbyFriendGroupId === null}
+                      onPress={() => setSelectedLobbyFriendGroupId(null)}
+                      testID="lobby-group-filter-all">
+                      All friends
+                    </Chip>
+                    {sortedFriendGroups.map((group) => (
+                      <Chip
+                        key={`lobby-group-${group.id}`}
+                        selected={selectedLobbyFriendGroupId === group.id}
+                        onPress={() => setSelectedLobbyFriendGroupId(group.id)}
+                        testID={`lobby-group-filter-${group.id}`}>
+                        {group.name}
+                      </Chip>
+                    ))}
+                  </View>
+                ) : null}
               <View style={styles.quickPath}>
-                {inviteReadyFriends.map((friend) => {
+                {visibleInviteReadyFriends.map((friend) => {
                   const busyBlock = getInviteBusyBlock(friend.id);
 
                   return (
@@ -2428,6 +2933,12 @@ export default function HomeScreen() {
                   );
                 })}
               </View>
+              {selectedLobbyFriendGroupId && visibleInviteReadyFriends.length === 0 ? (
+                <Text style={styles.friendNote}>
+                  No accepted friends are assigned to this group yet. Switch back to all friends or add a few people to it first.
+                </Text>
+              ) : null}
+              </>
             ) : (
               <Text style={styles.friendNote}>
                 Invite availability starts once you have accepted friends in your list.
@@ -3020,7 +3531,7 @@ export default function HomeScreen() {
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Discord</Text>
           <Text style={styles.friendNote}>
-            We are moving toward Discord-first identity so gamers do not have to rebuild a second social graph.
+            Discord linking is optional. If you use it, the app only uses Discord for sign-in continuity and basic profile matching.
           </Text>
           <Chip icon="discord" style={styles.statusChip}>
             {profile?.discord_user_id
@@ -3029,8 +3540,11 @@ export default function HomeScreen() {
           </Chip>
           <Text style={styles.friendNote}>
             {profile?.discord_user_id
-              ? 'Discord is linked for identity, avatar fallback, and account continuity.'
-              : 'Link Discord if you want your app identity to match the account you already use elsewhere.'}
+              ? 'Discord is currently used for identity, avatar fallback, and account continuity. It does not sync servers or build a Discord-based friend graph.'
+              : 'If you connect Discord, the app will use your Discord identity for sign-in continuity and avatar/profile matching. It will not sync servers or build a Discord-based friend graph.'}
+          </Text>
+          <Text style={styles.friendNote}>
+            You can disconnect Discord at any time from here.
           </Text>
           <Text style={styles.friendNote}>
             Birthday: {profile?.birthday_month && profile?.birthday_day
@@ -3750,7 +4264,7 @@ export default function HomeScreen() {
           </Text>
           <Text style={styles.pageSubtitle}>
             {allowSignup
-              ? 'Discord is the fastest way in when you want your app profile to match the identity you already use. Email/password stays as a fallback for testing.'
+              ? 'Social sign-in providers share identity data needed for authentication and basic profile setup. Email/password stays available as a fallback for testing.'
               : 'Public demo access is sign-in only. Use a shared demo account or one we provide for testing.'}
           </Text>
 
@@ -3765,7 +4279,7 @@ export default function HomeScreen() {
             Continue with Discord
           </Button>
           <Text style={styles.friendNote}>
-            Recommended: use Discord first if you want connected identity and avatar fallback without rebuilding your profile by hand.
+            Discord is used for sign-in, linked identity, and avatar/profile matching. It is not used for server syncing or friend discovery.
           </Text>
 
           <Divider style={styles.divider} />

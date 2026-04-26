@@ -37,6 +37,20 @@ type MockFriendship = {
   is_favorite: boolean;
 };
 
+type MockFriendGroup = {
+  id: string;
+  profile_id: string;
+  name: string;
+  created_at: string;
+};
+
+type MockFriendGroupMember = {
+  group_id: string;
+  profile_id: string;
+  friend_profile_id: string;
+  created_at: string;
+};
+
 type MockPublicProfileCard = {
   id: string;
   username: string | null;
@@ -49,6 +63,8 @@ type MockPublicProfileCard = {
 const authStore = new Map<string, MockAccount>();
 const friendRequestsStore: MockFriendRequest[] = [];
 const friendshipsStore: MockFriendship[] = [];
+const friendGroupsStore: MockFriendGroup[] = [];
+const friendGroupMembersStore: MockFriendGroupMember[] = [];
 const friendCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
@@ -315,6 +331,116 @@ const registerMockFriends = (currentUser: MockAccount) => {
     });
   }).as('regenerateFriendCodeRpc');
 
+  cy.intercept('GET', '**/rest/v1/friend_groups*', (req) => {
+    const userId = getQueryValue(req.url, 'profile_id');
+    req.reply({
+      statusCode: 200,
+      body: friendGroupsStore
+        .filter((group) => group.profile_id === userId)
+        .sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    });
+  }).as('friendGroupsRequest');
+
+  cy.intercept('POST', '**/rest/v1/friend_groups*', (req) => {
+    const payload = req.body as Pick<MockFriendGroup, 'profile_id' | 'name'>;
+    const record: MockFriendGroup = {
+      id: `group-${Date.now()}`,
+      profile_id: payload.profile_id,
+      name: payload.name,
+      created_at: new Date().toISOString(),
+    };
+
+    friendGroupsStore.push(record);
+
+    req.reply({
+      statusCode: 201,
+      body: record,
+    });
+  }).as('friendGroupsInsert');
+
+  cy.intercept('PATCH', '**/rest/v1/friend_groups*', (req) => {
+    const groupId = getQueryValue(req.url, 'id');
+    const group = friendGroupsStore.find((entry) => entry.id === groupId);
+
+    if (group) {
+      group.name = (req.body as { name?: string }).name ?? group.name;
+    }
+
+    req.reply({
+      statusCode: 204,
+      body: {},
+    });
+  }).as('friendGroupsUpdate');
+
+  cy.intercept('DELETE', '**/rest/v1/friend_groups*', (req) => {
+    const groupId = getQueryValue(req.url, 'id');
+    const groupIndex = friendGroupsStore.findIndex((entry) => entry.id === groupId);
+
+    if (groupIndex >= 0) {
+      friendGroupsStore.splice(groupIndex, 1);
+    }
+
+    for (let index = friendGroupMembersStore.length - 1; index >= 0; index -= 1) {
+      if (friendGroupMembersStore[index].group_id === groupId) {
+        friendGroupMembersStore.splice(index, 1);
+      }
+    }
+
+    req.reply({
+      statusCode: 204,
+      body: {},
+    });
+  }).as('friendGroupsDelete');
+
+  cy.intercept('GET', '**/rest/v1/friend_group_members*', (req) => {
+    const userId = getQueryValue(req.url, 'profile_id');
+    req.reply({
+      statusCode: 200,
+      body: friendGroupMembersStore
+        .filter((membership) => membership.profile_id === userId)
+        .sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    });
+  }).as('friendGroupMembersRequest');
+
+  cy.intercept('POST', '**/rest/v1/friend_group_members*', (req) => {
+    const payload = req.body as Pick<MockFriendGroupMember, 'group_id' | 'profile_id' | 'friend_profile_id'>;
+    const record: MockFriendGroupMember = {
+      group_id: payload.group_id,
+      profile_id: payload.profile_id,
+      friend_profile_id: payload.friend_profile_id,
+      created_at: new Date().toISOString(),
+    };
+
+    friendGroupMembersStore.push(record);
+
+    req.reply({
+      statusCode: 201,
+      body: record,
+    });
+  }).as('friendGroupMembersInsert');
+
+  cy.intercept('DELETE', '**/rest/v1/friend_group_members*', (req) => {
+    const groupId = getQueryValue(req.url, 'group_id');
+    const profileId = getQueryValue(req.url, 'profile_id');
+    const friendProfileId = getQueryValue(req.url, 'friend_profile_id');
+
+    for (let index = friendGroupMembersStore.length - 1; index >= 0; index -= 1) {
+      const row = friendGroupMembersStore[index];
+      if (
+        row.group_id === groupId &&
+        row.profile_id === profileId &&
+        row.friend_profile_id === friendProfileId
+      ) {
+        friendGroupMembersStore.splice(index, 1);
+      }
+    }
+
+    req.reply({
+      statusCode: 204,
+      body: {},
+    });
+  }).as('friendGroupMembersDelete');
+
   cy.intercept('GET', '**/rest/v1/games*', {
     statusCode: 200,
     body: [],
@@ -478,6 +604,8 @@ describe('friends', () => {
     authStore.clear();
     friendRequestsStore.length = 0;
     friendshipsStore.length = 0;
+    friendGroupsStore.length = 0;
+    friendGroupMembersStore.length = 0;
     currentUser.profile.friend_code = makeFriendCode('curraaaa');
     otherUser.profile.friend_code = makeFriendCode('nova9999');
     authStore.set(currentUser.userId, currentUser);
@@ -673,7 +801,7 @@ describe('friends', () => {
     cy.contains(/^Read$/).should('be.visible');
   });
 
-  it('still lets favorites work for accepted friends', () => {
+  it('lets users create private groups, assign a friend to multiple groups, and filter by one group', () => {
     friendshipsStore.push({
       profile_id: currentUser.userId,
       friend_profile_id: otherUser.userId,
@@ -682,11 +810,68 @@ describe('friends', () => {
 
     signInAndOpenFriends();
 
-    cy.get(`[data-testid="toggle-friend-favorite-${otherUser.userId}"]`).click();
-    cy.contains(/friend added to favorites/i).should('be.visible');
-    cy.contains(/^Favorites$/).click();
+    let leagueGroupId = '';
+    let streamersGroupId = '';
+
+    cy.get('[data-testid="manage-friend-groups-button"]').click();
+    cy.get('[data-testid="create-friend-group-input"]').type('League');
+    cy.get('[data-testid="create-friend-group-button"]').click();
+    cy.wait('@friendGroupsInsert').then(({ response }) => {
+      leagueGroupId = response?.body.id as string;
+    });
+
+    cy.get('[data-testid="create-friend-group-input"]').type('Streamers');
+    cy.get('[data-testid="create-friend-group-button"]').click();
+    cy.wait('@friendGroupsInsert').then(({ response }) => {
+      streamersGroupId = response?.body.id as string;
+    });
+
+    cy.then(() => {
+      cy.get(`[data-testid="rename-friend-group-${leagueGroupId}"]`).click();
+      cy.get(`[data-testid="edit-friend-group-name-${leagueGroupId}"]`).clear().type('League Night');
+      cy.get(`[data-testid="save-friend-group-${leagueGroupId}"]`).click();
+    });
+    cy.wait('@friendGroupsUpdate');
+    cy.contains('League Night').should('be.visible');
+    cy.contains('Streamers').should('be.visible');
+    cy.contains('Done').click();
+
+    cy.get(`[data-testid="friend-groups-button-${otherUser.userId}"]`).click();
+    cy.then(() => {
+      cy.get(`[data-testid="friend-group-membership-${leagueGroupId}-${otherUser.userId}"]`).click();
+    });
+    cy.wait('@friendGroupMembersInsert');
+    cy.then(() => {
+      cy.get(`[data-testid="friend-group-membership-${streamersGroupId}-${otherUser.userId}"]`).click();
+    });
+    cy.wait('@friendGroupMembersInsert');
+    cy.contains('Done').click();
+
+    cy.contains('League Night').should('be.visible');
+    cy.contains('Streamers').should('be.visible');
+    cy.get(`[data-testid="toggle-friend-favorite-${otherUser.userId}"]`).should('not.exist');
+    cy.contains(/favorite friend/i).should('not.exist');
+
+    cy.contains(/^Groups$/).click();
+    cy.then(() => {
+      cy.get(`[data-testid="friend-group-filter-${leagueGroupId}"]`).click();
+    });
     cy.contains('Nova Hex').should('be.visible');
-    cy.contains(/favorite friend/i).should('be.visible');
+
+    cy.get(`[data-testid="friend-groups-button-${otherUser.userId}"]`).click();
+    cy.then(() => {
+      cy.get(`[data-testid="friend-group-membership-${streamersGroupId}-${otherUser.userId}"]`).click();
+    });
+    cy.wait('@friendGroupMembersDelete');
+    cy.contains('Done').click();
+
+    cy.get('[data-testid="manage-friend-groups-button"]').click();
+    cy.then(() => {
+      cy.get(`[data-testid="delete-friend-group-${streamersGroupId}"]`).click();
+    });
+    cy.wait('@friendGroupsDelete');
+    cy.get(`[data-testid="delete-friend-group-${streamersGroupId}"]`).should('not.exist');
+    cy.get(`[data-testid="friend-group-filter-${streamersGroupId}"]`).should('not.exist');
   });
 
   it('supports the friend-code add flow on a latest iPhone-sized viewport', () => {

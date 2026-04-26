@@ -25,7 +25,7 @@ import {
 } from 'react-native-paper';
 import { inboxHistoryPageSize } from './homeConstants';
 import { styles } from './homeStyles';
-import type { GameRecord, IgdbSearchResult, PublicProfileCard } from './homeTypes';
+import type { AcceptedFriend, FriendGroupRecord, GameRecord, IgdbSearchResult, PublicProfileCard } from './homeTypes';
 import { SectionTitle, StatCard, formatReleaseDateLabel } from './homeUtils';
 
 type NotificationItem = {
@@ -517,12 +517,9 @@ export function GamesSection({
   );
 }
 
-type RouletteFriendProfile = PublicProfileCard & {
-  is_favorite: boolean;
-};
-
 type RouletteSectionProps = {
-  acceptedFriends: RouletteFriendProfile[];
+  acceptedFriends: AcceptedFriend[];
+  friendGroups: FriendGroupRecord[];
   libraryGames: GameRecord[];
   onOpenGames: () => void;
   onUseForLobby: (gameId: string, inviteeProfileIds?: string[]) => void;
@@ -639,6 +636,7 @@ function RouletteConfettiBurst({ token }: { token: number }) {
 
 export function RouletteSection({
   acceptedFriends,
+  friendGroups,
   libraryGames,
   onOpenGames,
   onUseForLobby,
@@ -649,6 +647,7 @@ export function RouletteSection({
   const [displayGameId, setDisplayGameId] = React.useState<string | null>(null);
   const [selectedGameId, setSelectedGameId] = React.useState<string | null>(null);
   const [isSpinningGame, setIsSpinningGame] = React.useState(false);
+  const [selectedFriendGroupId, setSelectedFriendGroupId] = React.useState<string | null>(null);
   const [selectedFriendIds, setSelectedFriendIds] = React.useState<string[]>([]);
   const [friendSpinCount, setFriendSpinCount] = React.useState(0);
   const [isPickingFriends, setIsPickingFriends] = React.useState(false);
@@ -656,7 +655,6 @@ export function RouletteSection({
   const [reducedMotionEnabled, setReducedMotionEnabled] = React.useState(false);
   const spinTimeoutsRef = React.useRef<ReturnType<typeof setTimeout>[]>([]);
   const libraryGameIds = React.useMemo(() => libraryGames.map((game) => game.id), [libraryGames]);
-  const maxFriendSpinCount = Math.min(4, acceptedFriends.length);
 
   React.useEffect(() => {
     let isActive = true;
@@ -703,18 +701,42 @@ export function RouletteSection({
   }, [libraryGameIds, scopeTouched]);
 
   React.useEffect(() => {
+    if (!selectedFriendGroupId) {
+      return;
+    }
+
+    if (!friendGroups.some((group) => group.id === selectedFriendGroupId)) {
+      setSelectedFriendGroupId(null);
+    }
+  }, [friendGroups, selectedFriendGroupId]);
+
+  const friendSpinPool = React.useMemo(
+    () =>
+      [...acceptedFriends]
+        .filter((friend) =>
+          selectedFriendGroupId
+            ? friend.groups.some((group) => group.id === selectedFriendGroupId)
+            : true,
+        )
+        .sort((left, right) => getProfileLabel(left).localeCompare(getProfileLabel(right))),
+    [acceptedFriends, selectedFriendGroupId],
+  );
+
+  const maxFriendSpinCount = Math.min(6, friendSpinPool.length);
+
+  React.useEffect(() => {
     setFriendSpinCount((current) => {
       if (maxFriendSpinCount === 0) {
         return 0;
       }
 
       if (current < 1) {
-        return Math.min(maxFriendSpinCount, acceptedFriends.length >= 2 ? 2 : 1);
+        return Math.min(maxFriendSpinCount, friendSpinPool.length >= 2 ? 2 : 1);
       }
 
       return Math.min(current, maxFriendSpinCount);
     });
-  }, [acceptedFriends.length, maxFriendSpinCount]);
+  }, [friendSpinPool.length, maxFriendSpinCount]);
 
   const scopedGames = React.useMemo(
     () => libraryGames.filter((game) => selectedScopeGameIds.includes(game.id)),
@@ -738,21 +760,9 @@ export function RouletteSection({
     return scopedGames[0] ?? libraryGames[0] ?? null;
   }, [displayGameId, libraryGames, scopedGames, selectedGame]);
 
-  const sortedFriends = React.useMemo(
-    () =>
-      [...acceptedFriends].sort((left, right) => {
-        if (left.is_favorite === right.is_favorite) {
-          return getProfileLabel(left).localeCompare(getProfileLabel(right));
-        }
-
-        return left.is_favorite ? -1 : 1;
-      }),
-    [acceptedFriends],
-  );
-
   const selectedFriends = React.useMemo(
-    () => sortedFriends.filter((friend) => selectedFriendIds.includes(friend.id)),
-    [selectedFriendIds, sortedFriends],
+    () => acceptedFriends.filter((friend) => selectedFriendIds.includes(friend.id)),
+    [acceptedFriends, selectedFriendIds],
   );
 
   React.useEffect(() => {
@@ -768,14 +778,14 @@ export function RouletteSection({
   }, [displayGameId, isSpinningGame, selectedScopeGameIds]);
 
   React.useEffect(() => {
-    if (acceptedFriends.length === 0) {
+    if (friendSpinPool.length === 0) {
       setSelectedFriendIds([]);
       return;
     }
 
-    const acceptedFriendIds = new Set(acceptedFriends.map((friend) => friend.id));
+    const acceptedFriendIds = new Set(friendSpinPool.map((friend) => friend.id));
     setSelectedFriendIds((current) => current.filter((friendId) => acceptedFriendIds.has(friendId)));
-  }, [acceptedFriends]);
+  }, [friendSpinPool]);
 
   const handleToggleScopeGame = React.useCallback((gameId: string) => {
     setScopeTouched(true);
@@ -850,7 +860,7 @@ export function RouletteSection({
     }
 
     setIsPickingFriends(true);
-    const randomizedFriends = shuffleItems(sortedFriends)
+    const randomizedFriends = shuffleItems(friendSpinPool)
       .slice(0, friendSpinCount)
       .map((friend) => friend.id);
 
@@ -859,7 +869,7 @@ export function RouletteSection({
       setSelectedFriendIds(randomizedFriends);
       setIsPickingFriends(false);
     }, delayMs);
-  }, [friendSpinCount, isPickingFriends, maxFriendSpinCount, reducedMotionEnabled, sortedFriends]);
+  }, [friendSpinCount, friendSpinPool, isPickingFriends, maxFriendSpinCount, reducedMotionEnabled]);
 
   const handleUseForLobby = React.useCallback(() => {
     if (!selectedGameId) {
@@ -901,7 +911,7 @@ export function RouletteSection({
             : selectedScopeGameIds.length === 0
               ? 'Choose at least one game in scope before you spin.'
               : isSpinningGame
-                ? 'Flickering through your scoped games now. We’ll slow it down and settle on one winner.'
+                ? "Flickering through your scoped games now. We'll slow it down and settle on one winner."
                 : selectedGame
                   ? `${selectedGame.genre} | ${selectedGame.platform} | ${selectedGame.player_count}`
                   : `${selectedScopeGameIds.length} of ${libraryGames.length} library game${libraryGames.length === 1 ? '' : 's'} ready for tonight.`}
@@ -947,7 +957,7 @@ export function RouletteSection({
         </View>
         {selectedScopeGameIds.length === 0 && libraryGames.length > 0 ? (
           <HelperText type="info" visible testID="roulette-scope-empty-state">
-            Clear scopes are allowed, but you’ll need to add at least one game back before Roulette can spin.
+            Clear scopes are allowed, but you'll need to add at least one game back before Roulette can spin.
           </HelperText>
         ) : null}
       </Surface>
@@ -958,9 +968,28 @@ export function RouletteSection({
             title="Optional friend spin"
             subtitle="Pick a few accepted friends at random, then carry those invites into the lobby with the winning game."
           />
+          {friendGroups.length > 0 ? (
+            <View style={styles.friendGroupFilterRow}>
+              <Chip
+                selected={selectedFriendGroupId === null}
+                onPress={() => setSelectedFriendGroupId(null)}
+                testID="roulette-friend-group-all">
+                All friends
+              </Chip>
+              {friendGroups.map((group) => (
+                <Chip
+                  key={`roulette-friend-group-${group.id}`}
+                  selected={selectedFriendGroupId === group.id}
+                  onPress={() => setSelectedFriendGroupId(group.id)}
+                  testID={`roulette-friend-group-${group.id}`}>
+                  {group.name}
+                </Chip>
+              ))}
+            </View>
+          ) : null}
           {maxFriendSpinCount === 0 ? (
             <Text style={styles.friendNote}>
-              Add accepted friends first if you want Roulette to randomize tonight’s invite list too.
+              Add accepted friends first if you want Roulette to randomize tonight's invite list too.
             </Text>
           ) : (
             <>
@@ -997,10 +1026,7 @@ export function RouletteSection({
               {selectedFriends.length > 0 ? (
                 <View style={styles.quickPath}>
                   {selectedFriends.map((friend) => (
-                    <Chip
-                      key={friend.id}
-                      icon={friend.is_favorite ? 'star' : 'account'}
-                      testID={`roulette-selected-friend-${friend.id}`}>
+                    <Chip key={friend.id} icon="account" testID={`roulette-selected-friend-${friend.id}`}>
                       {getProfileLabel(friend)}
                     </Chip>
                   ))}

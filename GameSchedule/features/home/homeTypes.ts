@@ -175,6 +175,26 @@ export type FriendshipRecord = {
   is_favorite: boolean;
 };
 
+export type FriendGroupRecord = {
+  id: string;
+  profile_id: string;
+  name: string;
+  created_at: string;
+};
+
+export type FriendGroupMembershipRecord = {
+  group_id: string;
+  profile_id: string;
+  friend_profile_id: string;
+  created_at: string;
+};
+
+export type FriendGroupSummary = Pick<FriendGroupRecord, 'id' | 'name'>;
+
+export type AcceptedFriend = PublicProfileCard & {
+  groups: FriendGroupSummary[];
+};
+
 export type FriendRequestRecord = {
   id: string;
   requester_profile_id: string;

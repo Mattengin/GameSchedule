@@ -17,8 +17,40 @@ create table if not exists public.friends (
   check (profile_id <> friend_profile_id)
 );
 
+create table if not exists public.friend_groups (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists friend_groups_profile_name_lower_key
+  on public.friend_groups (profile_id, lower(name));
+
+create unique index if not exists friend_groups_id_profile_id_key
+  on public.friend_groups (id, profile_id);
+
+create table if not exists public.friend_group_members (
+  group_id uuid not null,
+  profile_id uuid not null,
+  friend_profile_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (group_id, friend_profile_id),
+  check (profile_id <> friend_profile_id),
+  constraint friend_group_members_group_owner_fkey
+    foreign key (group_id, profile_id)
+    references public.friend_groups(id, profile_id)
+    on delete cascade,
+  constraint friend_group_members_friendship_fkey
+    foreign key (profile_id, friend_profile_id)
+    references public.friends(profile_id, friend_profile_id)
+    on delete cascade
+);
+
 alter table public.friend_requests enable row level security;
 alter table public.friends enable row level security;
+alter table public.friend_groups enable row level security;
+alter table public.friend_group_members enable row level security;
 
 drop policy if exists "Authenticated users can read all profiles" on public.profiles;
 
@@ -72,6 +104,56 @@ on public.friends
 for delete
 to authenticated
 using (auth.uid() = profile_id or auth.uid() = friend_profile_id);
+
+drop policy if exists "Users can read their friend groups" on public.friend_groups;
+create policy "Users can read their friend groups"
+on public.friend_groups
+for select
+to authenticated
+using (auth.uid() = profile_id);
+
+drop policy if exists "Users can create their friend groups" on public.friend_groups;
+create policy "Users can create their friend groups"
+on public.friend_groups
+for insert
+to authenticated
+with check (auth.uid() = profile_id);
+
+drop policy if exists "Users can update their friend groups" on public.friend_groups;
+create policy "Users can update their friend groups"
+on public.friend_groups
+for update
+to authenticated
+using (auth.uid() = profile_id)
+with check (auth.uid() = profile_id);
+
+drop policy if exists "Users can delete their friend groups" on public.friend_groups;
+create policy "Users can delete their friend groups"
+on public.friend_groups
+for delete
+to authenticated
+using (auth.uid() = profile_id);
+
+drop policy if exists "Users can read their friend group memberships" on public.friend_group_members;
+create policy "Users can read their friend group memberships"
+on public.friend_group_members
+for select
+to authenticated
+using (auth.uid() = profile_id);
+
+drop policy if exists "Users can create their friend group memberships" on public.friend_group_members;
+create policy "Users can create their friend group memberships"
+on public.friend_group_members
+for insert
+to authenticated
+with check (auth.uid() = profile_id);
+
+drop policy if exists "Users can delete their friend group memberships" on public.friend_group_members;
+create policy "Users can delete their friend group memberships"
+on public.friend_group_members
+for delete
+to authenticated
+using (auth.uid() = profile_id);
 
 create or replace function public.accept_friend_request(p_request_id uuid)
 returns void

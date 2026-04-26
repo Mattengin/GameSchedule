@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type {
+  AcceptedFriend,
   BusyBlock,
   GameRecord,
   LobbyInviteHistoryRecord,
@@ -17,10 +18,6 @@ import {
   unwrapRelation,
 } from './homeUtils';
 import { supabase } from '../../services/supabaseClient';
-
-type AcceptedFriend = PublicProfileCard & {
-  is_favorite: boolean;
-};
 
 export function useLobbyState({
   acceptedFriends,
@@ -239,18 +236,14 @@ export function useLobbyState({
   const inviteReadyFriends = React.useMemo(() => {
     return [...acceptedFriends]
       .sort((left, right) => {
-        if (left.is_favorite === right.is_favorite) {
-          const leftName = (left.display_name ?? left.username ?? '').toLowerCase();
-          const rightName = (right.display_name ?? right.username ?? '').toLowerCase();
-          return leftName.localeCompare(rightName);
-        }
-
-        return left.is_favorite ? -1 : 1;
+        const leftName = (left.display_name ?? left.username ?? '').toLowerCase();
+        const rightName = (right.display_name ?? right.username ?? '').toLowerCase();
+        return leftName.localeCompare(rightName);
       })
       .map((friend) => ({
         id: friend.id,
         label: friend.display_name ?? friend.username ?? 'Player',
-        is_favorite: friend.is_favorite,
+        groups: friend.groups,
       }));
   }, [acceptedFriends]);
 

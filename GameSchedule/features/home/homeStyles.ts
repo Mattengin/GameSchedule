@@ -9,14 +9,18 @@ export const styles = StyleSheet.create({
     backgroundColor: '#0B1020',
     justifyContent: 'center',
     paddingHorizontal: 18,
+    paddingVertical: 24,
   },
   loginCard: {
+    alignSelf: 'center',
     backgroundColor: '#151A2D',
     borderColor: '#2C3560',
     borderRadius: 28,
     borderWidth: 1,
+    maxWidth: isWeb ? 680 : undefined,
     padding: 22,
     gap: 10,
+    width: '100%',
   },
   loginTitle: {
     color: '#F5F7FF',
@@ -125,6 +129,7 @@ export const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'flex-start',
     gap: 16,
+    justifyContent: 'center',
   },
   desktopFriendTile: {
     flexGrow: 1,
@@ -406,6 +411,63 @@ export const styles = StyleSheet.create({
     color: '#7DFFB3',
     fontSize: 13,
     fontWeight: '700',
+  },
+  friendGroupsToolbar: {
+    alignItems: 'flex-start',
+    marginTop: -2,
+  },
+  friendGroupFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  friendGroupChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  friendGroupsDialog: {
+    alignSelf: 'center',
+    width: isWeb ? 680 : undefined,
+    maxWidth: isWeb ? 680 : undefined,
+  },
+  friendGroupsInputRow: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
+  },
+  friendGroupsInput: {
+    flex: 1,
+    minWidth: isWeb ? 260 : undefined,
+  },
+  friendGroupsManagerList: {
+    gap: 10,
+    marginTop: 16,
+  },
+  friendGroupsManagerRow: {
+    backgroundColor: '#10162A',
+    borderColor: '#28335F',
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 12,
+  },
+  friendGroupsManagerRowContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  friendGroupsRenameRow: {
+    gap: 10,
+  },
+  friendGroupsRowActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
   },
   friendNote: {
     color: '#9AA5CA',

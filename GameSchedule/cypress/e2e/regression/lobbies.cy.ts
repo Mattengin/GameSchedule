@@ -106,6 +106,20 @@ type MockFriendship = {
   is_favorite: boolean;
 };
 
+type MockFriendGroup = {
+  id: string;
+  profile_id: string;
+  name: string;
+  created_at: string;
+};
+
+type MockFriendGroupMember = {
+  group_id: string;
+  profile_id: string;
+  friend_profile_id: string;
+  created_at: string;
+};
+
 type MockDiscordGuild = {
   profile_id: string;
   discord_guild_id: string;
@@ -178,6 +192,8 @@ const lobbyStore: MockLobby[] = [];
 const lobbyMembersStore: MockLobbyMember[] = [];
 const lobbyHistoryStore: MockLobbyHistory[] = [];
 const friendshipStore: MockFriendship[] = [];
+const friendGroupsStore: MockFriendGroup[] = [];
+const friendGroupMembersStore: MockFriendGroupMember[] = [];
 const profileDiscordGuildStore: MockDiscordGuild[] = [];
 const profileGamesStore = new Map<string, string[]>();
 
@@ -403,6 +419,46 @@ const upsertFriendship = (profileId: string, friendProfileId: string, isFavorite
   });
 };
 
+const upsertFriendGroup = (profileId: string, groupId: string, name: string) => {
+  const existingIndex = friendGroupsStore.findIndex((group) => group.id === groupId);
+
+  if (existingIndex >= 0) {
+    friendGroupsStore[existingIndex] = {
+      ...friendGroupsStore[existingIndex],
+      profile_id: profileId,
+      name,
+    };
+    return;
+  }
+
+  friendGroupsStore.push({
+    id: groupId,
+    profile_id: profileId,
+    name,
+    created_at: nextIsoTimestamp(),
+  });
+};
+
+const upsertFriendGroupMember = (profileId: string, groupId: string, friendProfileId: string) => {
+  const existingIndex = friendGroupMembersStore.findIndex(
+    (membership) =>
+      membership.profile_id === profileId &&
+      membership.group_id === groupId &&
+      membership.friend_profile_id === friendProfileId,
+  );
+
+  if (existingIndex >= 0) {
+    return;
+  }
+
+  friendGroupMembersStore.push({
+    group_id: groupId,
+    profile_id: profileId,
+    friend_profile_id: friendProfileId,
+    created_at: nextIsoTimestamp(),
+  });
+};
+
 const replaceDiscordGuildsForProfile = (
   profileId: string,
   guilds: {
@@ -620,6 +676,24 @@ const registerMockLobbies = () => {
       body: friendshipStore.filter((friendship) => friendship.profile_id === currentSessionUserId),
     });
   }).as('friendsRequest');
+
+  cy.intercept('GET', '**/rest/v1/friend_groups*', (req) => {
+    req.reply({
+      statusCode: 200,
+      body: friendGroupsStore
+        .filter((group) => group.profile_id === currentSessionUserId)
+        .sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    });
+  }).as('friendGroupsRequest');
+
+  cy.intercept('GET', '**/rest/v1/friend_group_members*', (req) => {
+    req.reply({
+      statusCode: 200,
+      body: friendGroupMembersStore
+        .filter((membership) => membership.profile_id === currentSessionUserId)
+        .sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    });
+  }).as('friendGroupMembersRequest');
 
   cy.intercept('GET', '**/rest/v1/friend_requests*', {
     statusCode: 200,
@@ -1205,6 +1279,8 @@ describe('lobbies flow', () => {
     lobbyMembersStore.length = 0;
     lobbyHistoryStore.length = 0;
     friendshipStore.length = 0;
+    friendGroupsStore.length = 0;
+    friendGroupMembersStore.length = 0;
     profileDiscordGuildStore.length = 0;
     profileGamesStore.clear();
     currentSessionUserId = null;
@@ -1294,6 +1370,26 @@ describe('lobbies flow', () => {
     cy.contains(/^Portal 2$/).should('exist');
     cy.get('[data-testid="lobby-game-cover-igdb-1234"]').should('exist');
     cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
+  });
+
+  it('filters lobby invite candidates by a private group without making it a hard rule', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    ensureInviteGraphForHost(hostAccount);
+    upsertFriendGroup(hostAccount.userId, 'group-core', 'Core Squad');
+    upsertFriendGroupMember(hostAccount.userId, 'group-core', novaUserId);
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('[data-testid="lobby-group-filter-group-core"]').click();
+
+    cy.contains('Nova Hex').should('be.visible');
+    cy.contains('Pixel Moth').should('not.exist');
+
+    cy.get('[data-testid="lobby-group-filter-all"]').click();
+    cy.contains('Pixel Moth').should('be.visible');
   });
 
   it('opens a quick-add dialog from lobby step 1 and selects the imported game', () => {
