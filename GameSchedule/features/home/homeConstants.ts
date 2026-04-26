@@ -67,10 +67,29 @@ export const fallbackGames: GameRecord[] = [
 ];
 
 export const notifications = [
-  { label: 'Invite', message: 'NovaHex invited you to a Helix Arena lobby.', age: '2m ago' },
-  { label: 'Reminder', message: 'Deep Raid Warmup starts in 1 hour.', age: '58m ago' },
-  { label: 'System', message: 'Friend codes keep discovery intentional and private.', age: 'Today' },
+  {
+    id: 'notification-invite-novahex-helix',
+    label: 'Invite',
+    message: 'NovaHex invited you to a Helix Arena lobby.',
+    age: '2m ago',
+  },
+  {
+    id: 'notification-reminder-deep-raid',
+    label: 'Reminder',
+    message: 'Deep Raid Warmup starts in 1 hour.',
+    age: '58m ago',
+  },
+  {
+    id: 'notification-system-friend-codes',
+    label: 'System',
+    message: 'Friend codes keep discovery intentional and private.',
+    age: 'Today',
+  },
 ];
+
+export const inboxHistoryPageSize = 25;
+export const inboxResolvedRetentionDays = 30;
+export const inboxResolvedMaxItemsPerUser = 200;
 
 export const availabilityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 

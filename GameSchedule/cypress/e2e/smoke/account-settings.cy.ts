@@ -26,11 +26,19 @@ type MockAccount = {
 const authStore = new Map<string, MockAccount>();
 const profileUpdateBodies: Record<string, unknown>[] = [];
 const updateUserBodies: Record<string, unknown>[] = [];
+const friendCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 const makeFriendCode = (seed: string) => {
-  const normalizedSeed = seed.toUpperCase().replace(/[^A-Z0-9]/g, '').padEnd(12, 'X');
-  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}-${normalizedSeed.slice(8, 12)}`;
+  const normalizedSeed = seed
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .split('')
+    .filter((character) => friendCodeAlphabet.includes(character))
+    .join('')
+    .padEnd(8, 'X');
+
+  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}`;
 };
 
 const makeAccount = (email: string, password: string): MockAccount => {

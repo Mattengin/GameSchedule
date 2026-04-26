@@ -49,11 +49,30 @@ type MockPublicProfileCard = {
 const authStore = new Map<string, MockAccount>();
 const friendRequestsStore: MockFriendRequest[] = [];
 const friendshipsStore: MockFriendship[] = [];
+const friendCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 const makeFriendCode = (seed: string) => {
-  const normalizedSeed = seed.toUpperCase().replace(/[^A-Z0-9]/g, '').padEnd(12, 'X');
-  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}-${normalizedSeed.slice(8, 12)}`;
+  const normalizedSeed = seed
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .split('')
+    .filter((character) => friendCodeAlphabet.includes(character))
+    .join('')
+    .padEnd(8, 'X');
+
+  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}`;
+};
+
+const normalizeFriendCodeInput = (value: string) => {
+  const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const codeBody = cleaned.startsWith('GS') ? cleaned.slice(2) : cleaned;
+
+  if (codeBody.length !== 8 || !codeBody.split('').every((character) => friendCodeAlphabet.includes(character))) {
+    return '';
+  }
+
+  return `GS-${codeBody.slice(0, 4)}-${codeBody.slice(4, 8)}`;
 };
 
 const makeAccount = (
@@ -145,6 +164,30 @@ const getQueryValue = (url: string, key: string) => {
   return match ? decodeURIComponent(match[1]) : '';
 };
 
+const assertNoHorizontalOverflow = () => {
+  cy.window().then((win) => {
+    const viewportWidth = win.innerWidth;
+
+    cy.document().then((doc) => {
+      expect(doc.documentElement.scrollWidth, 'page should not overflow horizontally').to.be.lte(
+        viewportWidth + 1,
+      );
+    });
+  });
+};
+
+const clickSectionNav = (section: string) => {
+  cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
+    $button[0].scrollIntoView({
+      behavior: 'instant',
+      block: 'nearest',
+      inline: 'center',
+    });
+  });
+
+  cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });
+};
+
 const registerMockFriends = (currentUser: MockAccount) => {
   cy.intercept('POST', '**/auth/v1/signup', (req) => {
     authStore.set(currentUser.userId, currentUser);
@@ -221,12 +264,14 @@ const registerMockFriends = (currentUser: MockAccount) => {
   }).as('visibleProfilesRpc');
 
   cy.intercept('POST', '**/rest/v1/rpc/lookup_friend_code', (req) => {
-    const requestedCode = ((req.body as { p_code?: string } | null)?.p_code ?? '').trim().toLowerCase();
+    const requestedCode = normalizeFriendCodeInput(
+      ((req.body as { p_code?: string } | null)?.p_code ?? '').trim(),
+    );
 
     const matchedProfile =
       Array.from(authStore.values())
         .map((account) => account.profile)
-        .find((profile) => profile.friend_code.toLowerCase() === requestedCode) ?? null;
+        .find((profile) => profile.friend_code === requestedCode) ?? null;
 
     const alreadyFriends = matchedProfile
       ? friendshipsStore.some(
@@ -380,7 +425,8 @@ const registerMockFriends = (currentUser: MockAccount) => {
 
   cy.intercept('POST', '**/rest/v1/rpc/accept_friend_request', (req) => {
     const requestId = (req.body as { p_request_id: string }).p_request_id;
-    const requestRecord = friendRequestsStore.find((request) => request.id === requestId);
+    const requestIndex = friendRequestsStore.findIndex((request) => request.id === requestId);
+    const requestRecord = requestIndex >= 0 ? friendRequestsStore[requestIndex] : null;
 
     if (!requestRecord) {
       req.reply({
@@ -390,7 +436,7 @@ const registerMockFriends = (currentUser: MockAccount) => {
       return;
     }
 
-    requestRecord.status = 'accepted';
+    friendRequestsStore.splice(requestIndex, 1);
 
     friendshipsStore.push(
       {
@@ -418,22 +464,22 @@ describe('friends', () => {
     'Password123!',
     'Current User',
     'currentuser',
-    'curraaaa1111',
+    'curraaaa',
   );
   const otherUser = makeAccount(
     `other-${Date.now()}@example.com`,
     'Password123!',
     'Nova Hex',
     'novahex',
-    'nova9999aaaa',
+    'nova9999',
   );
 
   beforeEach(() => {
     authStore.clear();
     friendRequestsStore.length = 0;
     friendshipsStore.length = 0;
-    currentUser.profile.friend_code = makeFriendCode('curraaaa1111');
-    otherUser.profile.friend_code = makeFriendCode('nova9999aaaa');
+    currentUser.profile.friend_code = makeFriendCode('curraaaa');
+    otherUser.profile.friend_code = makeFriendCode('nova9999');
     authStore.set(currentUser.userId, currentUser);
     authStore.set(otherUser.userId, otherUser);
     registerMockFriends(currentUser);
@@ -463,25 +509,69 @@ describe('friends', () => {
     cy.contains(/your current friend code will stop working/i).should('be.visible');
     cy.get('[data-testid="confirm-regenerate-friend-code-button"]').click();
     cy.wait('@regenerateFriendCodeRpc');
-    cy.get('[data-testid="friend-code-value"]').should('not.contain', 'GS-CURR-AAAA-1111');
+    cy.get('[data-testid="friend-code-value"]').should('not.contain', 'GS-CURR-AAAA');
     cy.contains(/friend code regenerated/i).should('be.visible');
     cy.contains(/you can regenerate again in/i).should('be.visible');
     cy.get('[data-testid="regenerate-friend-code-button"]').should('be.disabled');
   });
 
-  it('looks up a player by friend code and sends a friend request', () => {
+  it('looks up a player by lowercase dashless friend code and sends a friend request', () => {
     signInAndOpenFriends();
 
-    cy.get('[data-testid="friend-code-input"]').type(otherUser.profile.friend_code);
+    const typedCode = otherUser.profile.friend_code.toLowerCase().replace(/-/g, '');
+
+    cy.get('[data-testid="friend-code-input"]').type(typedCode);
     cy.get('[data-testid="friend-code-lookup-button"]').click();
-    cy.wait('@lookupFriendCodeRpc');
+    cy.wait('@lookupFriendCodeRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_code).to.equal(typedCode.toUpperCase());
+      });
 
     cy.contains('Nova Hex').should('be.visible');
     cy.get(`[data-testid="friend-code-request-${otherUser.userId}"]`).click();
+    cy.wait('@friendRequestInsert')
+      .its('request.body')
+      .should((body) => {
+        expect(body.requester_profile_id).to.equal(currentUser.userId);
+        expect(body.addressee_profile_id).to.equal(otherUser.userId);
+        expect(body.status).to.equal('pending');
+      });
 
     cy.contains(/friend request sent to nova hex/i).should('be.visible');
     cy.contains('Pending requests').should('be.visible');
     cy.contains('Request sent').should('be.visible');
+  });
+
+  it('returns only public profile card fields for visible pending-request profiles', () => {
+    otherUser.profile.birthday_month = 4;
+    otherUser.profile.birthday_day = 23;
+    otherUser.profile.birthday_visibility = 'public';
+    friendRequestsStore.push({
+      id: 'request-visible-1',
+      requester_profile_id: otherUser.userId,
+      addressee_profile_id: currentUser.userId,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    });
+
+    signInAndOpenFriends();
+
+    cy.wait('@visibleProfilesRpc')
+      .its('response.body.0')
+      .should((profileCard) => {
+        expect(profileCard).to.deep.equal({
+          id: otherUser.userId,
+          username: 'novahex',
+          avatar_url: null,
+          display_name: 'Nova Hex',
+          birthday_label: 'April 23',
+          is_discord_connected: true,
+        });
+        expect(profileCard).to.not.have.property('friend_code');
+        expect(profileCard).to.not.have.property('discord_user_id');
+        expect(profileCard).to.not.have.property('birthday_month');
+      });
   });
 
   it('shows a friendly not-found state for unknown or no-longer-available codes', () => {
@@ -504,6 +594,32 @@ describe('friends', () => {
     cy.contains(/no player found for that friend code/i).should('be.visible');
   });
 
+  it('excludes self and pending requests from friend code lookup results', () => {
+    friendRequestsStore.push({
+      id: 'request-pending-lookup-1',
+      requester_profile_id: currentUser.userId,
+      addressee_profile_id: otherUser.userId,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    });
+
+    signInAndOpenFriends();
+
+    cy.get('[data-testid="friend-code-input"]').type(currentUser.profile.friend_code.toLowerCase());
+    cy.get('[data-testid="friend-code-lookup-button"]').click();
+    cy.wait('@lookupFriendCodeRpc')
+      .its('response.body')
+      .should('deep.equal', []);
+    cy.contains(/no player found for that friend code/i).should('be.visible');
+
+    cy.get('[data-testid="friend-code-input"]').clear().type(otherUser.profile.friend_code.replace(/-/g, ''));
+    cy.get('[data-testid="friend-code-lookup-button"]').click();
+    cy.wait('@lookupFriendCodeRpc')
+      .its('response.body')
+      .should('deep.equal', []);
+    cy.contains(/no player found for that friend code/i).should('be.visible');
+  });
+
   it('accepts an incoming request and shows the friend in the list', () => {
     friendRequestsStore.push({
       id: 'request-incoming-1',
@@ -518,10 +634,43 @@ describe('friends', () => {
     cy.contains('Pending requests').should('be.visible');
     cy.contains('Nova Hex').should('be.visible');
     cy.get('[data-testid="accept-friend-request-request-incoming-1"]').click();
+    cy.wait('@acceptFriendRequestRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_request_id).to.equal('request-incoming-1');
+      });
 
     cy.contains(/nova hex is now in your friends list/i).should('be.visible');
+    cy.contains('Pending requests').should('not.exist');
     cy.contains(/^Friend$/).should('be.visible');
     cy.contains('@novahex').should('be.visible');
+  });
+
+  it('shows an inbox badge when there are pending incoming requests', () => {
+    friendRequestsStore.push({
+      id: 'request-incoming-badge-1',
+      requester_profile_id: otherUser.userId,
+      addressee_profile_id: currentUser.userId,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    });
+
+    cy.viewport(390, 844);
+    cy.visit('/');
+    cy.signupUi(currentUser.email, currentUser.password);
+
+    cy.get('[data-testid="section-nav-badge-inbox"]').should('contain', '1');
+    clickSectionNav('inbox');
+    cy.contains(/1 friend request is waiting on you/i).should('be.visible');
+    cy.contains(/recent history is capped to the newest 25 items by default/i).should('be.visible');
+    cy.contains(/^Unread$/).should('be.visible');
+    cy.get('[data-testid="open-friends-from-inbox-button"]').click();
+    cy.contains('Pending requests').should('be.visible');
+    cy.get('[data-testid="accept-friend-request-request-incoming-badge-1"]').click();
+    cy.wait('@acceptFriendRequestRpc');
+    clickSectionNav('inbox');
+    cy.get('[data-testid="pending-friend-request-notification"]').should('not.exist');
+    cy.contains(/^Read$/).should('be.visible');
   });
 
   it('still lets favorites work for accepted friends', () => {
@@ -538,6 +687,35 @@ describe('friends', () => {
     cy.contains(/^Favorites$/).click();
     cy.contains('Nova Hex').should('be.visible');
     cy.contains(/favorite friend/i).should('be.visible');
+  });
+
+  it('supports the friend-code add flow on a latest iPhone-sized viewport', () => {
+    cy.viewport(390, 844);
+    cy.visit('/');
+    cy.signupUi(currentUser.email, currentUser.password);
+
+    clickSectionNav('friends');
+    cy.contains(/share codes on purpose/i).should('be.visible');
+    const typedCode = otherUser.profile.friend_code.toLowerCase().replace(/-/g, '');
+    cy.get('[data-testid="friend-code-input"]').type(typedCode);
+    cy.get('[data-testid="friend-code-lookup-button"]').click();
+    cy.wait('@lookupFriendCodeRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_code).to.equal(typedCode.toUpperCase());
+      });
+
+    cy.get(`[data-testid="friend-code-request-${otherUser.userId}"]`).click();
+    cy.wait('@friendRequestInsert')
+      .its('request.body')
+      .should((body) => {
+        expect(body.requester_profile_id).to.equal(currentUser.userId);
+        expect(body.addressee_profile_id).to.equal(otherUser.userId);
+        expect(body.status).to.equal('pending');
+      });
+
+    cy.contains(/friend request sent to nova hex/i).should('be.visible');
+    assertNoHorizontalOverflow();
   });
 });
 

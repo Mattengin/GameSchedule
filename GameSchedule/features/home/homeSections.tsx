@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { Image, Platform, View, useWindowDimensions } from 'react-native';
 import { Button, Card, Chip, Divider, HelperText, IconButton, ProgressBar, Searchbar, Surface, Text } from 'react-native-paper';
+import { inboxHistoryPageSize } from './homeConstants';
 import { styles } from './homeStyles';
 import type { GameRecord, IgdbSearchResult, RouletteEntry } from './homeTypes';
 import { SectionTitle, StatCard, formatReleaseDateLabel } from './homeUtils';
 
 type NotificationItem = {
+  id: string;
   age: string;
   label: string;
   message: string;
@@ -576,26 +578,141 @@ export function RouletteSection({
 
 type InboxSectionProps = {
   notifications: NotificationItem[];
+  pendingFriendRequestCount?: number;
+  pendingLobbyInviteCount?: number;
+  readNotificationIds?: string[];
+  onMarkNotificationsRead?: (notificationIds: string[]) => void;
+  onOpenFriends?: () => void;
 };
 
-export function InboxSection({ notifications }: InboxSectionProps) {
+export function InboxSection({
+  notifications,
+  pendingFriendRequestCount = 0,
+  pendingLobbyInviteCount = 0,
+  readNotificationIds = [],
+  onMarkNotificationsRead,
+  onOpenFriends,
+}: InboxSectionProps) {
+  const [visibleNotificationCount, setVisibleNotificationCount] = React.useState(inboxHistoryPageSize);
+  const readNotificationIdSet = React.useMemo(() => new Set(readNotificationIds), [readNotificationIds]);
+  const orderedNotifications = React.useMemo(() => {
+    const unreadNotifications = notifications.filter((item) => !readNotificationIdSet.has(item.id));
+    const readNotifications = notifications.filter((item) => readNotificationIdSet.has(item.id));
+    return [...unreadNotifications, ...readNotifications];
+  }, [notifications, readNotificationIdSet]);
+  const visibleNotifications = React.useMemo(
+    () => orderedNotifications.slice(0, visibleNotificationCount),
+    [orderedNotifications, visibleNotificationCount],
+  );
+  const hasMoreNotifications = orderedNotifications.length > visibleNotificationCount;
+  const visibleUnreadNotificationIdsRef = React.useRef<string[]>([]);
+
+  React.useEffect(() => {
+    setVisibleNotificationCount(inboxHistoryPageSize);
+  }, [notifications.length]);
+
+  React.useEffect(() => {
+    visibleUnreadNotificationIdsRef.current = visibleNotifications
+      .filter((item) => !readNotificationIdSet.has(item.id))
+      .map((item) => item.id);
+  }, [readNotificationIdSet, visibleNotifications]);
+
+  React.useEffect(() => {
+    return () => {
+      const visibleUnreadNotificationIds = visibleUnreadNotificationIdsRef.current;
+      if (visibleUnreadNotificationIds.length > 0) {
+        onMarkNotificationsRead?.(visibleUnreadNotificationIds);
+      }
+    };
+  }, [onMarkNotificationsRead]);
+
   return (
     <>
       <SectionTitle
         title="Notifications"
-        subtitle="Invites, reminders, and system states with placeholder messaging."
+        subtitle="Invites, reminders, and quick attention checks in one place."
       />
-      {notifications.map((item) => (
-        <Card key={`${item.label}-${item.message}`} style={styles.panel}>
+      <Text style={styles.friendNote}>
+        Pending items stay visible until you respond. Recent history is capped to the newest {inboxHistoryPageSize}{' '}
+        items by default.
+      </Text>
+      {pendingFriendRequestCount > 0 ? (
+        <Card style={styles.panel} onPress={onOpenFriends} testID="pending-friend-request-notification">
           <Card.Content>
             <View style={styles.notificationHeader}>
-              <Chip compact>{item.label}</Chip>
+              <Chip compact icon="account-arrow-right">
+                Friend requests
+              </Chip>
+              <Text style={styles.friendNote}>Pending</Text>
+            </View>
+            <Text variant="bodyLarge">
+              {pendingFriendRequestCount} friend request{pendingFriendRequestCount === 1 ? '' : 's'}{' '}
+              {pendingFriendRequestCount === 1 ? 'is' : 'are'} waiting on you.
+            </Text>
+            <View style={styles.cardActions}>
+              <Button mode="contained-tonal" onPress={onOpenFriends} testID="open-friends-from-inbox-button">
+                Open Friends
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+      ) : null}
+      {pendingLobbyInviteCount > 0 ? (
+        <Card style={styles.panel}>
+          <Card.Content>
+            <View style={styles.notificationHeader}>
+              <Chip compact icon="bell-badge-outline">
+                Needs attention
+              </Chip>
+              <Text style={styles.friendNote}>Right now</Text>
+            </View>
+            <Text variant="bodyLarge">
+              {pendingLobbyInviteCount} lobby invite{pendingLobbyInviteCount === 1 ? '' : 's'}{' '}
+              {pendingLobbyInviteCount === 1 ? 'is' : 'are'} waiting on you.
+            </Text>
+          </Card.Content>
+        </Card>
+      ) : null}
+      {visibleNotifications.map((item) => (
+        <Card key={item.id} style={styles.panel}>
+          <Card.Content>
+            <View style={styles.notificationHeader}>
+              <View style={styles.notificationMetaRow}>
+                <Chip compact>{item.label}</Chip>
+                <Chip compact style={styles.notificationStatusChip}>
+                  {readNotificationIdSet.has(item.id) ? 'Read' : 'Unread'}
+                </Chip>
+              </View>
               <Text style={styles.friendNote}>{item.age}</Text>
             </View>
             <Text variant="bodyLarge">{item.message}</Text>
           </Card.Content>
         </Card>
       ))}
+      {hasMoreNotifications ? (
+        <Card style={styles.panel}>
+          <Card.Content>
+            <Text style={styles.friendNote}>
+              Showing the newest {visibleNotificationCount} updates. Load more if you need older history.
+            </Text>
+            <View style={styles.cardActions}>
+              <Button
+                mode="outlined"
+                onPress={() => {
+                  const visibleUnreadNotificationIds = visibleUnreadNotificationIdsRef.current;
+                  if (visibleUnreadNotificationIds.length > 0) {
+                    onMarkNotificationsRead?.(visibleUnreadNotificationIds);
+                  }
+
+                  setVisibleNotificationCount((current) => current + inboxHistoryPageSize);
+                }}
+                testID="inbox-load-more-button">
+                Load {inboxHistoryPageSize} more
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+      ) : null}
       <Card style={styles.panel}>
         <Card.Content>
           <Text variant="titleMedium">Lobby chat preview</Text>

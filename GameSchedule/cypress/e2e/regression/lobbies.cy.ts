@@ -191,11 +191,19 @@ const hostEmail = `cypress-lobbies-${Date.now()}@example.com`;
 const hostPassword = `Password123!${Date.now()}`;
 const novaEmail = 'nova.hex@example.com';
 const pixelEmail = 'pixel.moth@example.com';
+const friendCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 const makeFriendCode = (seed: string) => {
-  const normalizedSeed = seed.toUpperCase().replace(/[^A-Z0-9]/g, '').padEnd(12, 'X');
-  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}-${normalizedSeed.slice(8, 12)}`;
+  const normalizedSeed = seed
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .split('')
+    .filter((character) => friendCodeAlphabet.includes(character))
+    .join('')
+    .padEnd(8, 'X');
+
+  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}`;
 };
 
 const nextIsoTimestamp = () => {
@@ -335,6 +343,18 @@ const getQueryValues = (url: string, key: string) => {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
+};
+
+const assertNoHorizontalOverflow = () => {
+  cy.window().then((win) => {
+    const viewportWidth = win.innerWidth;
+
+    cy.document().then((doc) => {
+      expect(doc.documentElement.scrollWidth, 'page should not overflow horizontally').to.be.lte(
+        viewportWidth + 1,
+      );
+    });
+  });
 };
 
 const getAccountById = (profileId: string) => authStore.get(profileId) ?? null;
@@ -1115,6 +1135,18 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
   };
 
+  const clickSectionNav = (section: string) => {
+    cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
+      $button[0].scrollIntoView({
+        behavior: 'instant',
+        block: 'nearest',
+        inline: 'center',
+      });
+    });
+
+    cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });
+  };
+
   const logout = () => {
     cy.get('[data-testid="logout-button"]').click();
     cy.get('[data-testid="auth-email-input"]').should('exist');
@@ -1264,6 +1296,25 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
   });
 
+  it('opens a quick-add dialog from lobby step 1 and selects the imported game', () => {
+    signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('[data-testid="open-lobby-add-game-dialog-button"]').click();
+    cy.get('[data-testid="lobby-add-game-search-input"]').should('be.visible').type('portal');
+    cy.get('[data-testid="lobby-add-game-search-button"]').click();
+
+    cy.wait('@igdbSearchFunction');
+    cy.get('[data-testid="lobby-add-game-result-1234"]').should('be.visible');
+    cy.get('[data-testid="lobby-add-game-import-button-1234"]').click();
+
+    cy.wait('@igdbImportFunction');
+    cy.get('[data-testid="lobby-add-game-search-input"]').should('not.exist');
+    cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Portal 2 Lobby');
+    cy.get('[data-testid="lobby-game-cover-igdb-1234"]').should('exist');
+    cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
+  });
+
   it('pages lobby game selection in sets of four on desktop web', () => {
     games.push(
       {
@@ -1332,6 +1383,30 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="lobby-game-carousel-status"]').should('contain', '1-4 of 8');
   });
 
+  it('creates a lobby from the mobile carousel without horizontal overflow', () => {
+    cy.viewport(390, 844);
+    signUpHost();
+
+    clickSectionNav('lobbies');
+    cy.contains('Select a game').scrollIntoView();
+    cy.get('[data-testid="lobby-game-carousel"]').should('be.visible');
+    cy.get('[data-testid="lobby-game-carousel-scroll"]').should('exist');
+    cy.get('[data-testid="lobby-game-cover-placeholder-helix-arena"]').should('exist');
+    cy.get('[data-testid="lobby-game-helix-arena"]').click({ force: true });
+    cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Helix Arena Lobby');
+    cy.get('[data-testid="create-lobby-button"]').click();
+
+    cy.wait('@createLobbyRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_game_id).to.equal('helix-arena');
+        expect(body.p_is_private).to.equal(true);
+      });
+
+    cy.contains(/lobby created/i).should('exist');
+    assertNoHorizontalOverflow();
+  });
+
   it('shows Busy for invitees with overlapping fixed-time commitments and still lets the host invite them', () => {
     const hostAccount = ensureAccount(hostEmail, hostPassword, {
       displayName: 'Host Player',
@@ -1391,6 +1466,126 @@ describe('lobbies flow', () => {
     cy.contains('Invite people').scrollIntoView();
     cy.contains(/^Maybe busy$/).should('exist');
     cy.contains(/Playing Wild Rally Online around/i).should('exist');
+  });
+
+  it('derives busy blocks from accepted membership, redacts private titles, and sends the expected RPC window', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    const { novaAccount, pixelAccount } = ensureInviteGraphForHost(hostAccount);
+    novaAccount.profile.busy_visibility = 'private';
+    const eveningWindow = createEveningWindow();
+
+    const acceptedLobby = buildLobby(
+      pixelAccount,
+      'deep-raid',
+      'Deep Raid Run',
+      eveningWindow.startAt,
+      eveningWindow.endAt,
+      true,
+    );
+    lobbyStore.unshift(acceptedLobby);
+    lobbyMembersStore.push(
+      {
+        lobby_id: acceptedLobby.id,
+        profile_id: pixelAccount.userId,
+        role: 'host',
+        rsvp_status: 'accepted',
+        response_comment: null,
+        suggested_start_at: null,
+        suggested_end_at: null,
+        responded_at: nextIsoTimestamp(),
+        invited_at: nextIsoTimestamp(),
+        created_at: nextIsoTimestamp(),
+      },
+      {
+        lobby_id: acceptedLobby.id,
+        profile_id: novaAccount.userId,
+        role: 'member',
+        rsvp_status: 'accepted',
+        response_comment: null,
+        suggested_start_at: null,
+        suggested_end_at: null,
+        responded_at: nextIsoTimestamp(),
+        invited_at: nextIsoTimestamp(),
+        created_at: nextIsoTimestamp(),
+      },
+    );
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.wait('@busyBlocksRpc')
+      .should(({ request, response }) => {
+        expect(request.body.p_profile_ids).to.include(novaUserId);
+        expect(request.body.p_window_start).to.be.a('string');
+        expect(request.body.p_window_end).to.be.a('string');
+
+        const novaBlock = response?.body.find((block: { profile_id: string }) => block.profile_id === novaUserId);
+        expect(novaBlock).to.include({
+          profile_id: novaUserId,
+          busy_status: 'busy',
+          game_title: null,
+        });
+      });
+
+    cy.contains('Invite people').scrollIntoView();
+    cy.contains(/^Busy$/).should('exist');
+    cy.contains(/Already booked at this time/i).should('exist');
+  });
+
+  it('does not derive busy blocks from pending invite membership', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    const { novaAccount, pixelAccount } = ensureInviteGraphForHost(hostAccount);
+    const eveningWindow = createEveningWindow();
+
+    const pendingLobby = buildLobby(
+      pixelAccount,
+      'deep-raid',
+      'Pending Invite Only',
+      eveningWindow.startAt,
+      eveningWindow.endAt,
+      true,
+    );
+    lobbyStore.unshift(pendingLobby);
+    lobbyMembersStore.push(
+      {
+        lobby_id: pendingLobby.id,
+        profile_id: pixelAccount.userId,
+        role: 'host',
+        rsvp_status: 'accepted',
+        response_comment: null,
+        suggested_start_at: null,
+        suggested_end_at: null,
+        responded_at: nextIsoTimestamp(),
+        invited_at: nextIsoTimestamp(),
+        created_at: nextIsoTimestamp(),
+      },
+      {
+        lobby_id: pendingLobby.id,
+        profile_id: novaAccount.userId,
+        role: 'member',
+        rsvp_status: 'pending',
+        response_comment: null,
+        suggested_start_at: null,
+        suggested_end_at: null,
+        responded_at: null,
+        invited_at: nextIsoTimestamp(),
+        created_at: nextIsoTimestamp(),
+      },
+    );
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.wait('@busyBlocksRpc')
+      .its('response.body')
+      .should((blocks) => {
+        const novaBlocks = blocks.filter((block: { profile_id: string }) => block.profile_id === novaUserId);
+        expect(novaBlocks).to.have.length(0);
+      });
   });
 
   it('creates real invite rows and shows invitees grouped under hosted lobbies', () => {

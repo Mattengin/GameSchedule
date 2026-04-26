@@ -166,12 +166,21 @@ export const styles = StyleSheet.create({
     gap: 8,
     paddingRight: 12,
   },
+  mobileSectionNavButtonWrap: {
+    position: 'relative',
+  },
   mobileSectionNavButton: {
     borderRadius: 999,
   },
   mobileSectionNavButtonContent: {
     minHeight: 36,
     paddingHorizontal: 4,
+  },
+  mobileSectionNavBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -4,
+    backgroundColor: '#FF6B81',
   },
   heroCard: {
     backgroundColor: '#161B31',
@@ -970,6 +979,31 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 10,
+  },
+  notificationMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  notificationStatusChip: {
+    backgroundColor: '#252B49',
+  },
+  lobbyAddGameDialog: {
+    alignSelf: 'center',
+  },
+  lobbyAddGameDialogScrollShell: {
+    borderTopColor: '#2A3150',
+    borderTopWidth: 1,
+    paddingHorizontal: 0,
+  },
+  lobbyAddGameDialogScrollArea: {
+    maxHeight: 420,
+  },
+  lobbyAddGameDialogContent: {
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingBottom: 12,
   },
   divider: {
     backgroundColor: '#2A3150',

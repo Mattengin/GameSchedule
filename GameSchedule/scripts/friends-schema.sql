@@ -99,15 +99,14 @@ begin
     raise exception 'Only the addressee can accept this request';
   end if;
 
-  update public.friend_requests
-  set status = 'accepted'
-  where id = p_request_id;
-
   insert into public.friends (profile_id, friend_profile_id, is_favorite)
   values
     (request_row.requester_profile_id, request_row.addressee_profile_id, false),
     (request_row.addressee_profile_id, request_row.requester_profile_id, false)
   on conflict (profile_id, friend_profile_id) do nothing;
+
+  delete from public.friend_requests
+  where id = p_request_id;
 end;
 $$;
 

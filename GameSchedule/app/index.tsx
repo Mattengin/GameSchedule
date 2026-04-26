@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
   Avatar,
+  Badge,
   Button,
   Card,
   Chip,
@@ -87,6 +88,7 @@ registerTranslation('en', en);
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
+  const lobbyAddGameDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
   const friendCodeRegenerateCooldownMs = 15_000;
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [session, setSession] = React.useState<Session | null>(null);
@@ -128,6 +130,9 @@ export default function HomeScreen() {
   );
   const [friendCodeRegenerateCooldownSeconds, setFriendCodeRegenerateCooldownSeconds] = React.useState(0);
   const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
+  const [lobbyAddGameDialogVisible, setLobbyAddGameDialogVisible] = React.useState(false);
+  const [readNotificationIds, setReadNotificationIds] = React.useState<string[]>([]);
+  const inboxReadStorageKey = session?.user?.id ? `gameschedule-inbox-read:${session.user.id}` : null;
 
   const {
     favoriteGameIds,
@@ -498,6 +503,59 @@ export default function HomeScreen() {
     setAccountEmail(session?.user.email ?? '');
   }, [session]);
 
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') {
+      if (!session?.user) {
+        setReadNotificationIds([]);
+      }
+      return;
+    }
+
+    const storage = globalThis.window?.localStorage;
+    if (!storage || !inboxReadStorageKey) {
+      setReadNotificationIds([]);
+      return;
+    }
+
+    const savedValue = storage.getItem(inboxReadStorageKey);
+    if (!savedValue) {
+      setReadNotificationIds([]);
+      return;
+    }
+
+    try {
+      const parsedValue = JSON.parse(savedValue);
+      if (Array.isArray(parsedValue)) {
+        setReadNotificationIds(parsedValue.filter((value): value is string => typeof value === 'string'));
+      } else {
+        setReadNotificationIds([]);
+      }
+    } catch {
+      setReadNotificationIds([]);
+    }
+  }, [inboxReadStorageKey, session]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    const storage = globalThis.window?.localStorage;
+    if (!storage || !inboxReadStorageKey) {
+      return;
+    }
+
+    storage.setItem(inboxReadStorageKey, JSON.stringify(readNotificationIds));
+  }, [inboxReadStorageKey, readNotificationIds]);
+
+  const markNotificationsRead = React.useCallback((notificationIds: string[]) => {
+    if (notificationIds.length === 0) {
+      return;
+    }
+
+    setReadNotificationIds((current) => Array.from(new Set([...current, ...notificationIds])));
+  }, []);
+
   const visibleFriends = React.useMemo(() => {
     if (friendFilter === 'pending') {
       return [];
@@ -575,6 +633,18 @@ export default function HomeScreen() {
     (lobbyId: string) => lobbyMembers.find((member) => member.lobby_id === lobbyId && member.profile_id === session?.user?.id) ?? null,
     [lobbyMembers, session],
   );
+
+  const pendingLobbyInviteCount = React.useMemo(
+    () =>
+      incomingLobbies.filter((lobby) => {
+        const membership = getCurrentLobbyMembership(lobby.id);
+        return membership?.rsvp_status === 'pending';
+      }).length,
+    [getCurrentLobbyMembership, incomingLobbies],
+  );
+
+  const pendingInboxCount = incomingFriendRequests.length + pendingLobbyInviteCount;
+  const pendingInboxCountLabel = pendingInboxCount > 99 ? '99+' : String(pendingInboxCount);
 
   const prioritizeBusyBlock = React.useCallback(
     (left: BusyBlock, right: BusyBlock) => {
@@ -930,8 +1000,10 @@ export default function HomeScreen() {
               ? `${importedGame.title} import refreshed.`
               : `${importedGame.title} imported into your library.`,
         );
+        return importedGame;
       } catch (error) {
         setIgdbError(error instanceof Error ? error.message : 'Unable to import that game right now.');
+        return null;
       } finally {
         setIgdbImportBusyId(null);
       }
@@ -948,6 +1020,22 @@ export default function HomeScreen() {
       setSection,
       setSelectedLobbyGameId,
     ],
+  );
+
+  const handleCloseLobbyAddGameDialog = React.useCallback(() => {
+    setLobbyAddGameDialogVisible(false);
+    setIgdbSearchQuery('');
+    handleClearIgdbSearchResults();
+  }, [handleClearIgdbSearchResults, setIgdbSearchQuery]);
+
+  const handleImportLobbyGameFromDialog = React.useCallback(
+    async (game: IgdbSearchResult) => {
+      const importedGame = await handleImportIgdbGame(game, { autoSelectForLobby: true });
+      if (importedGame) {
+        handleCloseLobbyAddGameDialog();
+      }
+    },
+    [handleCloseLobbyAddGameDialog, handleImportIgdbGame],
   );
 
   const handleRequestRemoveGameFromLibrary = React.useCallback((game: GameRecord) => {
@@ -1510,6 +1598,7 @@ export default function HomeScreen() {
         ];
       });
       setFriendMessage(`${getFriendRequestLabel(request)} is now in your friends list.`);
+      setFriendRequests((current) => current.filter((entry) => entry.id !== request.id));
     } else {
       const { error: updateError } = await supabase
         .from('friend_requests')
@@ -1523,18 +1612,17 @@ export default function HomeScreen() {
       }
 
       setFriendMessage(`Friend request from ${getFriendRequestLabel(request)} declined.`);
+      setFriendRequests((current) =>
+        current.map((entry) =>
+          entry.id === request.id
+            ? {
+                ...entry,
+                status: decision,
+              }
+            : entry,
+        ),
+      );
     }
-
-    setFriendRequests((current) =>
-      current.map((entry) =>
-        entry.id === request.id
-          ? {
-              ...entry,
-              status: decision,
-            }
-          : entry,
-      ),
-    );
     setFriendActionBusyId(null);
   };
 
@@ -2086,8 +2174,18 @@ export default function HomeScreen() {
                 <Text variant="titleSmall" style={styles.eventTimeTitle}>
                   Select a game
                 </Text>
-                <Text style={styles.friendNote}>Choose from the library or start from a game card.</Text>
+                <Text style={styles.friendNote}>Choose from the library, or add one here without leaving Lobbies.</Text>
               </View>
+              {libraryGames.length > 0 ? (
+                <Button
+                  mode="outlined"
+                  compact
+                  icon="plus"
+                  onPress={() => setLobbyAddGameDialogVisible(true)}
+                  testID="open-lobby-add-game-dialog-button">
+                  Add game
+                </Button>
+              ) : null}
             </View>
             {gamesLoading && libraryGames.length === 0 ? (
               <Surface style={styles.inputShell} elevation={0}>
@@ -2105,6 +2203,15 @@ export default function HomeScreen() {
                 <Text style={styles.friendNote}>
                   If this is your first one, import a game here and we&apos;ll use it right away.
                 </Text>
+                <View style={styles.cardActions}>
+                  <Button
+                    mode="contained-tonal"
+                    icon="plus"
+                    onPress={() => setLobbyAddGameDialogVisible(true)}
+                    testID="open-empty-library-lobby-add-game-dialog-button">
+                    Add a game
+                  </Button>
+                </View>
                 <View style={styles.igdbSearchRow}>
                   <Searchbar
                     placeholder="Search IGDB by game title"
@@ -2824,7 +2931,19 @@ export default function HomeScreen() {
     </>
   );
 
-  const renderInbox = () => <InboxSection notifications={notifications} />;
+  const renderInbox = () => (
+    <InboxSection
+      notifications={notifications}
+      pendingFriendRequestCount={incomingFriendRequests.length}
+      pendingLobbyInviteCount={pendingLobbyInviteCount}
+      readNotificationIds={readNotificationIds}
+      onMarkNotificationsRead={markNotificationsRead}
+      onOpenFriends={() => {
+        setFriendFilter('pending');
+        setSection('friends');
+      }}
+    />
+  );
 
   const renderProfile = () => {
     const resolvedAvatarUrl = resolveAvatarUrl(profile);
@@ -3615,13 +3734,27 @@ export default function HomeScreen() {
     profile: renderProfile(),
   }[section];
 
+  const desktopSectionButtons = React.useMemo(
+    () =>
+      sections.map((item) =>
+        item.value === 'inbox'
+          ? {
+              ...item,
+              icon: pendingInboxCount > 0 ? 'bell-badge-outline' : undefined,
+              label: pendingInboxCount > 0 ? `Inbox (${pendingInboxCountLabel})` : item.label,
+            }
+          : item,
+      ),
+    [pendingInboxCount, pendingInboxCountLabel],
+  );
+
   const sectionNavigation = isDesktopWeb ? (
     <SegmentedButtons
       value={section}
       onValueChange={(value) => setSection(value as SectionKey)}
       density="small"
       style={styles.segmented}
-      buttons={sections}
+      buttons={desktopSectionButtons}
     />
   ) : (
     <ScrollView
@@ -3629,18 +3762,28 @@ export default function HomeScreen() {
       showsHorizontalScrollIndicator={false}
       style={styles.mobileSectionNavScroller}
       contentContainerStyle={styles.mobileSectionNavRow}>
-      {sections.map((item) => (
-        <Button
-          key={item.value}
-          mode={section === item.value ? 'contained-tonal' : 'outlined'}
-          compact
-          onPress={() => setSection(item.value)}
-          style={styles.mobileSectionNavButton}
-          contentStyle={styles.mobileSectionNavButtonContent}
-          testID={`section-nav-${item.value}`}>
-          {item.label}
-        </Button>
-      ))}
+      {sections.map((item) => {
+        const showInboxBadge = item.value === 'inbox' && pendingInboxCount > 0;
+
+        return (
+          <View key={item.value} style={styles.mobileSectionNavButtonWrap}>
+            <Button
+              mode={section === item.value ? 'contained-tonal' : 'outlined'}
+              compact
+              onPress={() => setSection(item.value)}
+              style={styles.mobileSectionNavButton}
+              contentStyle={styles.mobileSectionNavButtonContent}
+              testID={`section-nav-${item.value}`}>
+              {item.label}
+            </Button>
+            {showInboxBadge ? (
+              <Badge style={styles.mobileSectionNavBadge} size={20} testID="section-nav-badge-inbox">
+                {pendingInboxCountLabel}
+              </Badge>
+            ) : null}
+          </View>
+        );
+      })}
     </ScrollView>
   );
 
@@ -3870,6 +4013,144 @@ export default function HomeScreen() {
       </ScrollView>
 
       <Portal>
+        <Dialog
+          visible={lobbyAddGameDialogVisible}
+          style={[
+            styles.lobbyAddGameDialog,
+            lobbyAddGameDialogWidth > 0 ? { width: lobbyAddGameDialogWidth } : null,
+          ]}
+          onDismiss={() => {
+            if (igdbImportBusyId !== null) {
+              return;
+            }
+
+            handleCloseLobbyAddGameDialog();
+          }}>
+          <Dialog.Title>Add a game for this lobby</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              Search IGDB, add the game to your library, and we&apos;ll select it for this lobby right away.
+            </Text>
+          </Dialog.Content>
+          <Dialog.ScrollArea style={styles.lobbyAddGameDialogScrollShell}>
+            <ScrollView style={styles.lobbyAddGameDialogScrollArea} contentContainerStyle={styles.lobbyAddGameDialogContent}>
+              <View style={styles.igdbSearchStack}>
+                <Searchbar
+                  placeholder="Search IGDB by game title"
+                  value={igdbSearchQuery}
+                  onChangeText={setIgdbSearchQuery}
+                  onSubmitEditing={() => {
+                    handleSearchIgdb();
+                  }}
+                  style={styles.igdbSearchInputStacked}
+                  testID="lobby-add-game-search-input"
+                />
+                <Button
+                  mode="contained"
+                  onPress={handleSearchIgdb}
+                  loading={igdbSearchLoading}
+                  disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0 || igdbSearchQuery.trim().length < 2}
+                  style={styles.igdbSearchButton}
+                  testID="lobby-add-game-search-button">
+                  {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
+                </Button>
+              </View>
+              {igdbSearchQuery.trim().length > 0 && igdbSearchQuery.trim().length < 2 ? (
+                <HelperText type="info" visible testID="lobby-add-game-short-query-helper">
+                  Start with at least 2 letters so we can find the right game.
+                </HelperText>
+              ) : null}
+              {igdbError ? (
+                <HelperText type="error" visible>
+                  {igdbError}
+                </HelperText>
+              ) : null}
+              {igdbSearchCooldownSeconds > 0 ? (
+                <HelperText type="info" visible>
+                  Give IGDB a second between searches so we stay under the live API rate limit.
+                </HelperText>
+              ) : null}
+              {igdbMessage ? (
+                <HelperText type="info" visible style={styles.successText}>
+                  {igdbMessage}
+                </HelperText>
+              ) : null}
+              {!igdbSearchLoading && (igdbResults.length > 0 || Boolean(igdbError) || Boolean(igdbMessage) || igdbHasSearched) ? (
+                <View style={styles.igdbDismissRow}>
+                  <IconButton
+                    icon="close"
+                    size={18}
+                    onPress={handleClearIgdbSearchResults}
+                    accessibilityLabel="Close IGDB search results"
+                    testID="lobby-add-game-close-results-button"
+                  />
+                </View>
+              ) : null}
+              {igdbResults.map((game) => {
+                const alreadyImported = importedIgdbIds.includes(game.igdb_id);
+
+                return (
+                  <Card
+                    key={`lobby-add-game-${game.igdb_id}`}
+                    style={styles.igdbResultCard}
+                    testID={`lobby-add-game-result-${game.igdb_id}`}>
+                    <Card.Content>
+                      <View style={styles.igdbResultRow}>
+                        {game.cover_url ? (
+                          <Avatar.Image size={52} source={{ uri: game.cover_url }} style={styles.avatar} />
+                        ) : (
+                          <Surface style={styles.igdbCoverPlaceholder} elevation={0}>
+                            <Text style={styles.igdbCoverPlaceholderText}>IGDB</Text>
+                          </Surface>
+                        )}
+                        <View style={styles.igdbResultMeta}>
+                          <Text variant="titleMedium">{game.title}</Text>
+                          <Text style={styles.friendNote}>
+                            {game.genre} | {game.platform}
+                          </Text>
+                          <View style={styles.quickPath}>
+                            <Chip compact>{game.player_count}</Chip>
+                            {game.release_date ? (
+                              <Chip compact>Released {formatReleaseDateLabel(game.release_date)}</Chip>
+                            ) : null}
+                            {typeof game.rating === 'number' ? <Chip compact>Rating {Math.round(game.rating)}</Chip> : null}
+                            {alreadyImported ? <Chip compact icon="check-circle">Imported</Chip> : null}
+                          </View>
+                          <Text style={styles.listText}>{game.description ?? 'No IGDB summary available yet.'}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.cardActions}>
+                        <Button
+                          mode="contained-tonal"
+                          onPress={() => {
+                            void handleImportLobbyGameFromDialog(game);
+                          }}
+                          loading={igdbImportBusyId === game.igdb_id}
+                          disabled={igdbImportBusyId !== null}
+                          testID={`lobby-add-game-import-button-${game.igdb_id}`}>
+                          {alreadyImported ? 'Refresh and use' : 'Add and use'}
+                        </Button>
+                      </View>
+                    </Card.Content>
+                  </Card>
+                );
+              })}
+              {igdbHasSearched && !igdbSearchLoading && !igdbError && igdbResults.length === 0 ? (
+                <Text style={styles.friendNote} testID="lobby-add-game-empty-state">
+                  No IGDB games matched that search yet.
+                </Text>
+              ) : null}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button
+              onPress={handleCloseLobbyAddGameDialog}
+              disabled={igdbImportBusyId !== null}
+              testID="close-lobby-add-game-dialog-button">
+              Close
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
         <Dialog
           visible={friendCodeRegenerateConfirmVisible}
           onDismiss={() => {
