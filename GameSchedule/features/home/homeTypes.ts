@@ -90,11 +90,6 @@ export type IgdbSearchResult = {
   source: 'igdb';
 };
 
-export type RouletteEntry = {
-  game_id: string;
-  games: Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform'> | null;
-};
-
 export type LobbyRecord = {
   id: string;
   title: string;

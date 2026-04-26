@@ -1315,6 +1315,28 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
   });
 
+  it('hands a roulette winner and random accepted friends into the lobby draft', () => {
+    signUpHost();
+
+    cy.contains(/^Roulette$/).click({ force: true });
+    cy.get('[data-testid="roulette-scope-button"]').click();
+    cy.contains('Clear all').click();
+    cy.get('[data-testid="roulette-scope-game-deep-raid"]').click();
+    cy.contains('Done').click();
+
+    cy.get('[data-testid="roulette-friend-count-2"]').click();
+    cy.get('[data-testid="roulette-spin-friends-button"]').click();
+    cy.contains('Nova Hex').should('be.visible');
+    cy.contains('Pixel Moth').should('be.visible');
+
+    cy.get('[data-testid="roulette-spin-button"]').click();
+    cy.get('[data-testid="roulette-current-game-title"]').should('contain.text', 'Deep Raid');
+    cy.get('[data-testid="roulette-use-for-lobby-button"]').scrollIntoView().click({ force: true });
+
+    cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Deep Raid Lobby');
+    cy.contains(/2 invites ready/i).scrollIntoView().should('exist');
+  });
+
   it('pages lobby game selection in sets of four on desktop web', () => {
     games.push(
       {

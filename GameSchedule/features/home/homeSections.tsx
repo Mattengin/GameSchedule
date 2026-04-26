@@ -1,9 +1,31 @@
 import * as React from 'react';
-import { Image, Platform, View, useWindowDimensions } from 'react-native';
-import { Button, Card, Chip, Divider, HelperText, IconButton, ProgressBar, Searchbar, Surface, Text } from 'react-native-paper';
+import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
+  Image,
+  Platform,
+  ScrollView,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import {
+  Button,
+  Card,
+  Chip,
+  Dialog,
+  Divider,
+  HelperText,
+  IconButton,
+  ProgressBar,
+  Portal,
+  Searchbar,
+  Surface,
+  Text,
+} from 'react-native-paper';
 import { inboxHistoryPageSize } from './homeConstants';
 import { styles } from './homeStyles';
-import type { GameRecord, IgdbSearchResult, RouletteEntry } from './homeTypes';
+import type { GameRecord, IgdbSearchResult, PublicProfileCard } from './homeTypes';
 import { SectionTitle, StatCard, formatReleaseDateLabel } from './homeUtils';
 
 type NotificationItem = {
@@ -18,8 +40,6 @@ type DashboardSectionProps = {
   lobbiesCount: number;
   onManageFriends: () => void;
   onStartGroupSpin: () => void;
-  roulettePoolCount: number;
-  roulettePoolGames: Pick<GameRecord, 'id' | 'title'>[];
 };
 
 export function DashboardSection({
@@ -27,8 +47,6 @@ export function DashboardSection({
   lobbiesCount,
   onManageFriends,
   onStartGroupSpin,
-  roulettePoolCount,
-  roulettePoolGames,
 }: DashboardSectionProps) {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
@@ -60,7 +78,7 @@ export function DashboardSection({
     <View style={[styles.statRow, isDesktopWeb ? styles.desktopStatsStack : null]}>
       <StatCard label="Friends online" value="12" accent="#7C5CFF" />
       <StatCard label="Open lobbies" value={String(lobbiesCount)} accent="#33D1FF" />
-      <StatCard label="Pool games" value={String(roulettePoolCount)} accent="#7DFFB3" />
+      <StatCard label="Library games" value={String(libraryGames.length)} accent="#7DFFB3" />
     </View>
   );
 
@@ -73,7 +91,7 @@ export function DashboardSection({
         />
         <Text style={styles.listText}>1. Create username and avatar</Text>
         <Text style={styles.listText}>2. Connect Discord or Twitch later</Text>
-        <Text style={styles.listText}>3. Pick favorite games for your pool</Text>
+        <Text style={styles.listText}>3. Build your game library</Text>
         <Text style={styles.listText}>4. Set weekly availability</Text>
         <ProgressBar progress={0.75} color="#7C5CFF" style={styles.progress} />
       </Card.Content>
@@ -119,18 +137,18 @@ export function DashboardSection({
     </Card>
   );
 
-  const roulettePoolCard = (
+  const rouletteReadyCard = (
     <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
       <Card.Content>
         <SectionTitle
-          title="Your roulette pool"
-          subtitle="Personal pool saved in Supabase and ready for the next spin."
+          title="Roulette is library-first now"
+          subtitle="Spin your whole library by default, then narrow it down only when tonight needs a smaller shortlist."
         />
         <View style={styles.quickPath}>
-          {roulettePoolGames.length > 0 ? (
-            roulettePoolGames.slice(0, 4).map((game) => <Chip key={game.id}>{game.title}</Chip>)
+          {libraryGames.length > 0 ? (
+            libraryGames.slice(0, 4).map((game) => <Chip key={game.id}>{game.title}</Chip>)
           ) : (
-            <Text style={styles.friendNote}>Add games from the library to start building your pool.</Text>
+            <Text style={styles.friendNote}>Add games to your library to unlock roulette picks right away.</Text>
           )}
         </View>
       </Card.Content>
@@ -155,14 +173,14 @@ export function DashboardSection({
           {setupWizardCard}
           {quickRouteCard}
           {featuredGamesCard}
-          {roulettePoolCard}
+          {rouletteReadyCard}
         </View>
       ) : (
         <>
           {setupWizardCard}
           {quickRouteCard}
           {featuredGamesCard}
-          {roulettePoolCard}
+          {rouletteReadyCard}
         </>
       )}
     </View>
@@ -196,8 +214,6 @@ type GamesSectionProps = {
   onRequestRemoveFromLibrary: (game: GameRecord) => void;
   onSearchIgdb: () => void;
   onToggleFavorite: (gameId: string) => void;
-  onToggleRoulettePool: (gameId: string) => void;
-  rouletteEntries: RouletteEntry[];
 };
 
 export function GamesSection({
@@ -227,8 +243,6 @@ export function GamesSection({
   onRequestRemoveFromLibrary,
   onSearchIgdb,
   onToggleFavorite,
-  onToggleRoulettePool,
-  rouletteEntries,
 }: GamesSectionProps) {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
@@ -391,7 +405,6 @@ export function GamesSection({
       ) : null}
       {filteredGames.map((game) => {
         const isFavorite = favoriteGameIds.includes(game.id);
-        const inRoulettePool = rouletteEntries.some((entry) => entry.game_id === game.id);
         const coverFallbackLabel =
           game.title
             .split(/\s+/)
@@ -439,7 +452,6 @@ export function GamesSection({
                     Favorite
                   </Chip>
                 ) : null}
-                {inRoulettePool ? <Chip icon="dice-multiple">In roulette pool</Chip> : null}
               </View>
               <View style={styles.cardActions}>
                 <Button
@@ -455,14 +467,6 @@ export function GamesSection({
                   disabled={gameActionBusyId !== null}
                   testID={`game-library-favorite-${game.id}`}>
                   {isFavorite ? 'Unfavorite' : 'Favorite'}
-                </Button>
-                <Button
-                  mode="text"
-                  onPress={() => onToggleRoulettePool(game.id)}
-                  loading={gameActionBusyId === `pool:${game.id}`}
-                  disabled={gameActionBusyId !== null}
-                  testID={`game-library-pool-${game.id}`}>
-                  {inRoulettePool ? 'Remove from pool' : 'Add to pool'}
                 </Button>
                 <Button
                   mode="text"
@@ -513,65 +517,561 @@ export function GamesSection({
   );
 }
 
-type RouletteSectionProps = {
-  onInviteEveryone: (gameId: string) => void;
-  onOpenGames: () => void;
-  onSpinAgain: () => void;
-  roulettePoolGames: Pick<GameRecord, 'genre' | 'id' | 'platform' | 'title'>[];
+type RouletteFriendProfile = PublicProfileCard & {
+  is_favorite: boolean;
 };
 
+type RouletteSectionProps = {
+  acceptedFriends: RouletteFriendProfile[];
+  libraryGames: GameRecord[];
+  onOpenGames: () => void;
+  onUseForLobby: (gameId: string, inviteeProfileIds?: string[]) => void;
+};
+
+const confettiPalette = ['#7C5CFF', '#33D1FF', '#7DFFB3', '#FFB347', '#FF6B81', '#FFE08A'];
+const confettiPieces = Array.from({ length: 14 }, (_, index) => {
+  const horizontalDirection = index % 2 === 0 ? -1 : 1;
+  const horizontalMultiplier = 18 + (index % 4) * 10;
+
+  return {
+    id: index,
+    color: confettiPalette[index % confettiPalette.length],
+    x: horizontalDirection * horizontalMultiplier,
+    y: -55 - (index % 5) * 24,
+    rotate: horizontalDirection * (120 + index * 18),
+  };
+});
+
+const getGamePlaceholderLabel = (title: string) =>
+  title
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || 'GG';
+
+const getProfileLabel = (profile: Pick<PublicProfileCard, 'display_name' | 'username'>) =>
+  profile.display_name ?? profile.username ?? 'Player';
+
+const pickRandomItem = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+
+const shuffleItems = <T,>(items: T[]) => {
+  const nextItems = [...items];
+
+  for (let index = nextItems.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const currentItem = nextItems[index];
+    nextItems[index] = nextItems[swapIndex];
+    nextItems[swapIndex] = currentItem;
+  }
+
+  return nextItems;
+};
+
+function RouletteConfettiBurst({ token }: { token: number }) {
+  const opacity = React.useRef(new Animated.Value(0)).current;
+  const progress = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    if (token === 0) {
+      return;
+    }
+
+    opacity.setValue(1);
+    progress.setValue(0);
+
+    Animated.parallel([
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: 1150,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.delay(750),
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 260,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, [opacity, progress, token]);
+
+  return (
+    <View pointerEvents="none" style={styles.rouletteConfettiOverlay}>
+      {confettiPieces.map((piece) => {
+        const translateX = progress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, piece.x],
+        });
+        const translateY = progress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, piece.y],
+        });
+        const rotate = progress.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['0deg', `${piece.rotate}deg`],
+        });
+        const scale = progress.interpolate({
+          inputRange: [0, 0.18, 1],
+          outputRange: [0.5, 1, 0.8],
+        });
+
+        return (
+          <Animated.View
+            key={piece.id}
+            style={[
+              styles.rouletteConfettiPiece,
+              {
+                backgroundColor: piece.color,
+                opacity,
+                transform: [{ translateX }, { translateY }, { rotate }, { scale }],
+              },
+            ]}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
 export function RouletteSection({
-  onInviteEveryone,
+  acceptedFriends,
+  libraryGames,
   onOpenGames,
-  onSpinAgain,
-  roulettePoolGames,
+  onUseForLobby,
 }: RouletteSectionProps) {
-  const featuredGame = roulettePoolGames[0] ?? null;
+  const [scopeDialogVisible, setScopeDialogVisible] = React.useState(false);
+  const [selectedScopeGameIds, setSelectedScopeGameIds] = React.useState<string[]>([]);
+  const [scopeTouched, setScopeTouched] = React.useState(false);
+  const [displayGameId, setDisplayGameId] = React.useState<string | null>(null);
+  const [selectedGameId, setSelectedGameId] = React.useState<string | null>(null);
+  const [isSpinningGame, setIsSpinningGame] = React.useState(false);
+  const [selectedFriendIds, setSelectedFriendIds] = React.useState<string[]>([]);
+  const [friendSpinCount, setFriendSpinCount] = React.useState(0);
+  const [isPickingFriends, setIsPickingFriends] = React.useState(false);
+  const [confettiToken, setConfettiToken] = React.useState(0);
+  const [reducedMotionEnabled, setReducedMotionEnabled] = React.useState(false);
+  const spinTimeoutsRef = React.useRef<ReturnType<typeof setTimeout>[]>([]);
+  const libraryGameIds = React.useMemo(() => libraryGames.map((game) => game.id), [libraryGames]);
+  const maxFriendSpinCount = Math.min(4, acceptedFriends.length);
+
+  React.useEffect(() => {
+    let isActive = true;
+
+    const loadReducedMotionPreference = async () => {
+      try {
+        const nextValue = await AccessibilityInfo.isReduceMotionEnabled();
+        if (isActive) {
+          setReducedMotionEnabled(Boolean(nextValue));
+        }
+      } catch {
+        if (isActive) {
+          setReducedMotionEnabled(false);
+        }
+      }
+    };
+
+    void loadReducedMotionPreference();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      spinTimeoutsRef.current.forEach((timeoutHandle) => clearTimeout(timeoutHandle));
+      spinTimeoutsRef.current = [];
+    };
+  }, []);
+
+  React.useEffect(() => {
+    setSelectedScopeGameIds((current) => {
+      if (libraryGameIds.length === 0) {
+        return [];
+      }
+
+      if (!scopeTouched) {
+        return libraryGameIds;
+      }
+
+      return current.filter((gameId) => libraryGameIds.includes(gameId));
+    });
+  }, [libraryGameIds, scopeTouched]);
+
+  React.useEffect(() => {
+    setFriendSpinCount((current) => {
+      if (maxFriendSpinCount === 0) {
+        return 0;
+      }
+
+      if (current < 1) {
+        return Math.min(maxFriendSpinCount, acceptedFriends.length >= 2 ? 2 : 1);
+      }
+
+      return Math.min(current, maxFriendSpinCount);
+    });
+  }, [acceptedFriends.length, maxFriendSpinCount]);
+
+  const scopedGames = React.useMemo(
+    () => libraryGames.filter((game) => selectedScopeGameIds.includes(game.id)),
+    [libraryGames, selectedScopeGameIds],
+  );
+
+  const selectedGame = React.useMemo(
+    () => libraryGames.find((game) => game.id === selectedGameId) ?? null,
+    [libraryGames, selectedGameId],
+  );
+
+  const displayedGame = React.useMemo(() => {
+    if (displayGameId) {
+      return libraryGames.find((game) => game.id === displayGameId) ?? null;
+    }
+
+    if (selectedGame) {
+      return selectedGame;
+    }
+
+    return scopedGames[0] ?? libraryGames[0] ?? null;
+  }, [displayGameId, libraryGames, scopedGames, selectedGame]);
+
+  const sortedFriends = React.useMemo(
+    () =>
+      [...acceptedFriends].sort((left, right) => {
+        if (left.is_favorite === right.is_favorite) {
+          return getProfileLabel(left).localeCompare(getProfileLabel(right));
+        }
+
+        return left.is_favorite ? -1 : 1;
+      }),
+    [acceptedFriends],
+  );
+
+  const selectedFriends = React.useMemo(
+    () => sortedFriends.filter((friend) => selectedFriendIds.includes(friend.id)),
+    [selectedFriendIds, sortedFriends],
+  );
+
+  React.useEffect(() => {
+    if (selectedGameId && !selectedScopeGameIds.includes(selectedGameId)) {
+      setSelectedGameId(null);
+    }
+  }, [selectedGameId, selectedScopeGameIds]);
+
+  React.useEffect(() => {
+    if (!isSpinningGame && displayGameId && !selectedScopeGameIds.includes(displayGameId)) {
+      setDisplayGameId(null);
+    }
+  }, [displayGameId, isSpinningGame, selectedScopeGameIds]);
+
+  React.useEffect(() => {
+    if (acceptedFriends.length === 0) {
+      setSelectedFriendIds([]);
+      return;
+    }
+
+    const acceptedFriendIds = new Set(acceptedFriends.map((friend) => friend.id));
+    setSelectedFriendIds((current) => current.filter((friendId) => acceptedFriendIds.has(friendId)));
+  }, [acceptedFriends]);
+
+  const handleToggleScopeGame = React.useCallback((gameId: string) => {
+    setScopeTouched(true);
+    setSelectedScopeGameIds((current) =>
+      current.includes(gameId) ? current.filter((currentGameId) => currentGameId !== gameId) : [...current, gameId],
+    );
+  }, []);
+
+  const handleSelectAllGames = React.useCallback(() => {
+    setScopeTouched(false);
+    setSelectedScopeGameIds(libraryGameIds);
+  }, [libraryGameIds]);
+
+  const handleClearScopedGames = React.useCallback(() => {
+    setScopeTouched(true);
+    setSelectedScopeGameIds([]);
+  }, []);
+
+  const handleSpinGame = React.useCallback(() => {
+    if (isSpinningGame || scopedGames.length === 0) {
+      return;
+    }
+
+    spinTimeoutsRef.current.forEach((timeoutHandle) => clearTimeout(timeoutHandle));
+    spinTimeoutsRef.current = [];
+
+    const winningGame = pickRandomItem(scopedGames);
+    const nextTimeouts: ReturnType<typeof setTimeout>[] = [];
+    const stepCount = reducedMotionEnabled ? 10 : 24;
+    let elapsedMs = 0;
+
+    setIsSpinningGame(true);
+    setSelectedGameId(null);
+
+    for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+      const progress = stepIndex / Math.max(stepCount - 1, 1);
+      const delayMs = reducedMotionEnabled ? 70 + stepIndex * 20 : 42 + Math.round(progress * progress * 175);
+      elapsedMs += delayMs;
+
+      const nextGame =
+        stepIndex === stepCount - 1
+          ? winningGame
+          : scopedGames.length === 1
+            ? winningGame
+            : pickRandomItem(scopedGames);
+
+      nextTimeouts.push(
+        setTimeout(() => {
+          setDisplayGameId(nextGame.id);
+        }, elapsedMs),
+      );
+    }
+
+    nextTimeouts.push(
+      setTimeout(() => {
+        setDisplayGameId(winningGame.id);
+        setSelectedGameId(winningGame.id);
+        setIsSpinningGame(false);
+
+        if (!reducedMotionEnabled) {
+          setConfettiToken((current) => current + 1);
+        }
+      }, elapsedMs + 16),
+    );
+
+    spinTimeoutsRef.current = nextTimeouts;
+  }, [isSpinningGame, reducedMotionEnabled, scopedGames]);
+
+  const handleSpinFriends = React.useCallback(() => {
+    if (isPickingFriends || maxFriendSpinCount === 0 || friendSpinCount === 0) {
+      return;
+    }
+
+    setIsPickingFriends(true);
+    const randomizedFriends = shuffleItems(sortedFriends)
+      .slice(0, friendSpinCount)
+      .map((friend) => friend.id);
+
+    const delayMs = reducedMotionEnabled ? 120 : 520;
+    setTimeout(() => {
+      setSelectedFriendIds(randomizedFriends);
+      setIsPickingFriends(false);
+    }, delayMs);
+  }, [friendSpinCount, isPickingFriends, maxFriendSpinCount, reducedMotionEnabled, sortedFriends]);
+
+  const handleUseForLobby = React.useCallback(() => {
+    if (!selectedGameId) {
+      return;
+    }
+
+    onUseForLobby(selectedGameId, selectedFriendIds);
+  }, [onUseForLobby, selectedFriendIds, selectedGameId]);
 
   return (
     <>
       <SectionTitle
         title="Game roulette"
-        subtitle="Pick from your saved pool before building a lobby."
+        subtitle="Spin your library, narrow the scope only when you want to, and carry the winner straight into a lobby."
       />
       <Surface style={styles.rouletteHero} elevation={2}>
-        <Text variant="headlineMedium" style={styles.rouletteValue}>
-          {featuredGame?.title ?? 'Add games to spin'}
+        <View style={styles.rouletteStage}>
+          {displayedGame?.cover_url ? (
+            <Image source={{ uri: displayedGame.cover_url }} style={styles.rouletteCoverImage} resizeMode="cover" />
+          ) : displayedGame ? (
+            <Surface style={styles.rouletteCoverPlaceholder} elevation={0}>
+              <Text style={styles.rouletteCoverPlaceholderText}>{getGamePlaceholderLabel(displayedGame.title)}</Text>
+              <Text style={styles.rouletteCoverPlaceholderSubtext}>Roulette</Text>
+            </Surface>
+          ) : (
+            <Surface style={styles.rouletteCoverPlaceholder} elevation={0}>
+              <Text style={styles.rouletteCoverPlaceholderText}>SPIN</Text>
+              <Text style={styles.rouletteCoverPlaceholderSubtext}>Ready</Text>
+            </Surface>
+          )}
+          {!reducedMotionEnabled ? <RouletteConfettiBurst token={confettiToken} /> : null}
+        </View>
+        <Text variant="headlineMedium" style={styles.rouletteValue} testID="roulette-current-game-title">
+          {isSpinningGame ? displayedGame?.title ?? 'Spinning your library...' : selectedGame?.title ?? displayedGame?.title ?? 'Ready to spin'}
         </Text>
         <Text style={styles.sectionSubtitle}>
-          {roulettePoolGames.length > 0
-            ? `You currently have ${roulettePoolGames.length} game${roulettePoolGames.length === 1 ? '' : 's'} in your pool.`
-            : 'Your pool is empty. Add games from the library first.'}
+          {libraryGames.length === 0
+            ? 'Your library is empty. Add a game from the Games tab first, then come back here to spin.'
+            : selectedScopeGameIds.length === 0
+              ? 'Choose at least one game in scope before you spin.'
+              : isSpinningGame
+                ? 'Flickering through your scoped games now. We’ll slow it down and settle on one winner.'
+                : selectedGame
+                  ? `${selectedGame.genre} | ${selectedGame.platform} | ${selectedGame.player_count}`
+                  : `${selectedScopeGameIds.length} of ${libraryGames.length} library game${libraryGames.length === 1 ? '' : 's'} ready for tonight.`}
         </Text>
+        <View style={styles.quickPath}>
+          <Chip icon="cards-outline" compact testID="roulette-scope-selected-count">
+            {selectedScopeGameIds.length === libraryGames.length && libraryGames.length > 0
+              ? 'All library games'
+              : `${selectedScopeGameIds.length} selected`}
+          </Chip>
+          {selectedGame ? (
+            <Chip icon="trophy" compact>
+              Winner locked
+            </Chip>
+          ) : null}
+          {selectedFriends.length > 0 ? (
+            <Chip icon="account-multiple" compact>
+              {selectedFriends.length} friend{selectedFriends.length === 1 ? '' : 's'} picked
+            </Chip>
+          ) : null}
+        </View>
         <View style={styles.heroActions}>
           <Button
+            mode="outlined"
+            icon="filter-variant"
+            onPress={() => setScopeDialogVisible(true)}
+            disabled={libraryGames.length === 0 || isSpinningGame}
+            testID="roulette-scope-button">
+            Filter
+          </Button>
+          <Button
             mode="contained"
-            onPress={() => (featuredGame ? onInviteEveryone(featuredGame.id) : onOpenGames())}>
-            Invite everyone
+            onPress={libraryGames.length === 0 ? onOpenGames : handleSpinGame}
+            disabled={isSpinningGame || (libraryGames.length > 0 && selectedScopeGameIds.length === 0)}
+            testID="roulette-spin-button">
+            {libraryGames.length === 0 ? 'Open Games' : selectedGame ? 'Spin again' : 'Spin game'}
           </Button>
-          <Button mode="outlined" onPress={onSpinAgain}>
-            Spin again
-          </Button>
+          {selectedGame ? (
+            <Button mode="contained-tonal" onPress={handleUseForLobby} testID="roulette-use-for-lobby-button">
+              Use for lobby
+            </Button>
+          ) : null}
         </View>
+        {selectedScopeGameIds.length === 0 && libraryGames.length > 0 ? (
+          <HelperText type="info" visible testID="roulette-scope-empty-state">
+            Clear scopes are allowed, but you’ll need to add at least one game back before Roulette can spin.
+          </HelperText>
+        ) : null}
       </Surface>
-      {roulettePoolGames.map((game) => (
-        <Card key={game.id} style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">{game.title}</Text>
+
+      <Card style={styles.panel}>
+        <Card.Content>
+          <SectionTitle
+            title="Optional friend spin"
+            subtitle="Pick a few accepted friends at random, then carry those invites into the lobby with the winning game."
+          />
+          {maxFriendSpinCount === 0 ? (
             <Text style={styles.friendNote}>
-              {game.genre} | {game.platform}
+              Add accepted friends first if you want Roulette to randomize tonight’s invite list too.
             </Text>
-          </Card.Content>
-        </Card>
-      ))}
-      {roulettePoolGames.length === 0 ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">No games in your roulette pool yet.</Text>
-            <Text style={styles.friendNote}>Use the Game Library to add a few favorites and come back here.</Text>
-          </Card.Content>
-        </Card>
-      ) : null}
+          ) : (
+            <>
+              <Text style={styles.friendNote}>Choose how many friends Roulette should pull in this round.</Text>
+              <View style={styles.quickPath}>
+                {Array.from({ length: maxFriendSpinCount }, (_, index) => {
+                  const count = index + 1;
+                  return (
+                    <Chip
+                      key={count}
+                      selected={friendSpinCount === count}
+                      onPress={() => setFriendSpinCount(count)}
+                      testID={`roulette-friend-count-${count}`}>
+                      {count}
+                    </Chip>
+                  );
+                })}
+              </View>
+              <View style={styles.cardActions}>
+                <Button
+                  mode="contained-tonal"
+                  onPress={handleSpinFriends}
+                  loading={isPickingFriends}
+                  disabled={isPickingFriends}
+                  testID="roulette-spin-friends-button">
+                  {selectedFriends.length > 0 ? 'Spin friends again' : 'Pick friends'}
+                </Button>
+                {selectedFriends.length > 0 ? (
+                  <Button mode="text" onPress={() => setSelectedFriendIds([])}>
+                    Clear picks
+                  </Button>
+                ) : null}
+              </View>
+              {selectedFriends.length > 0 ? (
+                <View style={styles.quickPath}>
+                  {selectedFriends.map((friend) => (
+                    <Chip
+                      key={friend.id}
+                      icon={friend.is_favorite ? 'star' : 'account'}
+                      testID={`roulette-selected-friend-${friend.id}`}>
+                      {getProfileLabel(friend)}
+                    </Chip>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.friendNote}>No random friend picks yet. Spin whenever you want them included.</Text>
+              )}
+            </>
+          )}
+        </Card.Content>
+      </Card>
+
+      <Portal>
+        <Dialog
+          visible={scopeDialogVisible}
+          onDismiss={() => setScopeDialogVisible(false)}
+          style={styles.rouletteScopeDialog}
+          testID="roulette-scope-dialog">
+          <Dialog.Title>Filter games</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              Start from your full library, then narrow the spin only when tonight needs a shorter list.
+            </Text>
+            <View style={styles.cardActions}>
+              <Button mode="text" onPress={handleSelectAllGames} disabled={libraryGames.length === 0}>
+                Select all
+              </Button>
+              <Button mode="text" onPress={handleClearScopedGames} disabled={libraryGames.length === 0}>
+                Clear all
+              </Button>
+            </View>
+          </Dialog.Content>
+          <View style={styles.rouletteScopeDialogScrollShell}>
+            <ScrollView style={styles.rouletteScopeDialogScrollArea} contentContainerStyle={styles.rouletteScopeDialogContent}>
+              {libraryGames.map((game) => {
+                const isSelected = selectedScopeGameIds.includes(game.id);
+
+                return (
+                  <Card
+                    key={game.id}
+                    style={[styles.rouletteScopeGameRow, isSelected ? styles.rouletteScopeGameRowSelected : null]}
+                    onPress={() => handleToggleScopeGame(game.id)}
+                    testID={`roulette-scope-game-${game.id}`}>
+                    <Card.Content style={styles.rouletteScopeGameRowContent}>
+                      {game.cover_url ? (
+                        <Image source={{ uri: game.cover_url }} style={styles.rouletteScopeGameThumb} resizeMode="cover" />
+                      ) : (
+                        <Surface style={styles.rouletteScopeGameThumbPlaceholder} elevation={0}>
+                          <Text style={styles.rouletteScopeGameThumbPlaceholderText}>{getGamePlaceholderLabel(game.title)}</Text>
+                        </Surface>
+                      )}
+                      <View style={styles.rouletteScopeGameMeta}>
+                        <Text variant="titleMedium">{game.title}</Text>
+                        <Text style={styles.friendNote}>
+                          {game.genre} | {game.platform}
+                        </Text>
+                      </View>
+                      <Chip compact icon={isSelected ? 'check-circle' : 'circle-outline'}>
+                        {isSelected ? 'Included' : 'Skipped'}
+                      </Chip>
+                    </Card.Content>
+                  </Card>
+                );
+              })}
+            </ScrollView>
+          </View>
+          <Dialog.Actions>
+            <Button onPress={() => setScopeDialogVisible(false)}>Done</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </>
   );
 }

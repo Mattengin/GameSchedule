@@ -369,6 +369,17 @@ describe('mobile layout smoke', () => {
     cy.contains(/^Game library$/).scrollIntoView().should('be.visible');
     assertNoHorizontalOverflow();
 
+    clickSectionNav('roulette');
+    cy.contains(/^Game roulette$/).scrollIntoView().should('be.visible');
+    cy.get('[data-testid="roulette-scope-button"]').click();
+    cy.contains('Choose games').should('be.visible');
+    cy.contains('Clear all').scrollIntoView().click({ force: true });
+    cy.get('[data-testid="roulette-scope-game-deep-raid"]').scrollIntoView().click({ force: true });
+    cy.contains('Done').click({ force: true });
+    cy.get('[data-testid="roulette-spin-button"]').click();
+    cy.contains('Use for lobby').should('be.visible');
+    assertNoHorizontalOverflow();
+
     clickSectionNav('lobbies');
     cy.contains(/^Create event$/).scrollIntoView().should('be.visible');
     cy.get('[data-testid="lobby-game-carousel"]').scrollIntoView().should('be.visible');

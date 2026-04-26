@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
-import type { GameRecord, IgdbSearchResult, RelatedGameSummary, RouletteEntry } from './homeTypes';
+import type { GameRecord, IgdbSearchResult } from './homeTypes';
 import { unwrapRelation } from './homeUtils';
 import { supabase } from '../../services/supabaseClient';
 
@@ -30,7 +30,6 @@ export function useGamesState(session: Session | null) {
   const [libraryGames, setLibraryGames] = React.useState<GameRecord[]>([]);
   const [gameSearch, setGameSearch] = React.useState('');
   const [favoriteGameIds, setFavoriteGameIds] = React.useState<string[]>([]);
-  const [rouletteEntries, setRouletteEntries] = React.useState<RouletteEntry[]>([]);
   const [gameActionBusyId, setGameActionBusyId] = React.useState<string | null>(null);
   const [gameActionError, setGameActionError] = React.useState('');
   const [gameActionMessage, setGameActionMessage] = React.useState('');
@@ -104,42 +103,25 @@ export function useGamesState(session: Session | null) {
     void loadGames();
   }, [loadGames]);
 
-  const loadGameRelations = React.useCallback(async () => {
+  const loadFavoriteGameIds = React.useCallback(async () => {
     if (!session?.user) {
       setFavoriteGameIds([]);
-      setRouletteEntries([]);
       return;
     }
 
-    const [{ data: favorites, error: favoritesError }, { data: pool, error: poolError }] =
-      await Promise.all([
-        supabase
-          .from('favorite_games')
-          .select('game_id')
-          .eq('profile_id', session.user.id),
-        supabase
-          .from('roulette_pool_entries')
-          .select('game_id, games(id, title, genre, platform)')
-          .eq('profile_id', session.user.id),
-      ]);
+    const { data: favorites, error: favoritesError } = await supabase
+      .from('favorite_games')
+      .select('game_id')
+      .eq('profile_id', session.user.id);
 
     if (!favoritesError && favorites) {
       setFavoriteGameIds(favorites.map((entry) => entry.game_id));
     }
-
-    if (!poolError && pool) {
-      setRouletteEntries(
-        pool.map((entry) => ({
-          game_id: entry.game_id,
-          games: unwrapRelation(entry.games as RelatedGameSummary[] | RelatedGameSummary | null),
-        })),
-      );
-    }
   }, [session]);
 
   React.useEffect(() => {
-    void loadGameRelations();
-  }, [loadGameRelations]);
+    void loadFavoriteGameIds();
+  }, [loadFavoriteGameIds]);
 
   const filteredGames = React.useMemo(() => {
     const query = gameSearch.trim().toLowerCase();
@@ -155,14 +137,6 @@ export function useGamesState(session: Session | null) {
         .includes(query),
     );
   }, [gameSearch, libraryGames]);
-
-  const roulettePoolGames = React.useMemo(
-    () =>
-      rouletteEntries
-        .map((entry) => entry.games)
-        .filter((game): game is Pick<GameRecord, 'id' | 'title' | 'genre' | 'platform'> => Boolean(game)),
-    [rouletteEntries],
-  );
 
   const importedIgdbIds = React.useMemo(
     () =>
@@ -216,9 +190,7 @@ export function useGamesState(session: Session | null) {
     importedIgdbIds,
     libraryGames,
     loadGames,
-    loadGameRelations,
-    rouletteEntries,
-    roulettePoolGames,
+    loadFavoriteGameIds,
     setFavoriteGameIds,
     setGameActionBusyId,
     setGameActionError,
@@ -234,6 +206,5 @@ export function useGamesState(session: Session | null) {
     setIgdbSearchLoading,
     setIgdbSearchQuery,
     setLibraryGames,
-    setRouletteEntries,
   };
 }

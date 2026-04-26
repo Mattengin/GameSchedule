@@ -154,8 +154,6 @@ export default function HomeScreen() {
     importedIgdbIds,
     libraryGames,
     loadGames,
-    rouletteEntries,
-    roulettePoolGames,
     setFavoriteGameIds,
     setGameActionBusyId,
     setGameActionError,
@@ -170,7 +168,6 @@ export default function HomeScreen() {
     setIgdbSearchLoading,
     setIgdbSearchQuery,
     setLibraryGames,
-    setRouletteEntries,
   } = useGamesState(session);
 
   const {
@@ -894,7 +891,7 @@ export default function HomeScreen() {
   );
 
   const prepareLobbyDraft = React.useCallback(
-    (gameId: string) => {
+    (gameId: string, inviteeProfileIds: string[] = []) => {
       const game = libraryGames.find((item) => item.id === gameId);
 
       if (!game) {
@@ -907,7 +904,7 @@ export default function HomeScreen() {
         title: `${game.title} Lobby`,
         meetupDetails: '',
       }));
-      setSelectedLobbyInviteProfileIds([]);
+      setSelectedLobbyInviteProfileIds(Array.from(new Set(inviteeProfileIds)));
       setLobbyMessage('');
       setSection('lobbies');
     },
@@ -1065,7 +1062,6 @@ export default function HomeScreen() {
     } else {
       setLibraryGames((current) => current.filter((game) => game.id !== gameToRemove.id));
       setFavoriteGameIds((current) => current.filter((gameId) => gameId !== gameToRemove.id));
-      setRouletteEntries((current) => current.filter((entry) => entry.game_id !== gameToRemove.id));
       setGameActionMessage(`${gameToRemove.title} removed from your library.`);
       setGamePendingRemoval(null);
     }
@@ -1079,7 +1075,6 @@ export default function HomeScreen() {
     setGameActionError,
     setGameActionMessage,
     setLibraryGames,
-    setRouletteEntries,
   ]);
 
   const handleCreateLobby = async () => {
@@ -1715,8 +1710,6 @@ export default function HomeScreen() {
       lobbiesCount={lobbies.length}
       onManageFriends={() => setSection('friends')}
       onStartGroupSpin={() => setSection('roulette')}
-      roulettePoolCount={roulettePoolGames.length}
-      roulettePoolGames={roulettePoolGames}
     />
   );
 
@@ -1969,17 +1962,15 @@ export default function HomeScreen() {
       onRequestRemoveFromLibrary={handleRequestRemoveGameFromLibrary}
       onSearchIgdb={handleSearchIgdb}
       onToggleFavorite={toggleFavorite}
-      onToggleRoulettePool={toggleRoulettePool}
-      rouletteEntries={rouletteEntries}
     />
   );
 
   const renderRoulette = () => (
     <RouletteSection
-      onInviteEveryone={prepareLobbyDraft}
+      acceptedFriends={acceptedFriends}
+      libraryGames={libraryGames}
       onOpenGames={() => setSection('games')}
-      onSpinAgain={() => {}}
-      roulettePoolGames={roulettePoolGames}
+      onUseForLobby={prepareLobbyDraft}
     />
   );
 
@@ -3670,59 +3661,6 @@ export default function HomeScreen() {
     setGameActionBusyId(null);
   };
 
-  const toggleRoulettePool = async (gameId: string) => {
-    if (!session?.user) {
-      return;
-    }
-
-    setGameActionBusyId(`pool:${gameId}`);
-    setGameActionError('');
-    setGameActionMessage('');
-
-    const existing = rouletteEntries.find((entry) => entry.game_id === gameId);
-
-    if (existing) {
-      const { error } = await supabase
-        .from('roulette_pool_entries')
-        .delete()
-        .eq('profile_id', session.user.id)
-        .eq('game_id', gameId);
-
-      if (!error) {
-        setRouletteEntries((current) => current.filter((entry) => entry.game_id !== gameId));
-        setGameActionMessage('Game removed from roulette pool.');
-      } else {
-        setGameActionError(error.message);
-      }
-    } else {
-      const game = libraryGames.find((item) => item.id === gameId);
-      const { error } = await supabase.from('roulette_pool_entries').insert({
-        profile_id: session.user.id,
-        game_id: gameId,
-      });
-
-      if (!error && game) {
-        setRouletteEntries((current) => [
-          ...current,
-          {
-            game_id: gameId,
-            games: {
-              id: game.id,
-              title: game.title,
-              genre: game.genre,
-              platform: game.platform,
-            },
-          },
-        ]);
-        setGameActionMessage('Game added to roulette pool.');
-      } else if (error) {
-        setGameActionError(error.message);
-      }
-    }
-
-    setGameActionBusyId(null);
-  };
-
   const content = {
     dashboard: renderDashboard(),
     friends: renderFriends(),
@@ -4198,7 +4136,7 @@ export default function HomeScreen() {
           <Dialog.Content>
             <Text style={styles.friendNote}>
               {gamePendingRemoval
-                ? `${gamePendingRemoval.title} will be removed from your library only. Favorites and roulette entries for this game will be cleared for you.`
+                ? `${gamePendingRemoval.title} will be removed from your library only. Any personal shortcuts tied to this game will be cleared for you too.`
                 : 'This will remove the selected game from your library only.'}
             </Text>
           </Dialog.Content>

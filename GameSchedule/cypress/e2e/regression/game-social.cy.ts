@@ -700,21 +700,24 @@ describe('game social persistence', () => {
     cy.contains('Helix Arena').should('be.visible');
   });
 
-  it('adds a game to the roulette pool and shows it on the roulette screen', () => {
+  it('uses the full library by default in roulette and settles on an in-scope game', () => {
     signInAndOpenGames();
 
-    cy.get('[data-testid="game-library-pool-deep-raid"]').click();
-    cy.wait('@rouletteInsert')
-      .its('request.body')
-      .should((body) => {
-        expect(body.profile_id).to.equal(userId);
-        expect(body.game_id).to.equal('deep-raid');
-      });
+    cy.get('[data-testid="game-library-card-deep-raid"]').within(() => {
+      cy.contains(/add to pool/i).should('not.exist');
+    });
 
-    cy.contains(/game added to roulette pool/i).should('be.visible');
+    cy.contains('Home').click();
+    cy.contains(/your roulette pool/i).should('not.exist');
+
     cy.contains('Roulette').click();
-    cy.contains(/you currently have 1 game in your pool/i).should('be.visible');
-    cy.contains('Deep Raid').should('be.visible');
+    cy.get('[data-testid="roulette-scope-selected-count"]').should('contain.text', 'All library games');
+
+    cy.get('[data-testid="roulette-spin-button"]').click();
+    cy.contains('Use for lobby').should('be.visible');
+    cy.get('[data-testid="roulette-current-game-title"]').invoke('text').should((title) => {
+      expect(title.trim()).to.match(/Helix Arena|Deep Raid|Wild Rally Online/);
+    });
   });
 
   it('shows a clean empty state when the user has no games in their library yet', () => {
@@ -725,34 +728,29 @@ describe('game social persistence', () => {
     cy.get('[data-testid="game-library-card-helix-arena"]').should('not.exist');
   });
 
-  it('removes games from favorites and roulette after they were added', () => {
+  it('lets users scope roulette for the current session and hand the winner into lobbies', () => {
     signInAndOpenGames();
 
-    cy.get('[data-testid="game-library-favorite-wild-rally-online"]').click();
-    cy.wait('@favoriteGamesInsert');
-    cy.get('[data-testid="game-library-pool-wild-rally-online"]').click();
-    cy.wait('@rouletteInsert');
-
-    cy.get('[data-testid="game-library-favorite-wild-rally-online"]').click();
-    cy.wait('@favoriteGamesDelete')
-      .its('request.url')
-      .should('include', `profile_id=eq.${userId}`)
-      .and('include', 'game_id=eq.wild-rally-online');
-    cy.get('[data-testid="game-library-pool-wild-rally-online"]').click();
-    cy.wait('@rouletteDelete')
-      .its('request.url')
-      .should('include', `profile_id=eq.${userId}`)
-      .and('include', 'game_id=eq.wild-rally-online');
-
-    cy.contains('Profile').click();
-    cy.contains('Favorite games').scrollIntoView().should('exist');
-    cy.contains('Wild Rally Online').should('not.exist');
-
     cy.contains('Roulette').click();
-    cy.contains(/your pool is empty/i).should('be.visible');
+    cy.get('[data-testid="roulette-scope-button"]').click();
+    cy.contains('Filter games').should('be.visible');
+    cy.contains('Clear all').click();
+    cy.get('[data-testid="roulette-scope-empty-state"]').should('be.visible');
+    cy.get('[data-testid="roulette-spin-button"]').should('be.disabled');
+    cy.get('[data-testid="roulette-scope-game-deep-raid"]').click();
+    cy.contains('Done').click();
+
+    cy.get('[data-testid="roulette-scope-selected-count"]').should('contain.text', '1 selected');
+    cy.get('[data-testid="roulette-current-game-title"]').should('contain.text', 'Deep Raid');
+    cy.get('[data-testid="roulette-spin-button"]').click();
+    cy.get('[data-testid="roulette-current-game-title"]').should('contain.text', 'Deep Raid');
+    cy.get('[data-testid="roulette-use-for-lobby-button"]').click();
+
+    cy.contains('Lobbies').should('be.visible');
+    cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Deep Raid Lobby');
   });
 
-  it('imports an IGDB result into the library and supports favorite plus roulette actions', () => {
+  it('imports an IGDB result into the library and makes it available to roulette without a separate pool step', () => {
     signInAndOpenGames();
 
     cy.get('[data-testid="igdb-search-input"]').clear().type('portal');
@@ -769,29 +767,10 @@ describe('game social persistence', () => {
       });
 
     cy.contains(/portal 2 imported into your library/i).should('be.visible');
-    cy.get('[data-testid="game-library-card-igdb-1234"]').scrollIntoView().within(() => {
-      cy.get('[data-testid="game-library-favorite-igdb-1234"]').click();
-      cy.wait('@favoriteGamesInsert')
-        .its('request.body')
-        .should((body) => {
-          expect(body.profile_id).to.equal(userId);
-          expect(body.game_id).to.equal('igdb-1234');
-        });
-      cy.get('[data-testid="game-library-pool-igdb-1234"]').click();
-      cy.wait('@rouletteInsert')
-        .its('request.body')
-        .should((body) => {
-          expect(body.profile_id).to.equal(userId);
-          expect(body.game_id).to.equal('igdb-1234');
-        });
-    });
-
-    cy.contains('Profile').click();
-    cy.contains('Favorite games').scrollIntoView().should('exist');
-    cy.contains('Portal 2').should('be.visible');
-
     cy.contains('Roulette').click();
-    cy.contains('Portal 2').should('be.visible');
+    cy.get('[data-testid="roulette-scope-button"]').click();
+    cy.contains('Filter games').should('be.visible');
+    cy.get('[data-testid="roulette-scope-game-igdb-1234"]').should('exist');
   });
 
   it('does not add duplicate copies of the same imported game to the user library', () => {
@@ -810,18 +789,13 @@ describe('game social persistence', () => {
     cy.get('[data-testid="game-library-card-igdb-1234"]').should('have.length', 1);
   });
 
-  it('removes a game from the library only after confirmation and clears favorite plus pool state', () => {
+  it('removes a game from the library only after confirmation and updates roulette to the remaining library', () => {
     signInAndOpenGames();
 
     cy.get('[data-testid="game-library-card-helix-arena"]').within(() => {
       cy.get('[data-testid="game-library-favorite-helix-arena"]').click();
     });
     cy.contains(/game added to favorites/i).should('be.visible');
-
-    cy.get('[data-testid="game-library-card-helix-arena"]').within(() => {
-      cy.get('[data-testid="game-library-pool-helix-arena"]').click();
-    });
-    cy.contains(/game added to roulette pool/i).should('be.visible');
 
     cy.get('[data-testid="game-library-card-helix-arena"]').within(() => {
       cy.get('[data-testid="game-library-remove-helix-arena"]').click();
@@ -850,7 +824,9 @@ describe('game social persistence', () => {
     cy.contains('Helix Arena').should('not.exist');
 
     cy.contains('Roulette').click();
-    cy.contains(/your pool is empty/i).should('be.visible');
+    cy.contains('Helix Arena').should('not.exist');
+    cy.contains('Deep Raid').should('be.visible');
+    cy.get('[data-testid="roulette-scope-selected-count"]').should('contain.text', 'All library games');
   });
 
   it('uses an imported IGDB game to seed the lobby draft', () => {
