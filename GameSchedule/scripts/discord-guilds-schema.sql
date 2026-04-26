@@ -8,6 +8,9 @@ create table if not exists public.profile_discord_guilds (
   primary key (profile_id, discord_guild_id)
 );
 
+create index if not exists profile_discord_guilds_guild_profile_idx
+  on public.profile_discord_guilds (discord_guild_id, profile_id);
+
 alter table public.profile_discord_guilds enable row level security;
 
 drop policy if exists "Users can read their Discord guild snapshots" on public.profile_discord_guilds;
@@ -129,3 +132,8 @@ $$;
 
 revoke all on function public.replace_discord_guilds(jsonb) from public;
 grant execute on function public.replace_discord_guilds(jsonb) to authenticated;
+
+delete from public.profile_discord_guilds;
+
+drop function if exists public.get_discord_friend_suggestions(integer, integer);
+drop function if exists public.search_discord_profiles(text, integer);

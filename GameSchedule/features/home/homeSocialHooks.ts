@@ -1,12 +1,10 @@
 import * as React from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type {
-  CommunityMemberRecord,
-  CommunityRecord,
+  FriendCodeLookupResult,
   FriendRequestRecord,
   FriendshipRecord,
   PublicProfileCard,
-  SuggestedFriendRecord,
 } from './homeTypes';
 import { supabase } from '../../services/supabaseClient';
 
@@ -15,31 +13,21 @@ type AcceptedFriend = PublicProfileCard & {
 };
 
 export function useSocialState({
-  primaryCommunityId,
   session,
 }: {
-  primaryCommunityId: string | null | undefined;
   session: Session | null;
 }) {
-  const [friendSearch, setFriendSearch] = React.useState('');
+  const [friendCodeInput, setFriendCodeInput] = React.useState('');
+  const [friendCodeLookupAttempted, setFriendCodeLookupAttempted] = React.useState(false);
+  const [friendCodeLookupLoading, setFriendCodeLookupLoading] = React.useState(false);
+  const [friendCodeLookupResult, setFriendCodeLookupResult] = React.useState<FriendCodeLookupResult | null>(null);
   const [friendLoading, setFriendLoading] = React.useState(false);
-  const [friendSearchLoading, setFriendSearchLoading] = React.useState(false);
   const [friendError, setFriendError] = React.useState('');
   const [friendMessage, setFriendMessage] = React.useState('');
   const [friendActionBusyId, setFriendActionBusyId] = React.useState<string | null>(null);
   const [friendships, setFriendships] = React.useState<FriendshipRecord[]>([]);
   const [friendRequests, setFriendRequests] = React.useState<FriendRequestRecord[]>([]);
   const [friendDirectory, setFriendDirectory] = React.useState<Record<string, PublicProfileCard>>({});
-  const [friendSearchResults, setFriendSearchResults] = React.useState<PublicProfileCard[]>([]);
-  const [currentCommunity, setCurrentCommunity] = React.useState<CommunityRecord | null>(null);
-  const [communityMembers, setCommunityMembers] = React.useState<CommunityMemberRecord[]>([]);
-  const [communityProfiles, setCommunityProfiles] = React.useState<PublicProfileCard[]>([]);
-  const [communityLoading, setCommunityLoading] = React.useState(false);
-  const [communityBusy, setCommunityBusy] = React.useState(false);
-  const [communityError, setCommunityError] = React.useState('');
-  const [communityMessage, setCommunityMessage] = React.useState('');
-  const [communityInviteCode, setCommunityInviteCode] = React.useState('');
-  const [communityName, setCommunityName] = React.useState('');
 
   const loadVisibleProfiles = React.useCallback(async (profileIds: string[]) => {
     if (profileIds.length === 0) {
@@ -61,10 +49,13 @@ export function useSocialState({
 
   React.useEffect(() => {
     if (!session?.user) {
+      setFriendCodeInput('');
+      setFriendCodeLookupAttempted(false);
+      setFriendCodeLookupLoading(false);
+      setFriendCodeLookupResult(null);
       setFriendships([]);
       setFriendRequests([]);
       setFriendDirectory({});
-      setFriendSearchResults([]);
       return;
     }
 
@@ -98,7 +89,7 @@ export function useSocialState({
           [
             ...nextFriendships.map((friendship) => friendship.friend_profile_id),
             ...nextRequests.map((request) =>
-              request.requester_profile_id === session.user?.id
+              request.requester_profile_id === session.user.id
                 ? request.addressee_profile_id
                 : request.requester_profile_id,
             ),
@@ -134,101 +125,46 @@ export function useSocialState({
       setFriendLoading(false);
     };
 
-    loadFriendsData();
+    void loadFriendsData();
   }, [loadVisibleProfiles, session]);
 
   React.useEffect(() => {
-    if (!session?.user || !primaryCommunityId) {
-      setCurrentCommunity(null);
-      setCommunityMembers([]);
-      setCommunityProfiles([]);
-      setCommunityLoading(false);
+    setFriendCodeLookupAttempted(false);
+    setFriendCodeLookupResult(null);
+  }, [friendCodeInput]);
+
+  const lookupFriendByCode = React.useCallback(async () => {
+    if (!session?.user) {
       return;
     }
 
-    const loadCommunityData = async () => {
-      setCommunityLoading(true);
-      setCommunityError('');
-
-      const [{ data: communityData, error: communityErrorValue }, { data: membersData, error: membersError }] =
-        await Promise.all([
-          supabase
-            .from('communities')
-            .select('id, name, invite_code, discord_guild_id, created_by_profile_id, created_at')
-            .eq('id', primaryCommunityId)
-            .maybeSingle(),
-          supabase
-            .from('community_members')
-            .select('community_id, profile_id, role, created_at')
-            .eq('community_id', primaryCommunityId),
-        ]);
-
-      if (communityErrorValue || membersError) {
-        setCommunityError(
-          communityErrorValue?.message ?? membersError?.message ?? 'Unable to load your community.',
-        );
-        setCommunityLoading(false);
-        return;
-      }
-
-      const nextCommunity = (communityData as CommunityRecord | null) ?? null;
-      const nextMembers = (membersData as CommunityMemberRecord[] | null) ?? [];
-      const memberProfileIds = nextMembers
-        .map((member) => member.profile_id)
-        .filter((memberId) => memberId && memberId !== session.user.id);
-
-      setCurrentCommunity(nextCommunity);
-      setCommunityMembers(nextMembers);
-
-      if (memberProfileIds.length === 0) {
-        setCommunityProfiles([]);
-        setCommunityLoading(false);
-        return;
-      }
-
-      const { data: communityProfilesData, error: communityProfilesError } =
-        await loadVisibleProfiles(memberProfileIds);
-
-      if (communityProfilesError) {
-        setCommunityError(communityProfilesError.message);
-      } else {
-        setCommunityProfiles(communityProfilesData);
-      }
-
-      setCommunityLoading(false);
-    };
-
-    loadCommunityData();
-  }, [loadVisibleProfiles, primaryCommunityId, session]);
-
-  React.useEffect(() => {
-    if (!session?.user || !primaryCommunityId || friendSearch.trim().length < 2) {
-      setFriendSearchResults([]);
-      setFriendSearchLoading(false);
+    const normalizedCode = friendCodeInput.trim();
+    if (!normalizedCode) {
+      setFriendError('Enter a friend code first.');
+      setFriendCodeLookupAttempted(false);
+      setFriendCodeLookupResult(null);
       return;
     }
 
-    const timeoutId = setTimeout(async () => {
-      setFriendSearchLoading(true);
+    setFriendCodeLookupLoading(true);
+    setFriendError('');
+    setFriendMessage('');
 
-      const query = friendSearch.trim();
-      const { data, error } = await supabase.rpc('search_profiles', {
-        p_query: query,
-        p_limit: 6,
-      });
+    const { data, error } = await supabase.rpc('lookup_friend_code', {
+      p_code: normalizedCode,
+    });
 
-      if (error) {
-        setFriendError(error.message);
-        setFriendSearchResults([]);
-      } else {
-        setFriendSearchResults((data as PublicProfileCard[] | null) ?? []);
-      }
+    if (error) {
+      setFriendError(error.message);
+      setFriendCodeLookupResult(null);
+    } else {
+      const matchedProfile = ((data as FriendCodeLookupResult[] | null) ?? [])[0] ?? null;
+      setFriendCodeLookupResult(matchedProfile);
+    }
 
-      setFriendSearchLoading(false);
-    }, 250);
-
-    return () => clearTimeout(timeoutId);
-  }, [friendSearch, primaryCommunityId, session]);
+    setFriendCodeLookupAttempted(true);
+    setFriendCodeLookupLoading(false);
+  }, [friendCodeInput, session]);
 
   const acceptedFriends = React.useMemo<AcceptedFriend[]>(
     () =>
@@ -264,46 +200,6 @@ export function useSocialState({
       ),
     [friendRequests, session],
   );
-
-  const suggestedFriends = React.useMemo(() => {
-    const pendingIds = new Set(
-      friendRequests
-        .filter((request) => request.status === 'pending')
-        .map((request) =>
-          request.requester_profile_id === session?.user?.id
-            ? request.addressee_profile_id
-            : request.requester_profile_id,
-        ),
-    );
-    const existingFriendIds = new Set(friendships.map((friendship) => friendship.friend_profile_id));
-    const memberRoleByProfileId = communityMembers.reduce<Record<string, CommunityMemberRecord['role']>>(
-      (accumulator, member) => {
-        accumulator[member.profile_id] = member.role;
-        return accumulator;
-      },
-      {},
-    );
-
-    return communityProfiles
-      .filter(
-        (candidate) =>
-          candidate.is_discord_connected &&
-          candidate.id !== session?.user?.id &&
-          !existingFriendIds.has(candidate.id) &&
-          !pendingIds.has(candidate.id),
-      )
-      .map(
-        (candidate): SuggestedFriendRecord => ({
-          ...candidate,
-          community_role: memberRoleByProfileId[candidate.id] ?? 'member',
-        }),
-      )
-      .sort((left, right) => {
-        const leftName = (left.display_name ?? left.username ?? '').toLowerCase();
-        const rightName = (right.display_name ?? right.username ?? '').toLowerCase();
-        return leftName.localeCompare(rightName);
-      });
-  }, [communityMembers, communityProfiles, friendRequests, friendships, session]);
 
   const getFriendRequestLabel = React.useCallback(
     (request: FriendRequestRecord) => {
@@ -344,44 +240,28 @@ export function useSocialState({
 
   return {
     acceptedFriends,
-    communityBusy,
-    communityError,
-    communityInviteCode,
-    communityLoading,
-    communityMembers,
-    communityMessage,
-    communityName,
-    communityProfiles,
-    currentCommunity,
     friendActionBusyId,
+    friendCodeInput,
+    friendCodeLookupAttempted,
+    friendCodeLookupLoading,
+    friendCodeLookupResult,
     friendDirectory,
     friendError,
     friendLoading,
     friendMessage,
     friendRequests,
-    friendSearch,
-    friendSearchLoading,
-    friendSearchResults,
     friendships,
     getFriendRequestLabel,
     getFriendSearchStatus,
     incomingFriendRequests,
+    lookupFriendByCode,
     outgoingFriendRequests,
-    setCommunityBusy,
-    setCommunityError,
-    setCommunityInviteCode,
-    setCommunityMembers,
-    setCommunityMessage,
-    setCommunityName,
-    setCommunityProfiles,
-    setCurrentCommunity,
     setFriendActionBusyId,
+    setFriendCodeInput,
     setFriendDirectory,
     setFriendError,
     setFriendMessage,
     setFriendRequests,
-    setFriendSearch,
     setFriendships,
-    suggestedFriends,
   };
 }

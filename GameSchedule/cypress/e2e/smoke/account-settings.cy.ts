@@ -1,6 +1,7 @@
 type MockProfile = {
   id: string;
   username: string;
+  friend_code: string;
   avatar_url: string | null;
   display_name: string;
   onboarding_complete: boolean;
@@ -25,16 +26,12 @@ type MockAccount = {
 const authStore = new Map<string, MockAccount>();
 const profileUpdateBodies: Record<string, unknown>[] = [];
 const updateUserBodies: Record<string, unknown>[] = [];
-const discordGuildStore: {
-  profile_id: string;
-  discord_guild_id: string;
-  name: string;
-  icon_url: string | null;
-  is_owner: boolean;
-  synced_at: string;
-}[] = [];
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+const makeFriendCode = (seed: string) => {
+  const normalizedSeed = seed.toUpperCase().replace(/[^A-Z0-9]/g, '').padEnd(12, 'X');
+  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}-${normalizedSeed.slice(8, 12)}`;
+};
 
 const makeAccount = (email: string, password: string): MockAccount => {
   const userId = makeUserId(email);
@@ -48,6 +45,7 @@ const makeAccount = (email: string, password: string): MockAccount => {
     profile: {
       id: userId,
       username,
+      friend_code: makeFriendCode(username),
       avatar_url: null,
       display_name: 'Test Pilot',
       onboarding_complete: true,
@@ -233,32 +231,6 @@ const registerMockAccountSettings = (account: MockAccount) => {
     body: [],
   }).as('profileGamesRequest');
 
-  cy.intercept('GET', '**/rest/v1/profile_discord_guilds*', {
-    statusCode: 200,
-    body: discordGuildStore.filter((guild) => guild.profile_id === account.userId),
-  }).as('profileDiscordGuildsRequest');
-
-  cy.intercept('POST', '**/rest/v1/rpc/replace_discord_guilds', (req) => {
-    const guilds = ((req.body as { p_guilds?: typeof discordGuildStore | null })?.p_guilds ?? []) as typeof discordGuildStore;
-
-    discordGuildStore.length = 0;
-    guilds.forEach((guild) => {
-      discordGuildStore.push({
-        profile_id: account.userId,
-        discord_guild_id: guild.discord_guild_id,
-        name: guild.name,
-        icon_url: guild.icon_url ?? null,
-        is_owner: Boolean(guild.is_owner),
-        synced_at: new Date().toISOString(),
-      });
-    });
-
-    req.reply({
-      statusCode: 200,
-      body: guilds.length,
-    });
-  }).as('replaceDiscordGuildsRpc');
-
   cy.intercept('GET', '**/rest/v1/favorite_games*', {
     statusCode: 200,
     body: [],
@@ -309,10 +281,10 @@ describe('account settings', () => {
     authStore.clear();
     profileUpdateBodies.length = 0;
     updateUserBodies.length = 0;
-    discordGuildStore.length = 0;
     account.profile = {
       ...account.profile,
       username: account.email.split('@')[0].toLowerCase(),
+      friend_code: makeFriendCode(account.email.split('@')[0].toLowerCase()),
       display_name: 'Test Pilot',
       avatar_url: null,
       onboarding_complete: true,

@@ -25,28 +25,45 @@ function Invoke-SupabaseQuery {
   Set-Content -Path $payloadPath -Value $payload -NoNewline
 
   try {
-    $response = & curl.exe -sS -X POST "https://api.supabase.com/v1/projects/$ProjectRef/database/query" `
-      -H "Authorization: Bearer $Token" `
-      -H "Content-Type: application/json" `
-      --data-binary "@$payloadPath"
+    $maxAttempts = 5
+
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt += 1) {
+      $response = & curl.exe -sS -X POST "https://api.supabase.com/v1/projects/$ProjectRef/database/query" `
+        -H "Authorization: Bearer $Token" `
+        -H "Content-Type: application/json" `
+        --data-binary "@$payloadPath"
+
+      if ($LASTEXITCODE -ne 0) {
+        throw "curl failed for $Name"
+      }
+
+      if ($response -match 'ThrottlerException|Too Many Requests') {
+        if ($attempt -ge $maxAttempts) {
+          throw "Supabase query failed for ${Name}: $response"
+        }
+
+        $delaySeconds = [Math]::Min(12, [Math]::Pow(2, $attempt))
+        Write-Output "Retrying $Name after throttling (${delaySeconds}s)"
+        Start-Sleep -Seconds $delaySeconds
+        continue
+      }
+
+      if ($response -match '"message"\s*:') {
+        throw "Supabase query failed for ${Name}: $response"
+      }
+
+      Write-Output "Applied $Name"
+      break
+    }
   } finally {
     Remove-Item -LiteralPath $payloadPath -Force -ErrorAction SilentlyContinue
   }
-
-  if ($LASTEXITCODE -ne 0) {
-    throw "curl failed for $Name"
-  }
-
-  if ($response -match '"message"\s*:') {
-    throw "Supabase query failed for ${Name}: $response"
-  }
-
-  Write-Output "Applied $Name"
 }
 
 $queries = @(
   @{ Name = "profiles-table"; Query = "create table if not exists public.profiles (id uuid primary key references auth.users(id) on delete cascade, username text unique, avatar_url text, display_name text, onboarding_complete boolean not null default false, created_at timestamptz not null default now(), updated_at timestamptz not null default now());" },
   @{ Name = "profiles-birthday-columns"; Query = "alter table public.profiles add column if not exists birthday_month integer, add column if not exists birthday_day integer, add column if not exists birthday_visibility text not null default 'private';" },
+  @{ Name = "profiles-friend-code-column"; Query = "alter table public.profiles add column if not exists friend_code text;" },
   @{ Name = "profiles-birthday-visibility-check"; Query = "alter table public.profiles drop constraint if exists profiles_birthday_visibility_check; alter table public.profiles add constraint profiles_birthday_visibility_check check (birthday_visibility in ('private', 'public'));" },
   @{ Name = "profiles-birthday-pair-check"; Query = "alter table public.profiles drop constraint if exists profiles_birthday_pair_check; alter table public.profiles add constraint profiles_birthday_pair_check check ((birthday_month is null and birthday_day is null) or (birthday_month in (1, 3, 5, 7, 8, 10, 12) and birthday_day between 1 and 31) or (birthday_month in (4, 6, 9, 11) and birthday_day between 1 and 30) or (birthday_month = 2 and birthday_day between 1 and 29));" },
   @{ Name = "profiles-rls"; Query = "alter table public.profiles enable row level security;" },
@@ -107,6 +124,7 @@ $queries = @(
   @{ Name = "remove-game-from-library-revoke"; Query = "revoke all on function public.remove_game_from_library(text) from public;" },
   @{ Name = "remove-game-from-library-grant"; Query = "grant execute on function public.remove_game_from_library(text) to authenticated;" },
   @{ Name = "lobbies-add-scheduled-until"; Query = "alter table public.lobbies add column if not exists scheduled_until timestamptz;" },
+  @{ Name = "lobbies-add-meetup-details"; Query = "alter table public.lobbies add column if not exists meetup_details text;" },
   @{ Name = "lobbies-drop-constraint"; Query = "alter table public.lobbies drop constraint if exists lobbies_scheduled_until_after_start;" },
   @{ Name = "lobbies-add-constraint"; Query = "alter table public.lobbies add constraint lobbies_scheduled_until_after_start check (scheduled_until is null or scheduled_for is null or scheduled_until > scheduled_for);" },
   @{ Name = "lobby-members-table"; Query = "create table if not exists public.lobby_members (lobby_id uuid not null references public.lobbies(id) on delete cascade, profile_id uuid not null references public.profiles(id) on delete cascade, role text not null default 'member' check (role in ('host','member')), rsvp_status text not null default 'pending' check (rsvp_status in ('accepted','pending','declined')), created_at timestamptz not null default now(), primary key (lobby_id, profile_id));" },
@@ -189,14 +207,31 @@ $queries = @(
   @{ Name = "community-join-revoke"; Query = "revoke all on function public.join_community_by_invite(text) from public;" },
   @{ Name = "community-join-grant"; Query = "grant execute on function public.join_community_by_invite(text) to authenticated;" },
   @{ Name = "discord-columns"; Query = "alter table public.profiles add column if not exists discord_user_id text, add column if not exists discord_username text, add column if not exists discord_avatar_url text, add column if not exists discord_connected_at timestamptz;" },
+  @{ Name = "friend-code-generator-function"; Query = 'create or replace function public.generate_friend_code() returns text language plpgsql security definer set search_path = public as $$ declare alphabet constant text := ''ABCDEFGHJKLMNPQRSTUVWXYZ23456789''; next_code text; code_body text; position integer; begin loop code_body := ''''; for position in 1..12 loop code_body := code_body || substr(alphabet, 1 + floor(random() * length(alphabet))::integer, 1); end loop; next_code := ''GS-'' || substr(code_body, 1, 4) || ''-'' || substr(code_body, 5, 4) || ''-'' || substr(code_body, 9, 4); exit when not exists (select 1 from public.profiles where lower(friend_code) = lower(next_code)); end loop; return next_code; end; $$;' },
+  @{ Name = "friend-code-backfill"; Query = 'do $$ declare profile_row record; begin for profile_row in select id from public.profiles where friend_code is null or btrim(friend_code) = '''' loop update public.profiles set friend_code = public.generate_friend_code() where id = profile_row.id; end loop; end $$;' },
+  @{ Name = "friend-code-default"; Query = "alter table public.profiles alter column friend_code set default public.generate_friend_code();" },
+  @{ Name = "friend-code-index"; Query = "create unique index if not exists profiles_friend_code_lower_key on public.profiles (lower(friend_code));" },
+  @{ Name = "friend-code-not-null"; Query = "alter table public.profiles alter column friend_code set not null;" },
+  @{ Name = "lookup-friend-code-function"; Query = 'create or replace function public.lookup_friend_code(p_code text) returns table (id uuid, username text, avatar_url text, display_name text, birthday_label text, is_discord_connected boolean) language plpgsql security definer set search_path = public as $$ declare normalized_code text := upper(trim(coalesce(p_code, ''''))); begin if auth.uid() is null then raise exception ''Authentication required''; end if; if normalized_code = '''' then return; end if; return query select profiles.id, profiles.username, coalesce(nullif(btrim(profiles.avatar_url), ''''), nullif(btrim(profiles.discord_avatar_url), '''')) as avatar_url, profiles.display_name, case when profiles.birthday_visibility = ''public'' and profiles.birthday_month is not null and profiles.birthday_day is not null then to_char(make_date(2000, profiles.birthday_month, profiles.birthday_day), ''FMMonth'') || '' '' || profiles.birthday_day::text else null end as birthday_label, profiles.discord_user_id is not null as is_discord_connected from public.profiles profiles where lower(profiles.friend_code) = lower(normalized_code) and profiles.id <> auth.uid() and not exists (select 1 from public.friends where friends.profile_id = auth.uid() and friends.friend_profile_id = profiles.id) and not exists (select 1 from public.friend_requests where friend_requests.status = ''pending'' and ((friend_requests.requester_profile_id = auth.uid() and friend_requests.addressee_profile_id = profiles.id) or (friend_requests.addressee_profile_id = auth.uid() and friend_requests.requester_profile_id = profiles.id))) limit 1; end; $$;' },
+  @{ Name = "lookup-friend-code-revoke"; Query = "revoke all on function public.lookup_friend_code(text) from public;" },
+  @{ Name = "lookup-friend-code-grant"; Query = "grant execute on function public.lookup_friend_code(text) to authenticated;" },
+  @{ Name = "regenerate-friend-code-function"; Query = 'create or replace function public.regenerate_friend_code() returns text language plpgsql security definer set search_path = public as $$ declare next_code text; begin if auth.uid() is null then raise exception ''Authentication required''; end if; next_code := public.generate_friend_code(); update public.profiles set friend_code = next_code where id = auth.uid(); return next_code; end; $$;' },
+  @{ Name = "regenerate-friend-code-revoke"; Query = "revoke all on function public.regenerate_friend_code() from public;" },
+  @{ Name = "regenerate-friend-code-grant"; Query = "grant execute on function public.regenerate_friend_code() to authenticated;" },
   @{ Name = "discord-index"; Query = "create unique index if not exists profiles_discord_user_id_key on public.profiles (discord_user_id) where discord_user_id is not null;" },
-  @{ Name = "visible-profiles-function"; Query = 'create or replace function public.get_visible_profiles(p_profile_ids uuid[]) returns table (id uuid, username text, avatar_url text, display_name text, birthday_label text, is_discord_connected boolean) language plpgsql security definer set search_path = public as $$ declare viewer_primary_community_id uuid; begin if auth.uid() is null then raise exception ''Authentication required''; end if; select profiles.primary_community_id into viewer_primary_community_id from public.profiles where profiles.id = auth.uid(); return query with requested_profiles as (select distinct requested_profile_id from unnest(coalesce(p_profile_ids, ''{}''::uuid[])) requested_profile_id where requested_profile_id is not null), visible_profile_ids as (select requested_profiles.requested_profile_id as profile_id from requested_profiles where requested_profiles.requested_profile_id = auth.uid() or exists (select 1 from public.friends where friends.profile_id = auth.uid() and friends.friend_profile_id = requested_profiles.requested_profile_id) or (viewer_primary_community_id is not null and exists (select 1 from public.profiles visible_profiles where visible_profiles.id = requested_profiles.requested_profile_id and visible_profiles.primary_community_id = viewer_primary_community_id))) select profiles.id, profiles.username, coalesce(nullif(btrim(profiles.avatar_url), ''''), nullif(btrim(profiles.discord_avatar_url), '''')) as avatar_url, profiles.display_name, case when profiles.birthday_visibility = ''public'' and profiles.birthday_month is not null and profiles.birthday_day is not null then to_char(make_date(2000, profiles.birthday_month, profiles.birthday_day), ''FMMonth'') || '' '' || profiles.birthday_day::text else null end as birthday_label, profiles.discord_user_id is not null as is_discord_connected from public.profiles profiles join visible_profile_ids on visible_profile_ids.profile_id = profiles.id order by coalesce(lower(profiles.display_name), lower(profiles.username), ''''), profiles.created_at desc; end; $$;' },
+  @{ Name = "visible-profiles-function"; Query = 'create or replace function public.get_visible_profiles(p_profile_ids uuid[]) returns table (id uuid, username text, avatar_url text, display_name text, birthday_label text, is_discord_connected boolean) language plpgsql security definer set search_path = public as $$ declare viewer_primary_community_id uuid; begin if auth.uid() is null then raise exception ''Authentication required''; end if; select profiles.primary_community_id into viewer_primary_community_id from public.profiles where profiles.id = auth.uid(); return query with requested_profiles as (select distinct requested_profile_id from unnest(coalesce(p_profile_ids, ''{}''::uuid[])) requested_profile_id where requested_profile_id is not null), visible_profile_ids as (select requested_profiles.requested_profile_id as profile_id from requested_profiles where requested_profiles.requested_profile_id = auth.uid() or exists (select 1 from public.friends where friends.profile_id = auth.uid() and friends.friend_profile_id = requested_profiles.requested_profile_id) or exists (select 1 from public.friend_requests where friend_requests.status = ''pending'' and ((friend_requests.requester_profile_id = auth.uid() and friend_requests.addressee_profile_id = requested_profiles.requested_profile_id) or (friend_requests.addressee_profile_id = auth.uid() and friend_requests.requester_profile_id = requested_profiles.requested_profile_id))) or (viewer_primary_community_id is not null and exists (select 1 from public.profiles visible_profiles where visible_profiles.id = requested_profiles.requested_profile_id and visible_profiles.primary_community_id = viewer_primary_community_id))) select profiles.id, profiles.username, coalesce(nullif(btrim(profiles.avatar_url), ''''), nullif(btrim(profiles.discord_avatar_url), '''')) as avatar_url, profiles.display_name, case when profiles.birthday_visibility = ''public'' and profiles.birthday_month is not null and profiles.birthday_day is not null then to_char(make_date(2000, profiles.birthday_month, profiles.birthday_day), ''FMMonth'') || '' '' || profiles.birthday_day::text else null end as birthday_label, profiles.discord_user_id is not null as is_discord_connected from public.profiles profiles join visible_profile_ids on visible_profile_ids.profile_id = profiles.id order by coalesce(lower(profiles.display_name), lower(profiles.username), ''''), profiles.created_at desc; end; $$;' },
   @{ Name = "search-profiles-drop"; Query = "drop function if exists public.search_profiles(text, integer);" },
   @{ Name = "search-profiles-function"; Query = 'create function public.search_profiles(p_query text, p_limit integer default 6) returns table (id uuid, username text, avatar_url text, display_name text, birthday_label text, is_discord_connected boolean) language plpgsql security definer set search_path = public as $$ declare normalized_query text := lower(trim(coalesce(p_query, ''''))); safe_limit integer := greatest(1, least(coalesce(p_limit, 6), 20)); viewer_primary_community_id uuid; begin if auth.uid() is null then raise exception ''Authentication required''; end if; if char_length(normalized_query) < 2 then return; end if; select profiles.primary_community_id into viewer_primary_community_id from public.profiles where profiles.id = auth.uid(); if viewer_primary_community_id is null then return; end if; return query select profiles.id, profiles.username, coalesce(nullif(btrim(profiles.avatar_url), ''''), nullif(btrim(profiles.discord_avatar_url), '''')) as avatar_url, profiles.display_name, case when profiles.birthday_visibility = ''public'' and profiles.birthday_month is not null and profiles.birthday_day is not null then to_char(make_date(2000, profiles.birthday_month, profiles.birthday_day), ''FMMonth'') || '' '' || profiles.birthday_day::text else null end as birthday_label, profiles.discord_user_id is not null as is_discord_connected from public.profiles profiles where profiles.id <> auth.uid() and profiles.primary_community_id = viewer_primary_community_id and (coalesce(lower(profiles.username), '''') like ''%'' || normalized_query || ''%'' or coalesce(lower(profiles.display_name), '''') like ''%'' || normalized_query || ''%'') order by coalesce(lower(profiles.display_name), lower(profiles.username), ''''), profiles.created_at desc limit safe_limit; end; $$;' },
   @{ Name = "visible-profiles-revoke"; Query = "revoke all on function public.get_visible_profiles(uuid[]) from public;" },
   @{ Name = "visible-profiles-grant"; Query = "grant execute on function public.get_visible_profiles(uuid[]) to authenticated;" },
   @{ Name = "search-profiles-revoke"; Query = "revoke all on function public.search_profiles(text, integer) from public;" },
-  @{ Name = "search-profiles-grant"; Query = "grant execute on function public.search_profiles(text, integer) to authenticated;" }
+  @{ Name = "search-profiles-grant"; Query = "grant execute on function public.search_profiles(text, integer) to authenticated;" },
+  @{ Name = "discord-guilds-guild-profile-index"; Query = "create index if not exists profile_discord_guilds_guild_profile_idx on public.profile_discord_guilds (discord_guild_id, profile_id);" },
+  @{ Name = "discord-guilds-cleanup"; Query = "delete from public.profile_discord_guilds;" },
+  @{ Name = "discord-friend-suggestions-drop"; Query = "drop function if exists public.get_discord_friend_suggestions(integer, integer);" },
+  @{ Name = "search-discord-profiles-drop"; Query = "drop function if exists public.search_discord_profiles(text, integer);" },
+  @{ Name = "create-lobby-with-invites-drop"; Query = "drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text);" },
+  @{ Name = "create-lobby-with-invites-function"; Query = 'create or replace function public.create_lobby_with_invites(p_game_id text, p_title text, p_scheduled_for timestamptz default null, p_scheduled_until timestamptz default null, p_is_private boolean default true, p_invited_profile_ids uuid[] default ''{}''::uuid[], p_meetup_details text default null) returns public.lobbies language plpgsql security definer set search_path = public as $$ declare created_lobby public.lobbies; invited_profile_id uuid; begin if auth.uid() is null then raise exception ''Authentication required''; end if; if trim(coalesce(p_title, '''')) = '''' then raise exception ''Lobby title is required''; end if; insert into public.lobbies (host_profile_id, game_id, title, scheduled_for, scheduled_until, meetup_details, discord_guild_id, discord_guild_name, discord_guild_icon_url, is_private, status) values (auth.uid(), p_game_id, trim(p_title), p_scheduled_for, p_scheduled_until, nullif(btrim(p_meetup_details), ''''), null, null, null, coalesce(p_is_private, true), ''scheduled'') returning * into created_lobby; insert into public.lobby_members (lobby_id, profile_id, role, rsvp_status, responded_at) values (created_lobby.id, auth.uid(), ''host'', ''accepted'', now()) on conflict (lobby_id, profile_id) do update set role = excluded.role, rsvp_status = excluded.rsvp_status, responded_at = excluded.responded_at; foreach invited_profile_id in array coalesce(p_invited_profile_ids, ''{}''::uuid[]) loop insert into public.lobby_members (lobby_id, profile_id, role, rsvp_status) values (created_lobby.id, invited_profile_id, ''member'', ''pending'') on conflict (lobby_id, profile_id) do update set role = excluded.role, rsvp_status = excluded.rsvp_status; end loop; return created_lobby; end; $$;' }
 )
 
 foreach ($query in $queries) {

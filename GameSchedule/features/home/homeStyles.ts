@@ -158,6 +158,21 @@ export const styles = StyleSheet.create({
   segmented: {
     marginTop: 4,
   },
+  mobileSectionNavScroller: {
+    marginTop: 4,
+  },
+  mobileSectionNavRow: {
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 12,
+  },
+  mobileSectionNavButton: {
+    borderRadius: 999,
+  },
+  mobileSectionNavButtonContent: {
+    minHeight: 36,
+    paddingHorizontal: 4,
+  },
   heroCard: {
     backgroundColor: '#161B31',
     borderColor: '#2C3560',
@@ -349,6 +364,24 @@ export const styles = StyleSheet.create({
     gap: 8,
     marginTop: 14,
     paddingTop: 4,
+  },
+  friendCodeSurface: {
+    alignItems: 'center',
+    backgroundColor: '#10162A',
+    borderColor: '#2C3560',
+    borderRadius: 18,
+    borderWidth: 1,
+    marginTop: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+  },
+  friendCodeValue: {
+    color: '#F5F7FF',
+    fontFamily: isWeb ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textAlign: 'center',
   },
   avatar: {
     backgroundColor: '#7C5CFF',

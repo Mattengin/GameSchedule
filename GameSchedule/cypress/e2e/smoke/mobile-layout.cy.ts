@@ -1,6 +1,7 @@
 type MockProfile = {
   id: string;
   username: string;
+  friend_code: string;
   avatar_url: string | null;
   display_name: string;
   onboarding_complete: boolean;
@@ -44,6 +45,10 @@ type MockProfileGameRow = {
 const authStore = new Map<string, MockAccount>();
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+const makeFriendCode = (seed: string) => {
+  const normalizedSeed = seed.toUpperCase().replace(/[^A-Z0-9]/g, '').padEnd(12, 'X');
+  return `GS-${normalizedSeed.slice(0, 4)}-${normalizedSeed.slice(4, 8)}-${normalizedSeed.slice(8, 12)}`;
+};
 
 const makeAccount = (email: string, password: string): MockAccount => {
   const userId = makeUserId(email);
@@ -56,6 +61,7 @@ const makeAccount = (email: string, password: string): MockAccount => {
     profile: {
       id: userId,
       username,
+      friend_code: makeFriendCode(username),
       avatar_url: null,
       display_name: 'Mobile Layout Tester',
       onboarding_complete: true,
@@ -118,6 +124,18 @@ const assertNoHorizontalOverflow = () => {
       );
     });
   });
+};
+
+const clickSectionNav = (section: string) => {
+  cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
+    $button[0].scrollIntoView({
+      behavior: 'instant',
+      block: 'nearest',
+      inline: 'center',
+    });
+  });
+
+  cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });
 };
 
 const registerMobileLayoutMocks = (account: MockAccount, profileGames: MockProfileGameRow[]) => {
@@ -187,11 +205,6 @@ const registerMobileLayoutMocks = (account: MockAccount, profileGames: MockProfi
     body: [],
   }).as('roulettePoolRequest');
 
-  cy.intercept('GET', '**/rest/v1/profile_discord_guilds*', {
-    statusCode: 200,
-    body: [],
-  }).as('discordGuildsRequest');
-
   cy.intercept('GET', '**/rest/v1/friends*', {
     statusCode: 200,
     body: [],
@@ -227,10 +240,6 @@ const registerMobileLayoutMocks = (account: MockAccount, profileGames: MockProfi
     body: [],
   }).as('visibleProfilesRpc');
 
-  cy.intercept('POST', '**/rest/v1/rpc/search_profiles', {
-    statusCode: 200,
-    body: [],
-  }).as('searchProfilesRpc');
 };
 
 describe('mobile layout smoke', () => {
@@ -348,26 +357,27 @@ describe('mobile layout smoke', () => {
     cy.contains(/play together, faster/i).should('be.visible');
     assertNoHorizontalOverflow();
 
-    cy.contains('button', /^Games$/).click();
-    cy.contains(/^Game library$/).should('be.visible');
+    clickSectionNav('games');
+    cy.contains(/^Game library$/).scrollIntoView().should('be.visible');
     assertNoHorizontalOverflow();
 
-    cy.contains('button', /^Lobbies$/).click();
-    cy.contains(/^Create event$/).should('be.visible');
-    cy.get('[data-testid="lobby-game-carousel"]').should('be.visible');
+    clickSectionNav('lobbies');
+    cy.contains(/^Create event$/).scrollIntoView().should('be.visible');
+    cy.get('[data-testid="lobby-game-carousel"]').scrollIntoView().should('be.visible');
     cy.get('[data-testid="lobby-game-carousel-scroll"]').should('exist');
     assertNoHorizontalOverflow();
 
-    cy.contains('button', /^Friends$/).click();
-    cy.contains(/^Manual search$/).should('be.visible');
+    clickSectionNav('friends');
+    cy.contains(/^Add by friend code$/).scrollIntoView().should('be.visible');
     assertNoHorizontalOverflow();
 
-    cy.contains('button', /^Profile$/).click();
-    cy.contains(/^Profile details$/).should('be.visible');
+    clickSectionNav('profile');
+    cy.contains(/^Your friend code$/).scrollIntoView().should('be.visible');
+    cy.contains(/^Profile details$/).scrollIntoView().should('be.visible');
     assertNoHorizontalOverflow();
   });
 
-  it('lets users return to Home after the onboarding redirect opens Friends first', () => {
+  it('keeps Home reachable without auto-redirecting into Friends', () => {
     cy.viewport(390, 844);
 
     cy.visit('/');
@@ -375,9 +385,11 @@ describe('mobile layout smoke', () => {
     cy.wait('@signinRequest');
     cy.wait('@profilesRequest');
 
-    cy.contains(/^Friends & contacts$/).should('be.visible');
-    cy.contains('button', /^Home$/).click();
-    cy.contains(/play together, faster/i).should('be.visible');
+    cy.contains(/play together, faster/i).scrollIntoView().should('be.visible');
+    clickSectionNav('friends');
+    cy.contains(/^Add by friend code$/).scrollIntoView().should('be.visible');
+    clickSectionNav('dashboard');
+    cy.contains(/play together, faster/i).scrollIntoView().should('be.visible');
     assertNoHorizontalOverflow();
   });
 });

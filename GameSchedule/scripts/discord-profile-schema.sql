@@ -51,6 +51,21 @@ begin
         where friends.profile_id = auth.uid()
           and friends.friend_profile_id = requested_profiles.requested_profile_id
       )
+      or exists (
+        select 1
+        from public.friend_requests
+        where friend_requests.status = 'pending'
+          and (
+            (
+              friend_requests.requester_profile_id = auth.uid()
+              and friend_requests.addressee_profile_id = requested_profiles.requested_profile_id
+            )
+            or (
+              friend_requests.addressee_profile_id = auth.uid()
+              and friend_requests.requester_profile_id = requested_profiles.requested_profile_id
+            )
+          )
+      )
       or (
         viewer_primary_community_id is not null
         and exists (

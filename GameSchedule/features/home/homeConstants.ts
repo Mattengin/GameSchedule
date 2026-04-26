@@ -69,7 +69,7 @@ export const fallbackGames: GameRecord[] = [
 export const notifications = [
   { label: 'Invite', message: 'NovaHex invited you to a Helix Arena lobby.', age: '2m ago' },
   { label: 'Reminder', message: 'Deep Raid Warmup starts in 1 hour.', age: '58m ago' },
-  { label: 'System', message: 'Discord sync is ready when you decide to connect it.', age: 'Today' },
+  { label: 'System', message: 'Friend codes keep discovery intentional and private.', age: 'Today' },
 ];
 
 export const availabilityDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -90,4 +90,4 @@ export const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
 export const discordClientId = process.env.EXPO_PUBLIC_DISCORD_CLIENT_ID?.trim() ?? '';
 export const discordStateStorageKey = 'gameschedule-discord-oauth-state';
 export const profileSelectFields =
-  'id, username, avatar_url, display_name, onboarding_complete, birthday_month, birthday_day, birthday_visibility, busy_visibility, primary_community_id, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';
+  'id, username, friend_code, avatar_url, display_name, onboarding_complete, birthday_month, birthday_day, birthday_visibility, busy_visibility, primary_community_id, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';

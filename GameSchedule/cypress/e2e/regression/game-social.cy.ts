@@ -599,6 +599,16 @@ const registerMockGameSocial = () => {
     body: [],
   }).as('friendRequestsRequest');
 
+  cy.intercept('POST', '**/rest/v1/rpc/get_discord_friend_suggestions', {
+    statusCode: 200,
+    body: [],
+  }).as('discordSuggestionsRpc');
+
+  cy.intercept('POST', '**/rest/v1/rpc/search_discord_profiles', {
+    statusCode: 200,
+    body: [],
+  }).as('searchDiscordProfilesRpc');
+
   cy.intercept('GET', '**/rest/v1/communities*', {
     statusCode: 200,
     body: null,
@@ -649,11 +659,7 @@ describe('game social persistence', () => {
   it('favorites a game and shows it in the profile favorites section', () => {
     signInAndOpenGames();
 
-    cy.contains('Helix Arena')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Favorite$/).click();
-      });
+    cy.get('[data-testid="game-library-favorite-helix-arena"]').click();
 
     cy.contains(/game added to favorites/i).should('exist');
     cy.contains('Profile').click();
@@ -664,11 +670,7 @@ describe('game social persistence', () => {
   it('adds a game to the roulette pool and shows it on the roulette screen', () => {
     signInAndOpenGames();
 
-    cy.contains('Deep Raid')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Add to pool$/).click();
-      });
+    cy.get('[data-testid="game-library-pool-deep-raid"]').click();
 
     cy.contains(/game added to roulette pool/i).should('be.visible');
     cy.contains('Roulette').click();
@@ -687,19 +689,11 @@ describe('game social persistence', () => {
   it('removes games from favorites and roulette after they were added', () => {
     signInAndOpenGames();
 
-    cy.contains('Wild Rally Online')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Favorite$/).click();
-        cy.contains(/^Add to pool$/).click();
-      });
+    cy.get('[data-testid="game-library-favorite-wild-rally-online"]').click();
+    cy.get('[data-testid="game-library-pool-wild-rally-online"]').click();
 
-    cy.contains('Wild Rally Online')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Unfavorite$/).click();
-        cy.contains(/^Remove from pool$/).click();
-      });
+    cy.get('[data-testid="game-library-favorite-wild-rally-online"]').click();
+    cy.get('[data-testid="game-library-pool-wild-rally-online"]').click();
 
     cy.contains('Profile').click();
     cy.contains('Favorite games').scrollIntoView().should('exist');
