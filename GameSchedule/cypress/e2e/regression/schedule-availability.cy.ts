@@ -286,10 +286,14 @@ describe('schedule and availability', () => {
   });
 
   beforeEach(() => {
-    registerMockSchedule();
+    authStore.clear();
+    availabilitySettingsStore.clear();
+    availabilityWindowsStore.clear();
+    lobbyStore.clear();
   });
 
   it('reschedules a lobby with a persisted end time', () => {
+    registerMockSchedule();
     cy.visit('/');
     cy.signupUi(email, password);
 
@@ -313,6 +317,7 @@ describe('schedule and availability', () => {
   });
 
   it('adds and deletes a recurring availability window', () => {
+    registerMockSchedule();
     cy.visit('/');
     cy.signupUi(email, password);
 
@@ -335,6 +340,25 @@ describe('schedule and availability', () => {
     cy.get('[data-testid="delete-availability-window-0"]').click();
     cy.wait('@availabilityWindowsDelete');
     cy.contains(/availability window removed/i).should('be.visible');
+  });
+
+  it('saves the auto-decline preference with the expected availability settings payload', () => {
+    registerMockSchedule();
+    cy.visit('/');
+    cy.signupUi(email, password);
+
+    cy.contains('Schedule').click();
+    cy.contains('Auto-decline outside hours').click();
+    cy.get('[data-testid="save-availability-settings-button"]').click();
+
+    cy.wait('@availabilitySettingsUpsert')
+      .its('request.body')
+      .should((body) => {
+        expect(body.profile_id).to.equal(makeUserId(email));
+        expect(body.auto_decline_outside_hours).to.equal(true);
+      });
+
+    cy.contains(/availability settings saved/i).should('be.visible');
   });
 
   it('validates that a lobby end time must be after its start time', () => {

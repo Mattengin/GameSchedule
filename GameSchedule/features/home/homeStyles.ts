@@ -1,4 +1,7 @@
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
+
+const isWeb = Platform.OS === 'web';
+const webDesktopShellMaxWidth = 1180;
 
 export const styles = StyleSheet.create({
   loginScreen: {
@@ -41,10 +44,93 @@ export const styles = StyleSheet.create({
     backgroundColor: '#0B1020',
   },
   content: {
-    paddingHorizontal: 18,
-    paddingTop: 64,
+    paddingHorizontal: isWeb ? 24 : 18,
+    paddingTop: isWeb ? 40 : 64,
     paddingBottom: 120,
+  },
+  contentShell: {
+    width: '100%',
+    alignSelf: 'center',
+    maxWidth: isWeb ? webDesktopShellMaxWidth : undefined,
     gap: 16,
+  },
+  sectionStack: {
+    gap: 16,
+  },
+  desktopSplitLayout: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  desktopMainColumn: {
+    flex: 1,
+    minWidth: 0,
+    gap: 16,
+  },
+  desktopSideColumn: {
+    flexBasis: 420,
+    flexGrow: 1,
+    minWidth: 320,
+    maxWidth: 440,
+    gap: 16,
+  },
+  desktopBalancedColumn: {
+    flex: 1,
+    minWidth: 320,
+    gap: 16,
+  },
+  desktopPanelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  desktopPanelTile: {
+    flexGrow: 1,
+    flexBasis: 340,
+    minWidth: 320,
+  },
+  desktopFullSpan: {
+    width: '100%',
+    flexBasis: '100%',
+  },
+  desktopHeroStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'stretch',
+    gap: 16,
+  },
+  desktopHeroPane: {
+    flex: 1.35,
+    minWidth: 420,
+    alignSelf: 'stretch',
+  },
+  desktopStatsPane: {
+    flex: 1,
+    minWidth: 300,
+    gap: 12,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+  },
+  desktopStatsStack: {
+    flexDirection: 'column',
+    flexWrap: 'nowrap',
+  },
+  desktopCardStretch: {
+    alignSelf: 'stretch',
+  },
+  desktopFriendsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  desktopFriendTile: {
+    flexGrow: 1,
+    flexBasis: 340,
+    minWidth: 320,
+    maxWidth: 420,
   },
   eyebrow: {
     color: '#7DFFB3',
@@ -72,11 +158,36 @@ export const styles = StyleSheet.create({
   segmented: {
     marginTop: 4,
   },
+  mobileSectionNavScroller: {
+    marginTop: 4,
+  },
+  mobileSectionNavRow: {
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 12,
+  },
+  mobileSectionNavButtonWrap: {
+    position: 'relative',
+  },
+  mobileSectionNavButton: {
+    borderRadius: 999,
+  },
+  mobileSectionNavButtonContent: {
+    minHeight: 36,
+    paddingHorizontal: 4,
+  },
+  mobileSectionNavBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -4,
+    backgroundColor: '#FF6B81',
+  },
   heroCard: {
     backgroundColor: '#161B31',
     borderColor: '#2C3560',
     borderRadius: 28,
     borderWidth: 1,
+    width: isWeb ? '100%' : undefined,
     padding: 20,
     gap: 14,
   },
@@ -106,6 +217,8 @@ export const styles = StyleSheet.create({
   statCard: {
     minWidth: 100,
     flexGrow: 1,
+    flexBasis: isWeb ? 220 : undefined,
+    maxWidth: isWeb ? 320 : undefined,
     backgroundColor: '#14192D',
     borderRadius: 22,
     borderWidth: 1,
@@ -123,6 +236,7 @@ export const styles = StyleSheet.create({
   panel: {
     backgroundColor: '#151A2D',
     borderRadius: 24,
+    width: isWeb ? '100%' : undefined,
   },
   sectionHeader: {
     gap: 4,
@@ -186,9 +300,23 @@ export const styles = StyleSheet.create({
     gap: 10,
     alignItems: 'center',
   },
-  igdbSearchInput: {
+  igdbSearchStack: {
+    gap: 10,
+    alignItems: 'stretch',
+  },
+  igdbSearchInputInline: {
     flexGrow: 1,
-    minWidth: 240,
+    flexBasis: isWeb ? 620 : undefined,
+    minWidth: isWeb ? 0 : 240,
+    maxWidth: isWeb ? 760 : undefined,
+  },
+  igdbSearchInputStacked: {
+    width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
+  },
+  igdbSearchButton: {
+    alignSelf: 'flex-start',
   },
   igdbDismissRow: {
     alignItems: 'flex-end',
@@ -245,6 +373,24 @@ export const styles = StyleSheet.create({
     gap: 8,
     marginTop: 14,
     paddingTop: 4,
+  },
+  friendCodeSurface: {
+    alignItems: 'center',
+    backgroundColor: '#10162A',
+    borderColor: '#2C3560',
+    borderRadius: 18,
+    borderWidth: 1,
+    marginTop: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+  },
+  friendCodeValue: {
+    color: '#F5F7FF',
+    fontFamily: isWeb ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textAlign: 'center',
   },
   avatar: {
     backgroundColor: '#7C5CFF',
@@ -308,6 +454,50 @@ export const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 2,
   },
+  gameLibraryCardRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+  },
+  gameLibraryMeta: {
+    flex: 1,
+    minWidth: 0,
+  },
+  gameLibraryCoverImage: {
+    backgroundColor: '#1F2744',
+    borderRadius: 16,
+    height: 120,
+    width: 88,
+  },
+  gameLibraryCoverImageCompact: {
+    height: 96,
+    width: 72,
+  },
+  gameLibraryCoverPlaceholder: {
+    alignItems: 'center',
+    backgroundColor: '#1D2543',
+    borderColor: '#32417E',
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 120,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    width: 88,
+  },
+  gameLibraryCoverPlaceholderText: {
+    color: '#F5F7FF',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  gameLibraryCoverPlaceholderSubtext: {
+    color: '#9AA5CA',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
   subsectionTitle: {
     color: '#F5F7FF',
     fontWeight: '700',
@@ -334,6 +524,7 @@ export const styles = StyleSheet.create({
     gap: 12,
     marginTop: 14,
     padding: 14,
+    width: isWeb ? '100%' : undefined,
   },
   schedulerStepHeader: {
     alignItems: 'center',
@@ -356,14 +547,96 @@ export const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
+  lobbyGameCarousel: {
+    gap: 10,
+    width: '100%',
+  },
+  lobbyGameCarouselHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  lobbyGameCarouselStatus: {
+    color: '#95A0C8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  lobbyGameCarouselControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  lobbyGameCarouselDesktopTrack: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  lobbyGameCarouselDesktopCard: {
+    flex: 1,
+    minWidth: 0,
+    maxWidth: undefined,
+  },
+  lobbyGameCarouselMobileTrack: {
+    paddingRight: 12,
+  },
+  lobbyGameCarouselMobileCard: {
+    flexGrow: 0,
+    minWidth: undefined,
+    maxWidth: undefined,
+  },
+  lobbyGameCardMeta: {
+    gap: 4,
+    minWidth: 0,
+  },
+  lobbyGameCoverImage: {
+    alignSelf: 'center',
+    backgroundColor: '#1F2744',
+    borderRadius: 16,
+    height: 128,
+    marginBottom: 4,
+    width: 92,
+  },
+  lobbyGameCoverPlaceholder: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: '#1D2543',
+    borderColor: '#32417E',
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 128,
+    justifyContent: 'center',
+    marginBottom: 4,
+    paddingHorizontal: 10,
+    width: 92,
+  },
+  lobbyGameCoverPlaceholderText: {
+    color: '#F5F7FF',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  lobbyGameCoverPlaceholderSubtext: {
+    color: '#9AA5CA',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
+  inlineLoadingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
   gamePickCard: {
     backgroundColor: '#171D35',
     borderColor: '#2C3560',
     borderRadius: 18,
     borderWidth: 1,
     flexGrow: 1,
+    flexBasis: isWeb ? 240 : undefined,
     gap: 8,
     minWidth: 150,
+    maxWidth: isWeb ? 280 : undefined,
     padding: 12,
   },
   gamePickCardSelected: {
@@ -384,6 +657,9 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     gap: 12,
+    width: isWeb ? '100%' : undefined,
+    maxWidth: isWeb ? 720 : undefined,
+    alignSelf: isWeb ? 'center' : undefined,
   },
   rouletteValue: {
     color: '#FFFFFF',
@@ -405,6 +681,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 12,
     padding: 14,
+    width: isWeb ? '100%' : undefined,
   },
   availabilitySummaryValue: {
     color: '#F5F7FF',
@@ -430,6 +707,7 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 12,
     padding: 14,
+    width: isWeb ? '100%' : undefined,
   },
   eventTimeHeader: {
     alignItems: 'flex-start',
@@ -702,6 +980,31 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 10,
   },
+  notificationMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  notificationStatusChip: {
+    backgroundColor: '#252B49',
+  },
+  lobbyAddGameDialog: {
+    alignSelf: 'center',
+  },
+  lobbyAddGameDialogScrollShell: {
+    borderTopColor: '#2A3150',
+    borderTopWidth: 1,
+    paddingHorizontal: 0,
+  },
+  lobbyAddGameDialogScrollArea: {
+    maxHeight: 420,
+  },
+  lobbyAddGameDialogContent: {
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingBottom: 12,
+  },
   divider: {
     backgroundColor: '#2A3150',
     marginVertical: 12,
@@ -713,6 +1016,9 @@ export const styles = StyleSheet.create({
   },
   profileSummary: {
     gap: 6,
+  },
+  profileCardStretch: {
+    height: '100%',
   },
   statusChip: {
     alignSelf: 'flex-start',

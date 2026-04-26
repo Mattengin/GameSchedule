@@ -11,6 +11,7 @@ export type SectionKey =
 export type Profile = {
   id: string;
   username: string | null;
+  friend_code: string;
   avatar_url: string | null;
   display_name: string | null;
   onboarding_complete: boolean;
@@ -33,6 +34,8 @@ export type PublicProfileCard = {
   birthday_label: string | null;
   is_discord_connected: boolean;
 };
+
+export type FriendCodeLookupResult = PublicProfileCard;
 
 export type DiscordGuildRecord = {
   profile_id: string;
@@ -57,10 +60,6 @@ export type CommunityMemberRecord = {
   profile_id: string;
   role: 'owner' | 'member';
   created_at: string;
-};
-
-export type SuggestedFriendRecord = PublicProfileCard & {
-  community_role: 'owner' | 'member';
 };
 
 export type GameRecord = {
@@ -101,6 +100,7 @@ export type LobbyRecord = {
   title: string;
   scheduled_for: string | null;
   scheduled_until: string | null;
+  meetup_details: string | null;
   discord_guild_id: string | null;
   discord_guild_name: string | null;
   discord_guild_icon_url: string | null;

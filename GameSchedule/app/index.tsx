@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
   Avatar,
+  Badge,
   Button,
   Card,
   Chip,
@@ -12,7 +13,6 @@ import {
   FAB,
   HelperText,
   IconButton,
-  List,
   Portal,
   Searchbar,
   SegmentedButtons,
@@ -25,8 +25,7 @@ import {
   allowSignup,
   availabilityDays,
   demoLabel,
-  discordClientId,
-  discordStateStorageKey,
+  discordLinkIntentStorageKey,
   notifications,
   profileSelectFields,
   sections,
@@ -35,12 +34,12 @@ import { useAvailabilityState } from '../features/home/homeAvailabilityHooks';
 import { useGamesState } from '../features/home/homeGameHooks';
 import { useLobbyState } from '../features/home/homeLobbyHooks';
 import { DashboardSection, GamesSection, InboxSection, RouletteSection } from '../features/home/homeSections';
+import { LobbyGameCarousel } from '../features/home/LobbyGameCarousel';
 import { useSocialState } from '../features/home/homeSocialHooks';
 import { styles } from '../features/home/homeStyles';
 import type {
   AvailabilityWindow,
   BusyBlock,
-  CommunityRecord,
   FriendRequestRecord,
   GameRecord,
   IgdbSearchResult,
@@ -57,8 +56,7 @@ import {
   EventTimePicker,
   SectionTitle,
   TimeRangePicker,
-  buildDiscordGuildIconUrl,
-  clearOAuthHashFromUrl,
+  clearOAuthRedirectParamsFromUrl,
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
   doesTimeRangeOverlap,
@@ -74,18 +72,13 @@ import {
   getBusyStatusLabel,
   getBirthdayDate,
   getDefaultEndDate,
-  getDiscordCallbackPath,
   getDiscordIdentityFromSession,
   hasExplicitLobbyEnd,
   getLobbyEndDate,
-  getSessionProviderToken,
   getWebBasePath,
   getWebRedirectUrl,
-  isDiscordCallbackPath,
-  readHashParams,
   resolveAvatarUrl,
   setDatePart,
-  unwrapRelation,
 } from '../features/home/homeUtils';
 import { importIgdbGame, searchIgdbGames } from '../services/igdbFunctions';
 import { supabase } from '../services/supabaseClient';
@@ -93,6 +86,10 @@ import { supabase } from '../services/supabaseClient';
 registerTranslation('en', en);
 
 export default function HomeScreen() {
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
+  const lobbyAddGameDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
+  const friendCodeRegenerateCooldownMs = 15_000;
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [session, setSession] = React.useState<Session | null>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
@@ -116,7 +113,6 @@ export default function HomeScreen() {
   const [profileMessage, setProfileMessage] = React.useState('');
   const [discordBusy, setDiscordBusy] = React.useState(false);
   const [discordMessage, setDiscordMessage] = React.useState('');
-  const [discordGuildPickerVisible, setDiscordGuildPickerVisible] = React.useState(false);
   const [accountEmail, setAccountEmail] = React.useState('');
   const [accountBusy, setAccountBusy] = React.useState(false);
   const [accountError, setAccountError] = React.useState('');
@@ -127,9 +123,16 @@ export default function HomeScreen() {
   });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
   const [friendFilter, setFriendFilter] = React.useState<'all' | 'favorites' | 'pending'>('all');
+  const [friendCodeRegenerateConfirmVisible, setFriendCodeRegenerateConfirmVisible] =
+    React.useState(false);
+  const [friendCodeRegenerateCooldownUntil, setFriendCodeRegenerateCooldownUntil] = React.useState<number | null>(
+    null,
+  );
+  const [friendCodeRegenerateCooldownSeconds, setFriendCodeRegenerateCooldownSeconds] = React.useState(0);
   const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
-  const lastDiscordProviderTokenRef = React.useRef<string | null>(null);
-  const handledDiscordCallbackTokenRef = React.useRef<string | null>(null);
+  const [lobbyAddGameDialogVisible, setLobbyAddGameDialogVisible] = React.useState(false);
+  const [readNotificationIds, setReadNotificationIds] = React.useState<string[]>([]);
+  const inboxReadStorageKey = session?.user?.id ? `gameschedule-inbox-read:${session.user.id}` : null;
 
   const {
     favoriteGameIds,
@@ -172,53 +175,36 @@ export default function HomeScreen() {
 
   const {
     acceptedFriends,
-    communityBusy,
-    communityError,
-    communityInviteCode,
-    communityLoading,
-    communityMessage,
-    communityName,
-    currentCommunity,
     friendActionBusyId,
+    friendCodeInput,
+    friendCodeLookupAttempted,
+    friendCodeLookupLoading,
+    friendCodeLookupResult,
     friendError,
     friendLoading,
     friendMessage,
-    friendSearch,
-    friendSearchLoading,
-    friendSearchResults,
     friendships,
     getFriendRequestLabel,
     getFriendSearchStatus,
     incomingFriendRequests,
+    lookupFriendByCode,
     outgoingFriendRequests,
-    setCommunityBusy,
-    setCommunityError,
-    setCommunityInviteCode,
-    setCommunityMembers,
-    setCommunityMessage,
-    setCommunityName,
-    setCommunityProfiles,
-    setCurrentCommunity,
     setFriendActionBusyId,
+    setFriendCodeInput,
     setFriendDirectory,
     setFriendError,
     setFriendMessage,
     setFriendRequests,
-    setFriendSearch,
     setFriendships,
-    suggestedFriends,
   } = useSocialState({
-    primaryCommunityId: profile?.primary_community_id,
     session,
   });
 
   const {
-    discordGuilds,
     editingLobbyId,
     incomingLobbies,
     inviteBusyBlocks,
     inviteReadyFriends,
-    loadDiscordGuilds,
     loadLobbies,
     lobbyInviteHistory,
     lobbies,
@@ -283,141 +269,38 @@ export default function HomeScreen() {
   >({});
   const [acceptConflictAcknowledgementId, setAcceptConflictAcknowledgementId] = React.useState<string | null>(null);
 
-  const syncDiscordGuildSnapshot = React.useCallback(
-    async (
-      providerToken: string,
-      options?: {
-        syncIdentity?: boolean;
-        silent?: boolean;
-        successMessage?: string;
-      },
-    ) => {
-      if (!session?.user) {
-        return [];
-      }
-
-      const shouldSyncIdentity = options?.syncIdentity ?? false;
-      const shouldStaySilent = options?.silent ?? false;
-
-      try {
-        const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
-          headers: {
-            Authorization: `Bearer ${providerToken}`,
-          },
-        });
-
-        if (!guildsResponse.ok) {
-          throw new Error('Unable to fetch Discord servers.');
-        }
-
-        const rawGuilds = (await guildsResponse.json()) as {
-          id: string;
-          name: string;
-          icon?: string | null;
-          owner?: boolean;
-        }[];
-
-        const normalizedGuilds = rawGuilds
-          .filter((guild) => Boolean(guild.id) && Boolean(guild.name))
-          .map((guild) => ({
-            discord_guild_id: guild.id,
-            name: guild.name,
-            icon_url: buildDiscordGuildIconUrl(guild.id, guild.icon ?? null),
-            is_owner: Boolean(guild.owner),
-          }));
-
-        if (shouldSyncIdentity) {
-          const userResponse = await fetch('https://discord.com/api/v10/users/@me', {
-            headers: {
-              Authorization: `Bearer ${providerToken}`,
-            },
-          });
-
-          if (!userResponse.ok) {
-            throw new Error('Unable to fetch the Discord account details.');
-          }
-
-          const discordUser = (await userResponse.json()) as {
-            id: string;
-            username?: string;
-            global_name?: string | null;
-            avatar?: string | null;
-          };
-
-          const discordDisplayName =
-            discordUser.global_name?.trim() ||
-            discordUser.username?.trim() ||
-            profile?.display_name?.trim() ||
-            profile?.username?.trim() ||
-            'Discord user';
-          const discordAvatarUrl = discordUser.avatar
-            ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png?size=128`
-            : null;
-
-          const { data: updatedProfile, error: updateError } = await supabase
-            .from('profiles')
-            .update({
-              discord_user_id: discordUser.id,
-              discord_username: discordDisplayName,
-              discord_avatar_url: discordAvatarUrl,
-              discord_connected_at: new Date().toISOString(),
-              avatar_url: profile?.avatar_url ?? discordAvatarUrl,
-              display_name: profile?.display_name ?? discordDisplayName,
-            })
-            .eq('id', session.user.id)
-            .select(profileSelectFields)
-            .single();
-
-          if (updateError) {
-            throw updateError;
-          }
-
-          setProfile(updatedProfile);
-        }
-
-        const { error: replaceGuildsError } = await supabase.rpc('replace_discord_guilds', {
-          p_guilds: normalizedGuilds,
-        });
-
-        if (replaceGuildsError) {
-          throw replaceGuildsError;
-        }
-
-        await loadDiscordGuilds();
-        setLobbyForm((current) =>
-          current.discordGuildId &&
-          !normalizedGuilds.some((guild) => guild.discord_guild_id === current.discordGuildId)
-            ? {
-                ...current,
-                discordGuildId: '',
-              }
-            : current,
-        );
-
-        if (!shouldStaySilent) {
-          setDiscordMessage(
-            options?.successMessage ??
-              `Discord servers synced${normalizedGuilds.length === 1 ? ': 1 server ready.' : `: ${normalizedGuilds.length} servers ready.`}`,
-          );
-        }
-
-        return normalizedGuilds;
-      } catch (error) {
-        if (!shouldStaySilent) {
-          setDiscordMessage(error instanceof Error ? error.message : 'Unable to sync Discord servers.');
-        }
-
-        return [];
-      }
-    },
-    [loadDiscordGuilds, profile, session, setLobbyForm],
-  );
-
   React.useEffect(() => {
     if (!allowSignup && authMode === 'signup') {
       setAuthMode('signin');
     }
   }, [authMode]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    const currentLocation = globalThis.window?.location;
+    const sessionStorage = globalThis.window?.sessionStorage;
+
+    if (!currentLocation || !sessionStorage) {
+      return;
+    }
+
+    if (sessionStorage.getItem(discordLinkIntentStorageKey) !== 'pending') {
+      return;
+    }
+
+    const queryParams = new URLSearchParams(currentLocation.search);
+    if (!queryParams.get('error')) {
+      return;
+    }
+
+    sessionStorage.removeItem(discordLinkIntentStorageKey);
+    setDiscordBusy(false);
+    setDiscordMessage('Discord authorization was canceled or failed.');
+    setSection('profile');
+  }, []);
 
   React.useEffect(() => {
     let active = true;
@@ -436,11 +319,9 @@ export default function HomeScreen() {
         setAuthError(error.message);
       } else {
         setSession(currentSession);
-        if (!isDiscordCallbackPath()) {
-          clearOAuthHashFromUrl();
-        }
       }
 
+      clearOAuthRedirectParamsFromUrl();
       setAuthLoading(false);
     };
 
@@ -450,9 +331,7 @@ export default function HomeScreen() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (!isDiscordCallbackPath()) {
-        clearOAuthHashFromUrl();
-      }
+      clearOAuthRedirectParamsFromUrl();
       setAuthLoading(false);
     });
 
@@ -463,65 +342,20 @@ export default function HomeScreen() {
   }, []);
 
   React.useEffect(() => {
-    const providerToken = getSessionProviderToken(session);
-
-    if (!session?.user || !providerToken) {
-      lastDiscordProviderTokenRef.current = null;
+    if (Platform.OS !== 'web' || !profile?.discord_user_id) {
       return;
     }
 
-    if (lastDiscordProviderTokenRef.current === providerToken) {
+    const sessionStorage = globalThis.window?.sessionStorage;
+    if (!sessionStorage || sessionStorage.getItem(discordLinkIntentStorageKey) !== 'pending') {
       return;
     }
 
-    lastDiscordProviderTokenRef.current = providerToken;
-    void syncDiscordGuildSnapshot(providerToken, { silent: true });
-  }, [session, syncDiscordGuildSnapshot]);
-
-  React.useEffect(() => {
-    if (Platform.OS !== 'web' || !session?.user || !isDiscordCallbackPath()) {
-      return;
-    }
-
-    const hashParams = readHashParams();
-    const accessToken = hashParams.get('access_token');
-    const returnedState = hashParams.get('state');
-
-    if (!accessToken || handledDiscordCallbackTokenRef.current === accessToken) {
-      return;
-    }
-
-    const expectedState = globalThis.window?.sessionStorage?.getItem(discordStateStorageKey) ?? '';
-    if (expectedState && returnedState && expectedState !== returnedState) {
-      setDiscordMessage('Discord link could not be verified. Please try again.');
-      globalThis.window?.history.replaceState(
-        globalThis.window.history.state,
-        '',
-        `${getWebBasePath()}/`,
-      );
-      return;
-    }
-
-    handledDiscordCallbackTokenRef.current = accessToken;
-    globalThis.window?.sessionStorage?.removeItem(discordStateStorageKey);
-    setDiscordBusy(true);
-    setDiscordMessage('');
-
-    void (async () => {
-      await syncDiscordGuildSnapshot(accessToken, {
-        syncIdentity: true,
-        successMessage: 'Discord linked and servers synced.',
-      });
-
-      globalThis.window?.history.replaceState(
-        globalThis.window.history.state,
-        '',
-        `${getWebBasePath()}/`,
-      );
-      setSection('profile');
-      setDiscordBusy(false);
-    })();
-  }, [session, syncDiscordGuildSnapshot]);
+    sessionStorage.removeItem(discordLinkIntentStorageKey);
+    setDiscordBusy(false);
+    setDiscordMessage('Discord linked.');
+    setSection('profile');
+  }, [profile?.discord_user_id]);
 
   React.useEffect(() => {
     const syncProfile = async () => {
@@ -562,7 +396,9 @@ export default function HomeScreen() {
         const needsDiscordBackfill =
           Boolean(discordIdentity) &&
           (!existingProfile.discord_user_id ||
+            (!existingProfile.discord_username && hasDiscordUsername) ||
             (!existingProfile.discord_avatar_url && hasDiscordAvatar) ||
+            !existingProfile.discord_connected_at ||
             (!existingProfile.avatar_url && hasDiscordAvatar) ||
             (!existingProfile.display_name && hasDiscordUsername));
 
@@ -668,10 +504,57 @@ export default function HomeScreen() {
   }, [session]);
 
   React.useEffect(() => {
-    if (session?.user && profile && !profile.primary_community_id && section === 'dashboard') {
-      setSection('friends');
+    if (Platform.OS !== 'web') {
+      if (!session?.user) {
+        setReadNotificationIds([]);
+      }
+      return;
     }
-  }, [profile, section, session]);
+
+    const storage = globalThis.window?.localStorage;
+    if (!storage || !inboxReadStorageKey) {
+      setReadNotificationIds([]);
+      return;
+    }
+
+    const savedValue = storage.getItem(inboxReadStorageKey);
+    if (!savedValue) {
+      setReadNotificationIds([]);
+      return;
+    }
+
+    try {
+      const parsedValue = JSON.parse(savedValue);
+      if (Array.isArray(parsedValue)) {
+        setReadNotificationIds(parsedValue.filter((value): value is string => typeof value === 'string'));
+      } else {
+        setReadNotificationIds([]);
+      }
+    } catch {
+      setReadNotificationIds([]);
+    }
+  }, [inboxReadStorageKey, session]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    const storage = globalThis.window?.localStorage;
+    if (!storage || !inboxReadStorageKey) {
+      return;
+    }
+
+    storage.setItem(inboxReadStorageKey, JSON.stringify(readNotificationIds));
+  }, [inboxReadStorageKey, readNotificationIds]);
+
+  const markNotificationsRead = React.useCallback((notificationIds: string[]) => {
+    if (notificationIds.length === 0) {
+      return;
+    }
+
+    setReadNotificationIds((current) => Array.from(new Set([...current, ...notificationIds])));
+  }, []);
 
   const visibleFriends = React.useMemo(() => {
     if (friendFilter === 'pending') {
@@ -684,11 +567,6 @@ export default function HomeScreen() {
 
     return acceptedFriends;
   }, [acceptedFriends, friendFilter]);
-
-  const selectedLobbyDiscordGuild = React.useMemo(
-    () => discordGuilds.find((guild) => guild.discord_guild_id === lobbyForm.discordGuildId) ?? null,
-    [discordGuilds, lobbyForm.discordGuildId],
-  );
 
   const lobbyMembersByLobbyId = React.useMemo(
     () =>
@@ -755,6 +633,18 @@ export default function HomeScreen() {
     (lobbyId: string) => lobbyMembers.find((member) => member.lobby_id === lobbyId && member.profile_id === session?.user?.id) ?? null,
     [lobbyMembers, session],
   );
+
+  const pendingLobbyInviteCount = React.useMemo(
+    () =>
+      incomingLobbies.filter((lobby) => {
+        const membership = getCurrentLobbyMembership(lobby.id);
+        return membership?.rsvp_status === 'pending';
+      }).length,
+    [getCurrentLobbyMembership, incomingLobbies],
+  );
+
+  const pendingInboxCount = incomingFriendRequests.length + pendingLobbyInviteCount;
+  const pendingInboxCountLabel = pendingInboxCount > 99 ? '99+' : String(pendingInboxCount);
 
   const prioritizeBusyBlock = React.useCallback(
     (left: BusyBlock, right: BusyBlock) => {
@@ -993,9 +883,13 @@ export default function HomeScreen() {
     [formatInviteStatusLabel],
   );
 
-  const getLobbyDiscordServerLabel = React.useCallback(
-    (lobby: Pick<LobbyRecord, 'discord_guild_name'>) =>
-      lobby.discord_guild_name ? `Meet in Discord: ${lobby.discord_guild_name}` : null,
+  const getLobbyMeetupLabel = React.useCallback(
+    (lobby: Pick<LobbyRecord, 'meetup_details' | 'discord_guild_name'>) =>
+      lobby.meetup_details?.trim()
+        ? `Meetup: ${lobby.meetup_details.trim()}`
+        : lobby.discord_guild_name
+          ? `Meet in Discord: ${lobby.discord_guild_name}`
+          : null,
     [],
   );
 
@@ -1011,7 +905,7 @@ export default function HomeScreen() {
       setLobbyForm((current) => ({
         ...current,
         title: `${game.title} Lobby`,
-        discordGuildId: '',
+        meetupDetails: '',
       }));
       setSelectedLobbyInviteProfileIds([]);
       setLobbyMessage('');
@@ -1088,7 +982,7 @@ export default function HomeScreen() {
           setLobbyForm((current) => ({
             ...current,
             title: `${importedGame.title} Lobby`,
-            discordGuildId: current.discordGuildId,
+            meetupDetails: current.meetupDetails,
           }));
           setSection('lobbies');
           setLobbyMessage(
@@ -1106,8 +1000,10 @@ export default function HomeScreen() {
               ? `${importedGame.title} import refreshed.`
               : `${importedGame.title} imported into your library.`,
         );
+        return importedGame;
       } catch (error) {
         setIgdbError(error instanceof Error ? error.message : 'Unable to import that game right now.');
+        return null;
       } finally {
         setIgdbImportBusyId(null);
       }
@@ -1124,6 +1020,22 @@ export default function HomeScreen() {
       setSection,
       setSelectedLobbyGameId,
     ],
+  );
+
+  const handleCloseLobbyAddGameDialog = React.useCallback(() => {
+    setLobbyAddGameDialogVisible(false);
+    setIgdbSearchQuery('');
+    handleClearIgdbSearchResults();
+  }, [handleClearIgdbSearchResults, setIgdbSearchQuery]);
+
+  const handleImportLobbyGameFromDialog = React.useCallback(
+    async (game: IgdbSearchResult) => {
+      const importedGame = await handleImportIgdbGame(game, { autoSelectForLobby: true });
+      if (importedGame) {
+        handleCloseLobbyAddGameDialog();
+      }
+    },
+    [handleCloseLobbyAddGameDialog, handleImportIgdbGame],
   );
 
   const handleRequestRemoveGameFromLibrary = React.useCallback((game: GameRecord) => {
@@ -1226,9 +1138,7 @@ export default function HomeScreen() {
       p_title: title,
       p_scheduled_for: scheduledFor,
       p_scheduled_until: scheduledUntil,
-      p_discord_guild_id: selectedLobbyDiscordGuild?.discord_guild_id ?? null,
-      p_discord_guild_name: selectedLobbyDiscordGuild?.name ?? null,
-      p_discord_guild_icon_url: selectedLobbyDiscordGuild?.icon_url ?? null,
+      p_meetup_details: lobbyForm.meetupDetails.trim() || null,
       p_is_private: lobbyForm.visibility === 'private',
       p_invited_profile_ids: invitedProfileIds,
     });
@@ -1252,7 +1162,7 @@ export default function HomeScreen() {
       endAt: createDefaultLobbyEndDate().toISOString(),
       hasExplicitEnd: true,
       scheduledFor: '',
-      discordGuildId: '',
+      meetupDetails: '',
       visibility: 'private',
     });
     setSelectedLobbyInviteProfileIds([]);
@@ -1565,6 +1475,86 @@ export default function HomeScreen() {
     setFriendActionBusyId(null);
   };
 
+  const handleCopyFriendCode = React.useCallback(async () => {
+    if (!profile?.friend_code) {
+      return;
+    }
+
+    try {
+      if (Platform.OS === 'web' && globalThis.navigator?.clipboard?.writeText) {
+        await globalThis.navigator.clipboard.writeText(profile.friend_code);
+        setFriendMessage('Friend code copied.');
+        setFriendError('');
+        return;
+      }
+
+      setFriendMessage(`Friend code ready to share: ${profile.friend_code}`);
+      setFriendError('');
+    } catch {
+      setFriendMessage(`Friend code ready to share: ${profile.friend_code}`);
+      setFriendError('');
+    }
+  }, [profile, setFriendError, setFriendMessage]);
+
+  const handleRegenerateFriendCode = React.useCallback(async () => {
+    if (!session?.user) {
+      return;
+    }
+
+    setFriendActionBusyId('regenerate-friend-code');
+    setFriendError('');
+    setFriendMessage('');
+
+    const { data, error } = await supabase.rpc('regenerate_friend_code');
+
+    if (error) {
+      setFriendError(error.message);
+      setFriendActionBusyId(null);
+      return;
+    }
+
+    const nextFriendCode = typeof data === 'string' ? data : null;
+    if (nextFriendCode) {
+      setProfile((current) => (current ? { ...current, friend_code: nextFriendCode } : current));
+      setFriendMessage('Friend code regenerated.');
+      setFriendCodeRegenerateCooldownUntil(Date.now() + friendCodeRegenerateCooldownMs);
+    }
+
+    setFriendActionBusyId(null);
+  }, [
+    friendCodeRegenerateCooldownMs,
+    session,
+    setFriendActionBusyId,
+    setFriendError,
+    setFriendMessage,
+  ]);
+
+  const handleConfirmRegenerateFriendCode = React.useCallback(async () => {
+    await handleRegenerateFriendCode();
+    setFriendCodeRegenerateConfirmVisible(false);
+  }, [handleRegenerateFriendCode]);
+
+  React.useEffect(() => {
+    if (!friendCodeRegenerateCooldownUntil) {
+      setFriendCodeRegenerateCooldownSeconds(0);
+      return undefined;
+    }
+
+    const updateRemaining = () => {
+      const remainingSeconds = Math.max(0, Math.ceil((friendCodeRegenerateCooldownUntil - Date.now()) / 1000));
+      setFriendCodeRegenerateCooldownSeconds(remainingSeconds);
+
+      if (remainingSeconds <= 0) {
+        setFriendCodeRegenerateCooldownUntil(null);
+      }
+    };
+
+    updateRemaining();
+    const intervalId = globalThis.setInterval(updateRemaining, 250);
+
+    return () => globalThis.clearInterval(intervalId);
+  }, [friendCodeRegenerateCooldownUntil]);
+
   const respondToFriendRequest = async (
     request: FriendRequestRecord,
     decision: 'accepted' | 'declined',
@@ -1608,6 +1598,7 @@ export default function HomeScreen() {
         ];
       });
       setFriendMessage(`${getFriendRequestLabel(request)} is now in your friends list.`);
+      setFriendRequests((current) => current.filter((entry) => entry.id !== request.id));
     } else {
       const { error: updateError } = await supabase
         .from('friend_requests')
@@ -1621,18 +1612,17 @@ export default function HomeScreen() {
       }
 
       setFriendMessage(`Friend request from ${getFriendRequestLabel(request)} declined.`);
+      setFriendRequests((current) =>
+        current.map((entry) =>
+          entry.id === request.id
+            ? {
+                ...entry,
+                status: decision,
+              }
+            : entry,
+        ),
+      );
     }
-
-    setFriendRequests((current) =>
-      current.map((entry) =>
-        entry.id === request.id
-          ? {
-              ...entry,
-              status: decision,
-            }
-          : entry,
-      ),
-    );
     setFriendActionBusyId(null);
   };
 
@@ -1676,132 +1666,8 @@ export default function HomeScreen() {
     setFriendActionBusyId(null);
   };
 
-  const handleCreateCommunity = async () => {
-    if (!session?.user) {
-      return;
-    }
-
-    const trimmedName = communityName.trim();
-    if (!trimmedName) {
-      setCommunityError('Enter a squad name before creating a community.');
-      setCommunityMessage('');
-      return;
-    }
-
-    setCommunityBusy(true);
-    setCommunityError('');
-    setCommunityMessage('');
-
-    const { data, error } = await supabase.rpc('create_community', {
-      p_name: trimmedName,
-    });
-
-    if (error) {
-      setCommunityError(error.message);
-      setCommunityBusy(false);
-      return;
-    }
-
-    const createdCommunity = unwrapRelation(data as CommunityRecord[] | CommunityRecord | null);
-
-    if (createdCommunity) {
-      setCurrentCommunity(createdCommunity);
-      setCommunityMembers([
-        {
-          community_id: createdCommunity.id,
-          profile_id: session.user.id,
-          role: 'owner',
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      setCommunityProfiles([]);
-      setProfile((current) =>
-        current
-          ? {
-              ...current,
-              primary_community_id: createdCommunity.id,
-            }
-          : current,
-      );
-      setCommunityMessage(
-        `Squad created. Share code ${createdCommunity.invite_code.toUpperCase()} with your Discord community.`,
-      );
-      setCommunityName('');
-    }
-
-    setCommunityBusy(false);
-  };
-
-  const handleJoinCommunity = async () => {
-    if (!session?.user) {
-      return;
-    }
-
-    const trimmedCode = communityInviteCode.trim();
-    if (!trimmedCode) {
-      setCommunityError('Enter a squad code before joining.');
-      setCommunityMessage('');
-      return;
-    }
-
-    setCommunityBusy(true);
-    setCommunityError('');
-    setCommunityMessage('');
-
-    const { data, error } = await supabase.rpc('join_community_by_invite', {
-      p_invite_code: trimmedCode,
-    });
-
-    if (error) {
-      setCommunityError(error.message);
-      setCommunityBusy(false);
-      return;
-    }
-
-    const joinedCommunity = unwrapRelation(data as CommunityRecord[] | CommunityRecord | null);
-
-    if (joinedCommunity) {
-      setCurrentCommunity(joinedCommunity);
-      setProfile((current) =>
-        current
-          ? {
-              ...current,
-              primary_community_id: joinedCommunity.id,
-            }
-          : current,
-      );
-      setCommunityMessage(`Joined ${joinedCommunity.name}. Discord-based squad suggestions are now ready.`);
-      setCommunityInviteCode('');
-    }
-
-    setCommunityBusy(false);
-  };
-
   const getInviteChipTestId = React.useCallback(
     (profileId: string) => `lobby-invite-chip-${profileId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-    [],
-  );
-
-  const getDiscordGuildOptionTestId = React.useCallback(
-    (guildId: string) => `discord-guild-option-${guildId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-    [],
-  );
-
-  const renderDiscordGuildInlineIcon = React.useCallback(
-    (guild: { name: string; icon_url: string | null }, size: number) =>
-      guild.icon_url ? (
-        <Avatar.Image
-          size={size}
-          source={{ uri: guild.icon_url }}
-          style={styles.discordGuildInlineAvatar}
-        />
-      ) : (
-        <Avatar.Text
-          size={size}
-          label={guild.name.slice(0, 1).toUpperCase()}
-          style={styles.discordGuildInlineAvatar}
-        />
-      ),
     [],
   );
 
@@ -1854,138 +1720,91 @@ export default function HomeScreen() {
     />
   );
 
-  const renderFriends = () => (
-    <>
-      <SectionTitle
-        title="Friends & contacts"
-        subtitle="Low-friction squad suggestions first, then requests, favorites, and manual search."
-      />
-      {friendError ? (
-        <HelperText type="error" visible>
-          {friendError}
-        </HelperText>
-      ) : null}
-      {friendMessage ? (
-        <HelperText type="info" visible style={styles.successText}>
-          {friendMessage}
-        </HelperText>
-      ) : null}
-      {communityError ? (
-        <HelperText type="error" visible>
-          {communityError}
-        </HelperText>
-      ) : null}
-      {communityMessage ? (
-        <HelperText type="info" visible style={styles.successText}>
-          {communityMessage}
-        </HelperText>
-      ) : null}
+  const renderFriends = () => {
+    const renderLookupRow = (candidate: PublicProfileCard) => {
+      const candidateName = candidate.display_name ?? candidate.username ?? 'Player';
+      const resolvedAvatarUrl = resolveAvatarUrl(candidate);
+      const status = getFriendSearchStatus(candidate.id);
 
-      {!profile?.primary_community_id ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">Join your squad</Text>
-            <Text style={styles.friendNote}>
-              Use a squad code from your Discord community or create one if you are the organizer.
-            </Text>
-            <TextInput
-              mode="outlined"
-              label="Squad code"
-              placeholder="Enter invite code"
-              value={communityInviteCode}
-              onChangeText={setCommunityInviteCode}
-              autoCapitalize="characters"
-              style={styles.input}
-              testID="community-invite-code-input"
+      return (
+        <View key={candidate.id} style={styles.friendRow}>
+          {resolvedAvatarUrl ? (
+            <Avatar.Image size={42} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
+          ) : (
+            <Avatar.Text
+              size={42}
+              label={candidateName.slice(0, 2).toUpperCase()}
+              style={styles.avatar}
             />
+          )}
+          <View style={styles.friendMeta}>
+            <Text variant="titleMedium">{candidateName}</Text>
+            <Text style={styles.friendNote}>
+              {candidate.username ? `@${candidate.username}` : 'No username yet'}
+            </Text>
+          </View>
+          {status === 'new' ? (
+            <Button
+              mode="contained-tonal"
+              onPress={() => sendFriendRequest(candidate)}
+              loading={friendActionBusyId === `request:${candidate.id}`}
+              disabled={friendActionBusyId !== null}
+              testID={`friend-code-request-${candidate.id}`}>
+              Add friend
+            </Button>
+          ) : (
+            <Chip>{status === 'friend' ? 'Already friends' : 'Pending'}</Chip>
+          )}
+        </View>
+      );
+    };
+
+    const lookupCard = (
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopCardStretch : null]}>
+        <Card.Content>
+          <Text variant="titleMedium">Add by friend code</Text>
+          <Text style={styles.friendNote}>
+            Enter someone's code to preview their profile and send a request on purpose.
+          </Text>
+          <TextInput
+            mode="outlined"
+            label="Friend code"
+            value={friendCodeInput}
+            onChangeText={(value) => setFriendCodeInput(value.toUpperCase())}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            style={styles.input}
+            testID="friend-code-input"
+          />
+          <View style={styles.cardActions}>
             <Button
               mode="contained"
-              onPress={handleJoinCommunity}
-              loading={communityBusy}
-              disabled={communityBusy}
-              testID="join-community-button">
-              Join squad
+              onPress={() => {
+                void lookupFriendByCode();
+              }}
+              loading={friendCodeLookupLoading}
+              disabled={friendCodeLookupLoading}
+              testID="friend-code-lookup-button">
+              Find player
             </Button>
-            <Divider style={styles.divider} />
-            <Text variant="titleSmall" style={styles.eventTimeTitle}>
-              Create a new squad
-            </Text>
-            <TextInput
-              mode="outlined"
-              label="Squad name"
-              placeholder="Creator squad, guild night, or server name"
-              value={communityName}
-              onChangeText={setCommunityName}
-              style={styles.input}
-              testID="community-name-input"
-            />
-            <Button
-              mode="outlined"
-              onPress={handleCreateCommunity}
-              loading={communityBusy}
-              disabled={communityBusy}
-              testID="create-community-button">
-              Create squad
-            </Button>
-          </Card.Content>
-        </Card>
-      ) : (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">Suggested from your Discord community</Text>
-            <Text style={styles.friendNote}>
-              {currentCommunity
-                ? `${currentCommunity.name} | Invite code ${currentCommunity.invite_code.toUpperCase()}`
-                : 'Loading your community...'}
-            </Text>
-            {communityLoading ? <Text style={styles.friendNote}>Loading community suggestions...</Text> : null}
-            {!communityLoading && suggestedFriends.map((candidate) => {
-              const candidateName = candidate.display_name ?? candidate.username ?? 'Player';
-              const resolvedAvatarUrl = resolveAvatarUrl(candidate);
+          </View>
+          {friendCodeLookupLoading ? (
+            <View style={styles.inlineLoadingRow}>
+              <ActivityIndicator animating size="small" />
+              <Text style={styles.friendNote}>Looking up that friend code...</Text>
+            </View>
+          ) : null}
+          {friendCodeLookupResult ? renderLookupRow(friendCodeLookupResult) : null}
+          {friendCodeLookupAttempted && !friendCodeLookupLoading && !friendCodeLookupResult ? (
+            <Text style={styles.friendNote}>No player found for that friend code.</Text>
+          ) : null}
+        </Card.Content>
+      </Card>
+    );
 
-              return (
-                <View key={candidate.id} style={styles.friendRow}>
-                  {resolvedAvatarUrl ? (
-                    <Avatar.Image size={42} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
-                  ) : (
-                    <Avatar.Text
-                      size={42}
-                      label={candidateName.slice(0, 2).toUpperCase()}
-                      style={styles.avatar}
-                    />
-                  )}
-              <View style={styles.friendMeta}>
-                <Text variant="titleMedium">{candidateName}</Text>
-                <Text style={styles.friendNote}>
-                  {candidate.username ? `@${candidate.username}` : 'No username yet'} |{' '}
-                  {candidate.community_role === 'owner' ? 'Squad organizer' : 'Squad member'}
-                </Text>
-                {getPublicBirthdayLabel(candidate) ? (
-                  <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(candidate)}</Text>
-                ) : null}
-              </View>
-                  <Button
-                    mode="contained-tonal"
-                    onPress={() => sendFriendRequest(candidate)}
-                    loading={friendActionBusyId === `request:${candidate.id}`}
-                    disabled={friendActionBusyId !== null}
-                    testID={`suggested-friend-request-${candidate.id}`}>
-                    Add friend
-                  </Button>
-                </View>
-              );
-            })}
-            {!communityLoading && suggestedFriends.length === 0 ? (
-              <Text style={styles.friendNote}>
-                No new squad suggestions right now. Invite more people into the community or use manual search below.
-              </Text>
-            ) : null}
-          </Card.Content>
-        </Card>
-      )}
-
-      {(friendFilter === 'pending' || incomingFriendRequests.length > 0 || outgoingFriendRequests.length > 0) ? (
-        <Card style={styles.panel}>
+    const pendingRequestsCard =
+      friendFilter === 'pending' || incomingFriendRequests.length > 0 || outgoingFriendRequests.length > 0 ? (
+        <Card style={[styles.panel, isDesktopWeb ? styles.desktopCardStretch : null]}>
           <Card.Content>
             <Text variant="titleMedium">Pending requests</Text>
             {incomingFriendRequests.map((request) => (
@@ -2024,137 +1843,103 @@ export default function HomeScreen() {
             ) : null}
           </Card.Content>
         </Card>
-      ) : null}
+      ) : null;
 
-      <SegmentedButtons
-        value={friendFilter}
-        onValueChange={(value) => setFriendFilter(value as 'all' | 'favorites' | 'pending')}
-        style={styles.segmented}
-        buttons={[
-          { value: 'all', label: 'All' },
-          { value: 'favorites', label: 'Favorites' },
-          { value: 'pending', label: 'Pending' },
-        ]}
-      />
+    const friendCards = visibleFriends.map((friend) => {
+      const friendName = friend.display_name ?? friend.username ?? 'Player';
+      const resolvedAvatarUrl = resolveAvatarUrl(friend);
 
-      {visibleFriends.map((friend) => {
-        const friendName = friend.display_name ?? friend.username ?? 'Player';
-        const resolvedAvatarUrl = resolveAvatarUrl(friend);
-
-        return (
-          <Card key={friend.id} style={styles.panel}>
-            <Card.Content style={styles.friendCard}>
-              {resolvedAvatarUrl ? (
-                <Avatar.Image size={46} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
-              ) : (
-                <Avatar.Text
-                  size={46}
-                  label={friendName.slice(0, 2).toUpperCase()}
-                  style={styles.avatar}
-                />
-              )}
-              <View style={styles.friendMeta}>
-                <Text variant="titleMedium">{friendName}</Text>
-                <Text style={styles.friendStatus}>{friend.is_favorite ? 'Favorite friend' : 'Friend'}</Text>
-                <Text style={styles.friendNote}>
-                  {friend.username ? `@${friend.username}` : 'Profile still needs a username'}
-                </Text>
-                {getPublicBirthdayLabel(friend) ? (
-                  <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(friend)}</Text>
-                ) : null}
-              </View>
-              <Button
-                mode="text"
-                onPress={() => toggleFriendFavorite(friend.id)}
-                loading={friendActionBusyId === `favorite-friend:${friend.id}`}
-                disabled={friendActionBusyId !== null}
-                testID={`toggle-friend-favorite-${friend.id}`}>
-                {friend.is_favorite ? 'Unfavorite' : 'Favorite'}
-              </Button>
-            </Card.Content>
-          </Card>
-        );
-      })}
-      {!friendLoading && visibleFriends.length === 0 && friendFilter !== 'pending' ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text variant="titleMedium">No friends yet.</Text>
-            <Text style={styles.friendNote}>
-              Use the squad suggestions above or search manually below.
-            </Text>
+      return (
+        <Card key={friend.id} style={[styles.panel, isDesktopWeb ? styles.desktopFriendTile : null]}>
+          <Card.Content style={styles.friendCard}>
+            {resolvedAvatarUrl ? (
+              <Avatar.Image size={46} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
+            ) : (
+              <Avatar.Text
+                size={46}
+                label={friendName.slice(0, 2).toUpperCase()}
+                style={styles.avatar}
+              />
+            )}
+            <View style={styles.friendMeta}>
+              <Text variant="titleMedium">{friendName}</Text>
+              <Text style={styles.friendStatus}>{friend.is_favorite ? 'Favorite friend' : 'Friend'}</Text>
+              <Text style={styles.friendNote}>
+                {friend.username ? `@${friend.username}` : 'Profile still needs a username'}
+              </Text>
+              {getPublicBirthdayLabel(friend) ? (
+                <Text style={styles.friendNote}>Birthday: {getPublicBirthdayLabel(friend)}</Text>
+              ) : null}
+            </View>
+            <Button
+              mode="text"
+              onPress={() => toggleFriendFavorite(friend.id)}
+              loading={friendActionBusyId === `favorite-friend:${friend.id}`}
+              disabled={friendActionBusyId !== null}
+              testID={`toggle-friend-favorite-${friend.id}`}>
+              {friend.is_favorite ? 'Unfavorite' : 'Favorite'}
+            </Button>
           </Card.Content>
         </Card>
-      ) : null}
+      );
+    });
 
-      <Card style={styles.panel}>
-        <Card.Content>
-          <Text variant="titleMedium">Manual search</Text>
-          <Text style={styles.friendNote}>
-            Search people in your squad by username or display name if they are not showing up in suggestions yet.
-          </Text>
-          <Searchbar
-            placeholder="Search by username or display name"
-            value={friendSearch}
-            onChangeText={setFriendSearch}
-            testID="friends-search-input"
-          />
-          {friendSearch.trim().length >= 2 ? (
-            <>
+    return (
+      <View style={styles.sectionStack}>
+        <SectionTitle
+          title="Friends & contacts"
+          subtitle="Share codes on purpose, keep requests intentional, and manage your current friends in one place."
+        />
+        {friendError ? (
+          <HelperText type="error" visible>
+            {friendError}
+          </HelperText>
+        ) : null}
+        {friendMessage ? (
+          <HelperText type="info" visible style={styles.successText}>
+            {friendMessage}
+          </HelperText>
+        ) : null}
+
+        {isDesktopWeb ? (
+          <View style={styles.desktopSplitLayout}>
+            <View style={styles.desktopBalancedColumn}>{pendingRequestsCard}</View>
+            <View style={styles.desktopBalancedColumn}>{lookupCard}</View>
+          </View>
+        ) : (
+          <>
+            {pendingRequestsCard}
+            {lookupCard}
+          </>
+        )}
+
+        <SegmentedButtons
+          value={friendFilter}
+          onValueChange={(value) => setFriendFilter(value as 'all' | 'favorites' | 'pending')}
+          style={styles.segmented}
+          buttons={[
+            { value: 'all', label: 'All' },
+            { value: 'favorites', label: 'Favorites' },
+            { value: 'pending', label: 'Pending' },
+          ]}
+        />
+
+        {friendCards.length > 0 ? (
+          <View style={isDesktopWeb ? styles.desktopFriendsGrid : styles.sectionStack}>{friendCards}</View>
+        ) : null}
+        {!friendLoading && visibleFriends.length === 0 && friendFilter !== 'pending' ? (
+          <Card style={styles.panel}>
+            <Card.Content>
+              <Text variant="titleMedium">No friends yet.</Text>
               <Text style={styles.friendNote}>
-                {friendSearchLoading
-                  ? 'Searching your squad...'
-                  : profile?.primary_community_id
-                    ? 'Send a request to bring someone into your lobby flow.'
-                    : 'Join or create a squad to search people in your community.'}
+                Enter a friend code from someone you trust to send the first request.
               </Text>
-              {friendSearchResults.map((candidate) => {
-                const status = getFriendSearchStatus(candidate.id);
-                const candidateName = candidate.display_name ?? candidate.username ?? 'Player';
-                const resolvedAvatarUrl = resolveAvatarUrl(candidate);
-
-                return (
-                  <View key={candidate.id} style={styles.friendRow}>
-                    {resolvedAvatarUrl ? (
-                      <Avatar.Image size={42} source={{ uri: resolvedAvatarUrl }} style={styles.avatar} />
-                    ) : (
-                      <Avatar.Text
-                        size={42}
-                        label={candidateName.slice(0, 2).toUpperCase()}
-                        style={styles.avatar}
-                      />
-                    )}
-                    <View style={styles.friendMeta}>
-                      <Text variant="titleMedium">{candidateName}</Text>
-                      <Text style={styles.friendNote}>
-                        {candidate.username ? `@${candidate.username}` : 'No username yet'}
-                      </Text>
-                    </View>
-                    {status === 'new' ? (
-                      <Button
-                        mode="contained-tonal"
-                        onPress={() => sendFriendRequest(candidate)}
-                        loading={friendActionBusyId === `request:${candidate.id}`}
-                        disabled={friendActionBusyId !== null}
-                        testID={`send-friend-request-${candidate.id}`}>
-                        Send request
-                      </Button>
-                    ) : (
-                      <Chip>{status === 'friend' ? 'Already friends' : 'Pending'}</Chip>
-                    )}
-                  </View>
-                );
-              })}
-              {!friendSearchLoading && friendSearchResults.length === 0 ? (
-                <Text style={styles.friendNote}>No matching profiles found.</Text>
-              ) : null}
-            </>
-          ) : (
-            <Text style={styles.friendNote}>Type at least two characters to search profiles.</Text>
-          )}
-        </Card.Content>
-      </Card>
-    </>
-  );
+            </Card.Content>
+          </Card>
+        ) : null}
+      </View>
+    );
+  };
 
   const renderGames = () => (
     <GamesSection
@@ -2199,7 +1984,7 @@ export default function HomeScreen() {
   );
 
   const renderLobbies = () => (
-    <>
+    <View style={styles.sectionStack}>
       <SectionTitle
         title="Schedule a game night"
         subtitle="Create hosted sessions, review invite responses, and let invitees accept, decline, or suggest a better time."
@@ -2214,7 +1999,8 @@ export default function HomeScreen() {
           {lobbyMessage}
         </HelperText>
       ) : null}
-      <Card style={styles.panel}>
+      <View style={isDesktopWeb ? styles.desktopPanelGrid : styles.sectionStack}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Incoming invites</Text>
           <Text style={styles.friendNote}>
@@ -2253,8 +2039,8 @@ export default function HomeScreen() {
                         {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                       </Text>
                       <Text style={styles.friendNote}>Host: {getLobbyProfileLabel(lobby.host_profile_id)}</Text>
-                      {getLobbyDiscordServerLabel(lobby) ? (
-                        <Text style={styles.friendNote}>{getLobbyDiscordServerLabel(lobby)}</Text>
+                      {getLobbyMeetupLabel(lobby) ? (
+                        <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
                       ) : null}
                     </View>
                     <Chip compact style={chipStyle} textStyle={textStyle}>
@@ -2374,7 +2160,7 @@ export default function HomeScreen() {
             })}
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopFullSpan : null]}>
         <Card.Content>
           <Text variant="titleMedium">Create event</Text>
           <Text style={styles.friendNote}>
@@ -2388,10 +2174,28 @@ export default function HomeScreen() {
                 <Text variant="titleSmall" style={styles.eventTimeTitle}>
                   Select a game
                 </Text>
-                <Text style={styles.friendNote}>Choose from the library or start from a game card.</Text>
+                <Text style={styles.friendNote}>Choose from the library, or add one here without leaving Lobbies.</Text>
               </View>
+              {libraryGames.length > 0 ? (
+                <Button
+                  mode="outlined"
+                  compact
+                  icon="plus"
+                  onPress={() => setLobbyAddGameDialogVisible(true)}
+                  testID="open-lobby-add-game-dialog-button">
+                  Add game
+                </Button>
+              ) : null}
             </View>
-            {libraryGames.length === 0 ? (
+            {gamesLoading && libraryGames.length === 0 ? (
+              <Surface style={styles.inputShell} elevation={0}>
+                <View style={styles.inlineLoadingRow}>
+                  <ActivityIndicator animating size="small" />
+                  <Text style={styles.friendNote}>Loading your library...</Text>
+                </View>
+              </Surface>
+            ) : null}
+            {!gamesLoading && libraryGames.length === 0 ? (
               <Surface style={styles.inputShell} elevation={0}>
                 <Text style={styles.friendNote}>
                   Pick a game from your library to create a lobby.
@@ -2399,6 +2203,15 @@ export default function HomeScreen() {
                 <Text style={styles.friendNote}>
                   If this is your first one, import a game here and we&apos;ll use it right away.
                 </Text>
+                <View style={styles.cardActions}>
+                  <Button
+                    mode="contained-tonal"
+                    icon="plus"
+                    onPress={() => setLobbyAddGameDialogVisible(true)}
+                    testID="open-empty-library-lobby-add-game-dialog-button">
+                    Add a game
+                  </Button>
+                </View>
                 <View style={styles.igdbSearchRow}>
                   <Searchbar
                     placeholder="Search IGDB by game title"
@@ -2407,7 +2220,7 @@ export default function HomeScreen() {
                     onSubmitEditing={() => {
                       handleSearchIgdb();
                     }}
-                    style={styles.igdbSearchInput}
+                    style={styles.igdbSearchInputInline}
                     testID="lobby-igdb-search-input"
                   />
                   <Button
@@ -2501,38 +2314,20 @@ export default function HomeScreen() {
                 ) : null}
               </Surface>
             ) : null}
-            <View style={styles.gamePickGrid}>
-              {libraryGames.slice(0, 6).map((game) => (
-                <Surface
-                  key={game.id}
-                  style={[
-                    styles.gamePickCard,
-                    selectedLobbyGameId === game.id ? styles.gamePickCardSelected : null,
-                  ]}
-                  elevation={selectedLobbyGameId === game.id ? 2 : 0}>
-                  <Text variant="titleSmall" style={styles.gamePickTitle}>
-                    {game.title}
-                  </Text>
-                  <Text style={styles.friendNote}>
-                    {game.genre} - {game.player_count}
-                  </Text>
-                  <Button
-                    mode={selectedLobbyGameId === game.id ? 'contained' : 'outlined'}
-                    compact
-                    onPress={() => {
-                      setSelectedLobbyGameId(game.id);
-                      setLobbyForm((current) => ({
-                        ...current,
-                        title: `${game.title} Lobby`,
-                      }));
-                      setLobbyMessage('');
-                    }}
-                    testID={`lobby-game-${game.id}`}>
-                    {selectedLobbyGameId === game.id ? 'Selected' : 'Pick game'}
-                  </Button>
-                </Surface>
-              ))}
-            </View>
+            {libraryGames.length > 0 ? (
+              <LobbyGameCarousel
+                games={libraryGames}
+                selectedGameId={selectedLobbyGameId}
+                onSelectGame={(game) => {
+                  setSelectedLobbyGameId(game.id);
+                  setLobbyForm((current) => ({
+                    ...current,
+                    title: `${game.title} Lobby`,
+                  }));
+                  setLobbyMessage('');
+                }}
+              />
+            ) : null}
           </View>
           <View style={styles.schedulerStep}>
             <View style={styles.schedulerStepHeader}>
@@ -2653,108 +2448,26 @@ export default function HomeScreen() {
               <Text style={styles.stepBadge}>4</Text>
               <View style={styles.friendMeta}>
                 <Text variant="titleSmall" style={styles.eventTimeTitle}>
-                  Discord meetup server
+                  Meetup details
                 </Text>
                 <Text style={styles.friendNote}>
-                  Optional. Pick one Discord server as the meetup place for this lobby.
+                  Optional. Add a Discord room, party chat, stream room, or any meetup note.
                 </Text>
               </View>
             </View>
-            {!profile?.discord_user_id ? (
-              <>
-                <Text style={styles.friendNote}>
-                  Connect Discord first if you want to tag a meetup server on the lobby.
-                </Text>
-                <Button
-                  mode="outlined"
-                  onPress={handleDiscordConnect}
-                  loading={discordBusy}
-                  disabled={discordBusy}
-                  testID="lobby-discord-connect-button">
-                  Connect Discord
-                </Button>
-              </>
-            ) : discordGuilds.length === 0 ? (
-              <>
-                <Text style={styles.friendNote}>
-                  No Discord servers are synced yet. Refresh to load your current server list.
-                </Text>
-                <Button
-                  mode="outlined"
-                  onPress={handleDiscordConnect}
-                  loading={discordBusy}
-                  disabled={discordBusy}
-                  testID="lobby-discord-refresh-button">
-                  Refresh Discord servers
-                </Button>
-              </>
-            ) : (
-              <>
-                {selectedLobbyDiscordGuild ? (
-                  <Pressable
-                    onPress={() => setDiscordGuildPickerVisible(true)}
-                    style={styles.discordGuildPickerButton}
-                    testID="lobby-discord-guild-picker-button">
-                    <View style={styles.discordGuildPickerContent}>
-                      <Text style={styles.discordGuildPickerPrefix}>Meet in:</Text>
-                      {renderDiscordGuildInlineIcon(selectedLobbyDiscordGuild, 18)}
-                      <Text style={styles.discordGuildPickerValue}>{selectedLobbyDiscordGuild.name}</Text>
-                    </View>
-                  </Pressable>
-                ) : (
-                  <Button
-                    mode="outlined"
-                    onPress={() => setDiscordGuildPickerVisible(true)}
-                    icon="discord"
-                    testID="lobby-discord-guild-picker-button">
-                    Choose Discord server (optional)
-                  </Button>
-                )}
-                <View style={styles.cardActions}>
-                  <Button
-                    mode="text"
-                    onPress={handleDiscordConnect}
-                    loading={discordBusy}
-                    disabled={discordBusy}
-                    testID="lobby-discord-refresh-linked-button">
-                    Refresh servers
-                  </Button>
-                  {selectedLobbyDiscordGuild ? (
-                    <Button
-                      mode="text"
-                      onPress={() =>
-                        setLobbyForm((current) => ({
-                          ...current,
-                          discordGuildId: '',
-                        }))
-                      }
-                      testID="clear-lobby-discord-guild-button">
-                      Clear selection
-                    </Button>
-                  ) : null}
-                </View>
-                {selectedLobbyDiscordGuild ? (
-                  <View style={styles.discordGuildSummaryRow}>
-                    {selectedLobbyDiscordGuild.icon_url ? (
-                      <Avatar.Image
-                        size={22}
-                        source={{ uri: selectedLobbyDiscordGuild.icon_url }}
-                        style={styles.discordGuildSummaryAvatar}
-                      />
-                    ) : (
-                      <Avatar.Text
-                        size={22}
-                        label={selectedLobbyDiscordGuild.name.slice(0, 2).toUpperCase()}
-                        style={styles.discordGuildSummaryAvatar}
-                      />
-                    )}
-                    <Text style={styles.friendNote}>
-                      Meetup server: {selectedLobbyDiscordGuild.name}
-                    </Text>
-                  </View>
-                ) : null}
-              </>
-            )}
+            <TextInput
+              mode="outlined"
+              label="Meetup details (optional)"
+              value={lobbyForm.meetupDetails}
+              onChangeText={(value) =>
+                setLobbyForm((current) => ({
+                  ...current,
+                  meetupDetails: value,
+                }))
+              }
+              style={styles.input}
+              testID="lobby-meetup-details-input"
+            />
           </View>
           <TextInput
             mode="outlined"
@@ -2800,18 +2513,9 @@ export default function HomeScreen() {
             <Chip icon="account">
               Host: {profile?.display_name ?? profile?.username ?? 'You'}
             </Chip>
-            {selectedLobbyDiscordGuild ? (
-              <Chip
-                icon={
-                  selectedLobbyDiscordGuild.icon_url
-                    ? () =>
-                        renderDiscordGuildInlineIcon(
-                          selectedLobbyDiscordGuild,
-                          18,
-                        )
-                    : 'discord'
-                }>
-                {selectedLobbyDiscordGuild.name}
+            {lobbyForm.meetupDetails.trim() ? (
+              <Chip icon="map-marker">
+                {lobbyForm.meetupDetails.trim()}
               </Chip>
             ) : null}
             {selectedLobbyInviteProfileIds.length > 0 ? (
@@ -2831,7 +2535,7 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Hosted lobbies</Text>
           <Text style={styles.friendNote}>
@@ -2854,8 +2558,8 @@ export default function HomeScreen() {
                         {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                       </Text>
                       <Text style={styles.friendNote}>{lobby.is_private ? 'Private lobby' : 'Public lobby'}</Text>
-                      {getLobbyDiscordServerLabel(lobby) ? (
-                        <Text style={styles.friendNote}>{getLobbyDiscordServerLabel(lobby)}</Text>
+                      {getLobbyMeetupLabel(lobby) ? (
+                        <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
                       ) : null}
                     </View>
                     <Chip compact style={styles.statusChip}>
@@ -2949,42 +2653,8 @@ export default function HomeScreen() {
             })}
         </Card.Content>
       </Card>
-      <Portal>
-        <Dialog visible={discordGuildPickerVisible} onDismiss={() => setDiscordGuildPickerVisible(false)}>
-          <Dialog.Title>Choose Discord server</Dialog.Title>
-          <Dialog.Content>
-            <Text style={styles.friendNote}>
-              This is optional metadata for where everyone should meet on Discord.
-            </Text>
-            {discordGuilds.map((guild) => (
-              <List.Item
-                key={guild.discord_guild_id}
-                title={guild.name}
-                description={guild.is_owner ? 'You own this server' : 'Shared Discord server'}
-                left={() =>
-                  guild.icon_url ? (
-                    <Avatar.Image size={40} source={{ uri: guild.icon_url }} style={styles.avatar} />
-                  ) : (
-                    <Avatar.Text size={40} label={guild.name.slice(0, 2).toUpperCase()} style={styles.avatar} />
-                  )
-                }
-                onPress={() => {
-                  setLobbyForm((current) => ({
-                    ...current,
-                    discordGuildId: guild.discord_guild_id,
-                  }));
-                  setDiscordGuildPickerVisible(false);
-                }}
-                testID={getDiscordGuildOptionTestId(guild.discord_guild_id)}
-              />
-            ))}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setDiscordGuildPickerVisible(false)}>Close</Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
-    </>
+      </View>
+    </View>
   );
 
   const renderSchedule = () => (
@@ -3018,8 +2688,8 @@ export default function HomeScreen() {
                     <Text style={styles.friendNote}>
                       {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                     </Text>
-                    {getLobbyDiscordServerLabel(lobby) ? (
-                      <Text style={styles.friendNote}>{getLobbyDiscordServerLabel(lobby)}</Text>
+                    {getLobbyMeetupLabel(lobby) ? (
+                      <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
                     ) : null}
                     {!isHost && currentMembership ? (
                       <Text style={styles.friendNote}>
@@ -3261,18 +2931,31 @@ export default function HomeScreen() {
     </>
   );
 
-  const renderInbox = () => <InboxSection notifications={notifications} />;
+  const renderInbox = () => (
+    <InboxSection
+      notifications={notifications}
+      pendingFriendRequestCount={incomingFriendRequests.length}
+      pendingLobbyInviteCount={pendingLobbyInviteCount}
+      readNotificationIds={readNotificationIds}
+      onMarkNotificationsRead={markNotificationsRead}
+      onOpenFriends={() => {
+        setFriendFilter('pending');
+        setSection('friends');
+      }}
+    />
+  );
 
   const renderProfile = () => {
     const resolvedAvatarUrl = resolveAvatarUrl(profile);
 
     return (
-      <>
-      <SectionTitle
-        title="Profile & settings"
-        subtitle="Edit your profile, link Discord, update account security, and keep setup simple."
-      />
-      <Card style={styles.panel}>
+      <View style={styles.sectionStack}>
+        <SectionTitle
+          title="Profile & settings"
+          subtitle="Edit your profile, link Discord, update account security, and keep setup simple."
+        />
+        <View style={isDesktopWeb ? styles.desktopPanelGrid : styles.sectionStack}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileHeader}>
           {resolvedAvatarUrl ? (
             <Avatar.Image size={68} source={{ uri: resolvedAvatarUrl }} style={styles.avatarLarge} />
@@ -3293,7 +2976,56 @@ export default function HomeScreen() {
           </View>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+        <Card.Content style={styles.profileSummary}>
+          <Text variant="titleMedium">Your friend code</Text>
+          <Text style={styles.friendNote}>
+            Share this only with people you want to hear from. You can regenerate it any time.
+          </Text>
+          <Surface style={styles.friendCodeSurface} elevation={0}>
+            <Text selectable style={styles.friendCodeValue} testID="friend-code-value">
+              {profile?.friend_code ?? 'Loading...'}
+            </Text>
+          </Surface>
+          <View style={styles.cardActions}>
+            <Button
+              mode="contained-tonal"
+              onPress={() => {
+                void handleCopyFriendCode();
+              }}
+              disabled={!profile?.friend_code}
+              testID="copy-friend-code-button">
+              Copy code
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={() => setFriendCodeRegenerateConfirmVisible(true)}
+              loading={friendActionBusyId === 'regenerate-friend-code'}
+              disabled={friendActionBusyId !== null || friendCodeRegenerateCooldownSeconds > 0}
+              testID="regenerate-friend-code-button">
+              {friendCodeRegenerateCooldownSeconds > 0
+                ? `Regenerate in ${friendCodeRegenerateCooldownSeconds}s`
+                : 'Regenerate'}
+            </Button>
+          </View>
+          {friendError ? (
+            <HelperText type="error" visible>
+              {friendError}
+            </HelperText>
+          ) : null}
+          {friendMessage ? (
+            <HelperText type="info" visible style={styles.successText}>
+              {friendMessage}
+            </HelperText>
+          ) : null}
+          {friendCodeRegenerateCooldownSeconds > 0 ? (
+            <HelperText type="info" visible>
+              You can regenerate again in {friendCodeRegenerateCooldownSeconds}s.
+            </HelperText>
+          ) : null}
+        </Card.Content>
+      </Card>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Discord</Text>
           <Text style={styles.friendNote}>
@@ -3306,8 +3038,8 @@ export default function HomeScreen() {
           </Chip>
           <Text style={styles.friendNote}>
             {profile?.discord_user_id
-              ? `This linked identity is now driving discovery and optional meetup-server tags. ${discordGuilds.length} server${discordGuilds.length === 1 ? '' : 's'} synced.`
-              : 'Next step is wiring Discord OAuth so identity and discovery start with the account players already use.'}
+              ? 'Discord is linked for identity, avatar fallback, and account continuity.'
+              : 'Link Discord if you want your app identity to match the account you already use elsewhere.'}
           </Text>
           <Text style={styles.friendNote}>
             Birthday: {profile?.birthday_month && profile?.birthday_day
@@ -3317,43 +3049,16 @@ export default function HomeScreen() {
           <Text style={styles.friendNote}>
             Busy status: {profile?.busy_visibility === 'private' ? 'Private' : 'Public'}
           </Text>
-          {profile?.discord_user_id && discordGuilds.length === 0 ? (
-            <Text style={styles.friendNote}>
-              No Discord servers are synced yet. Refresh once to load the servers you can tag during lobby creation.
-            </Text>
-          ) : null}
-          {profile?.discord_user_id && discordGuilds.length > 0 ? (
-            <View style={styles.quickPath}>
-              {discordGuilds.slice(0, 4).map((guild) => (
-                <Chip key={guild.discord_guild_id} icon="discord">
-                  {guild.name}
-                </Chip>
-              ))}
-              {discordGuilds.length > 4 ? (
-                <Chip>+{discordGuilds.length - 4} more</Chip>
-              ) : null}
-            </View>
-          ) : null}
           <View style={styles.cardActions}>
             {profile?.discord_user_id ? (
-              <>
-                <Button
-                  mode="contained-tonal"
-                  onPress={handleDiscordConnect}
-                  loading={discordBusy}
-                  disabled={discordBusy}
-                  testID="discord-refresh-servers-button">
-                  Refresh Discord servers
-                </Button>
-                <Button
-                  mode="outlined"
-                  onPress={handleDiscordDisconnect}
-                  loading={discordBusy}
-                  disabled={discordBusy}
-                  testID="discord-disconnect-button">
-                  Disconnect Discord
-                </Button>
-              </>
+              <Button
+                mode="outlined"
+                onPress={handleDiscordDisconnect}
+                loading={discordBusy}
+                disabled={discordBusy}
+                testID="discord-disconnect-button">
+                Disconnect Discord
+              </Button>
             ) : (
               <Button
                 mode="contained"
@@ -3372,7 +3077,7 @@ export default function HomeScreen() {
           ) : null}
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Profile details</Text>
           <Text style={styles.friendNote}>
@@ -3511,7 +3216,7 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Account & security</Text>
           <Text style={styles.friendNote}>
@@ -3589,7 +3294,7 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Favorite games</Text>
           <View style={styles.quickPath}>
@@ -3603,7 +3308,7 @@ export default function HomeScreen() {
           </View>
         </Card.Content>
       </Card>
-      <Card style={styles.panel}>
+      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content>
           <Text variant="titleMedium">Preferences</Text>
           <Text style={styles.listText}>Dark dashboard theme enabled</Text>
@@ -3611,7 +3316,8 @@ export default function HomeScreen() {
           <Text style={styles.listText}>Anonymous decline and do-not-invite lists pending backend</Text>
         </Card.Content>
       </Card>
-      </>
+      </View>
+      </View>
     );
   };
 
@@ -3674,7 +3380,7 @@ export default function HomeScreen() {
       provider: 'discord',
       options: {
         redirectTo: getWebRedirectUrl(),
-        scopes: 'identify email guilds',
+        scopes: 'identify email',
       },
     });
 
@@ -3761,29 +3467,12 @@ export default function HomeScreen() {
   }
 
   async function handleDiscordConnect() {
-    if (!profile) {
+    if (!profile || !session?.user) {
       return;
     }
 
     setDiscordBusy(true);
     setDiscordMessage('');
-
-    const providerToken = getSessionProviderToken(session);
-    if (profile.discord_user_id && providerToken) {
-      await syncDiscordGuildSnapshot(providerToken, {
-        successMessage: 'Discord servers refreshed.',
-      });
-      setDiscordBusy(false);
-      return;
-    }
-
-    if (!discordClientId) {
-      setDiscordMessage(
-        'Discord client setup is not configured yet. Add EXPO_PUBLIC_DISCORD_CLIENT_ID before wiring OAuth.',
-      );
-      setDiscordBusy(false);
-      return;
-    }
 
     if (Platform.OS !== 'web') {
       setDiscordMessage(
@@ -3800,21 +3489,24 @@ export default function HomeScreen() {
       return;
     }
 
-    const redirectUri = `${currentLocation.origin}${getDiscordCallbackPath()}`;
-    const state = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    globalThis.window.sessionStorage?.setItem(discordLinkIntentStorageKey, 'pending');
 
-    globalThis.window.sessionStorage?.setItem(discordStateStorageKey, state);
+    const { error } = await supabase.auth.linkIdentity({
+      provider: 'discord',
+      options: {
+        redirectTo: `${currentLocation.origin}${getWebBasePath()}/`,
+        scopes: 'identify',
+      },
+    });
 
-    const authorizeUrl = new URL('https://discord.com/oauth2/authorize');
-    authorizeUrl.searchParams.set('response_type', 'token');
-    authorizeUrl.searchParams.set('client_id', discordClientId);
-    authorizeUrl.searchParams.set('scope', 'identify guilds');
-    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
-    authorizeUrl.searchParams.set('prompt', 'consent');
-    authorizeUrl.searchParams.set('state', state);
+    if (error) {
+      globalThis.window.sessionStorage?.removeItem(discordLinkIntentStorageKey);
+      setDiscordMessage(error.message);
+      setDiscordBusy(false);
+      return;
+    }
 
-    globalThis.window.location.assign(authorizeUrl.toString());
-    setDiscordBusy(false);
+    setDiscordMessage('Redirecting to Discord...');
   }
 
   async function handleDiscordDisconnect() {
@@ -3843,22 +3535,18 @@ export default function HomeScreen() {
       return;
     }
 
-    const { error: replaceGuildsError } = await supabase.rpc('replace_discord_guilds', {
-      p_guilds: [],
-    });
+    const { error: cleanupError } = await supabase
+      .from('profile_discord_guilds')
+      .delete()
+      .eq('profile_id', session.user.id);
 
-    if (replaceGuildsError) {
-      setDiscordMessage(replaceGuildsError.message);
+    if (cleanupError) {
+      setDiscordMessage(cleanupError.message);
       setDiscordBusy(false);
       return;
     }
 
-    await loadDiscordGuilds();
     setProfile(data);
-    setLobbyForm((current) => ({
-      ...current,
-      discordGuildId: '',
-    }));
     setDiscordMessage('Discord link removed.');
     setDiscordBusy(false);
   }
@@ -4046,6 +3734,59 @@ export default function HomeScreen() {
     profile: renderProfile(),
   }[section];
 
+  const desktopSectionButtons = React.useMemo(
+    () =>
+      sections.map((item) =>
+        item.value === 'inbox'
+          ? {
+              ...item,
+              icon: pendingInboxCount > 0 ? 'bell-badge-outline' : undefined,
+              label: pendingInboxCount > 0 ? `Inbox (${pendingInboxCountLabel})` : item.label,
+            }
+          : item,
+      ),
+    [pendingInboxCount, pendingInboxCountLabel],
+  );
+
+  const sectionNavigation = isDesktopWeb ? (
+    <SegmentedButtons
+      value={section}
+      onValueChange={(value) => setSection(value as SectionKey)}
+      density="small"
+      style={styles.segmented}
+      buttons={desktopSectionButtons}
+    />
+  ) : (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.mobileSectionNavScroller}
+      contentContainerStyle={styles.mobileSectionNavRow}>
+      {sections.map((item) => {
+        const showInboxBadge = item.value === 'inbox' && pendingInboxCount > 0;
+
+        return (
+          <View key={item.value} style={styles.mobileSectionNavButtonWrap}>
+            <Button
+              mode={section === item.value ? 'contained-tonal' : 'outlined'}
+              compact
+              onPress={() => setSection(item.value)}
+              style={styles.mobileSectionNavButton}
+              contentStyle={styles.mobileSectionNavButtonContent}
+              testID={`section-nav-${item.value}`}>
+              {item.label}
+            </Button>
+            {showInboxBadge ? (
+              <Badge style={styles.mobileSectionNavBadge} size={20} testID="section-nav-badge-inbox">
+                {pendingInboxCountLabel}
+              </Badge>
+            ) : null}
+          </View>
+        );
+      })}
+    </ScrollView>
+  );
+
   if (authLoading) {
     return (
       <View style={styles.loginScreen}>
@@ -4071,7 +3812,7 @@ export default function HomeScreen() {
           </Text>
           <Text style={styles.pageSubtitle}>
             {allowSignup
-              ? 'Discord is the fastest way in for squad suggestions. Email/password stays as a fallback for testing.'
+              ? 'Discord is the fastest way in when you want your app profile to match the identity you already use. Email/password stays as a fallback for testing.'
               : 'Public demo access is sign-in only. Use a shared demo account or one we provide for testing.'}
           </Text>
 
@@ -4086,7 +3827,7 @@ export default function HomeScreen() {
             Continue with Discord
           </Button>
           <Text style={styles.friendNote}>
-            Recommended: use Discord first so the app can suggest people from your shared squad.
+            Recommended: use Discord first if you want connected identity and avatar fallback without rebuilding your profile by hand.
           </Text>
 
           <Divider style={styles.divider} />
@@ -4155,127 +3896,295 @@ export default function HomeScreen() {
   return (
     <View style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.eyebrow}>Friend Management App</Text>
-        <Text variant="headlineLarge" style={styles.pageTitle}>
-          Social gaming handoff prototype
-        </Text>
-        <Text style={styles.pageSubtitle}>
-          Mobile-first placeholder experience for onboarding, invites, roulette, lobbies, schedule,
-          and profile work.
-        </Text>
+        <View style={styles.contentShell}>
+          <Text style={styles.eyebrow}>Friend Management App</Text>
+          <Text variant="headlineLarge" style={styles.pageTitle}>
+            Social gaming handoff prototype
+          </Text>
+          <Text style={styles.pageSubtitle}>
+            Mobile-first placeholder experience for onboarding, invites, roulette, lobbies, schedule,
+            and profile work.
+          </Text>
 
-        <View style={styles.headerRow}>
-          <Chip icon="shield-account" testID="profile-chip">
-            {profileLoading
-              ? 'Loading profile...'
-              : profile?.display_name ?? profile?.username ?? session.user.email ?? 'Signed in user'}
-          </Chip>
-          <Button mode="text" onPress={handleLogout} disabled={authBusy} testID="logout-button">
-            Log out
-          </Button>
+          <View style={styles.headerRow}>
+            <Chip icon="shield-account" testID="profile-chip">
+              {profileLoading
+                ? 'Loading profile...'
+                : profile?.display_name ?? profile?.username ?? session.user.email ?? 'Signed in user'}
+            </Chip>
+            <Button mode="text" onPress={handleLogout} disabled={authBusy} testID="logout-button">
+              Log out
+            </Button>
+          </View>
+
+          {profile ? (
+            <Card style={styles.panel} testID="profile-summary-card">
+              <Card.Content style={styles.profileSummary}>
+                <Text variant="titleMedium">
+                  Welcome back, {profile.display_name ?? profile.username ?? 'Player'}
+                </Text>
+                <Text style={styles.friendNote}>
+                  Username: {profile.username ?? 'Not set yet'}
+                </Text>
+                <Text style={styles.friendNote}>
+                  Onboarding: {profile.onboarding_complete ? 'Complete' : 'In progress'}
+                </Text>
+              </Card.Content>
+            </Card>
+          ) : null}
+
+          {profile && !profile.onboarding_complete ? (
+            <Card style={styles.panel}>
+              <Card.Content style={styles.profileSummary}>
+                <SectionTitle
+                  title="Complete your profile"
+                  subtitle="Set stable app profile data before friends, lobbies, and scheduling start depending on it."
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Username"
+                  value={profileForm.username}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      username: value.replace(/\s+/g, '').toLowerCase(),
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-username-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Display name"
+                  value={profileForm.displayName}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      displayName: value,
+                    }))
+                  }
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-display-name-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Avatar URL (optional)"
+                  value={profileForm.avatarUrl}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      avatarUrl: value,
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-avatar-url-input"
+                />
+                {profileError ? (
+                  <HelperText type="error" visible>
+                    {profileError}
+                  </HelperText>
+                ) : null}
+                {profileMessage ? (
+                  <HelperText type="info" visible style={styles.successText}>
+                    {profileMessage}
+                  </HelperText>
+                ) : null}
+                <Button
+                  mode="contained"
+                  onPress={handleProfileSave}
+                  loading={profileBusy}
+                  disabled={profileBusy}
+                  testID="profile-save-button">
+                  Save profile
+                </Button>
+              </Card.Content>
+            </Card>
+          ) : null}
+
+          {sectionNavigation}
+
+          {content}
         </View>
-
-        {profile ? (
-          <Card style={styles.panel} testID="profile-summary-card">
-            <Card.Content style={styles.profileSummary}>
-              <Text variant="titleMedium">
-                Welcome back, {profile.display_name ?? profile.username ?? 'Player'}
-              </Text>
-              <Text style={styles.friendNote}>
-                Username: {profile.username ?? 'Not set yet'}
-              </Text>
-              <Text style={styles.friendNote}>
-                Onboarding: {profile.onboarding_complete ? 'Complete' : 'In progress'}
-              </Text>
-            </Card.Content>
-          </Card>
-        ) : null}
-
-        {profile && !profile.onboarding_complete ? (
-          <Card style={styles.panel}>
-            <Card.Content style={styles.profileSummary}>
-              <SectionTitle
-                title="Complete your profile"
-                subtitle="Set stable app profile data before friends, lobbies, and scheduling start depending on it."
-              />
-              <TextInput
-                mode="outlined"
-                label="Username"
-                value={profileForm.username}
-                onChangeText={(value) =>
-                  setProfileForm((current) => ({
-                    ...current,
-                    username: value.replace(/\s+/g, '').toLowerCase(),
-                  }))
-                }
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={styles.input}
-                testID="profile-username-input"
-              />
-              <TextInput
-                mode="outlined"
-                label="Display name"
-                value={profileForm.displayName}
-                onChangeText={(value) =>
-                  setProfileForm((current) => ({
-                    ...current,
-                    displayName: value,
-                  }))
-                }
-                autoCorrect={false}
-                style={styles.input}
-                testID="profile-display-name-input"
-              />
-              <TextInput
-                mode="outlined"
-                label="Avatar URL (optional)"
-                value={profileForm.avatarUrl}
-                onChangeText={(value) =>
-                  setProfileForm((current) => ({
-                    ...current,
-                    avatarUrl: value,
-                  }))
-                }
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={styles.input}
-                testID="profile-avatar-url-input"
-              />
-              {profileError ? (
-                <HelperText type="error" visible>
-                  {profileError}
-                </HelperText>
-              ) : null}
-              {profileMessage ? (
-                <HelperText type="info" visible style={styles.successText}>
-                  {profileMessage}
-                </HelperText>
-              ) : null}
-              <Button
-                mode="contained"
-                onPress={handleProfileSave}
-                loading={profileBusy}
-                disabled={profileBusy}
-                testID="profile-save-button">
-                Save profile
-              </Button>
-            </Card.Content>
-          </Card>
-        ) : null}
-
-        <SegmentedButtons
-          value={section}
-          onValueChange={(value) => setSection(value as SectionKey)}
-          density="small"
-          style={styles.segmented}
-          buttons={sections}
-        />
-
-        {content}
       </ScrollView>
 
       <Portal>
+        <Dialog
+          visible={lobbyAddGameDialogVisible}
+          style={[
+            styles.lobbyAddGameDialog,
+            lobbyAddGameDialogWidth > 0 ? { width: lobbyAddGameDialogWidth } : null,
+          ]}
+          onDismiss={() => {
+            if (igdbImportBusyId !== null) {
+              return;
+            }
+
+            handleCloseLobbyAddGameDialog();
+          }}>
+          <Dialog.Title>Add a game for this lobby</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              Search IGDB, add the game to your library, and we&apos;ll select it for this lobby right away.
+            </Text>
+          </Dialog.Content>
+          <Dialog.ScrollArea style={styles.lobbyAddGameDialogScrollShell}>
+            <ScrollView style={styles.lobbyAddGameDialogScrollArea} contentContainerStyle={styles.lobbyAddGameDialogContent}>
+              <View style={styles.igdbSearchStack}>
+                <Searchbar
+                  placeholder="Search IGDB by game title"
+                  value={igdbSearchQuery}
+                  onChangeText={setIgdbSearchQuery}
+                  onSubmitEditing={() => {
+                    handleSearchIgdb();
+                  }}
+                  style={styles.igdbSearchInputStacked}
+                  testID="lobby-add-game-search-input"
+                />
+                <Button
+                  mode="contained"
+                  onPress={handleSearchIgdb}
+                  loading={igdbSearchLoading}
+                  disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0 || igdbSearchQuery.trim().length < 2}
+                  style={styles.igdbSearchButton}
+                  testID="lobby-add-game-search-button">
+                  {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
+                </Button>
+              </View>
+              {igdbSearchQuery.trim().length > 0 && igdbSearchQuery.trim().length < 2 ? (
+                <HelperText type="info" visible testID="lobby-add-game-short-query-helper">
+                  Start with at least 2 letters so we can find the right game.
+                </HelperText>
+              ) : null}
+              {igdbError ? (
+                <HelperText type="error" visible>
+                  {igdbError}
+                </HelperText>
+              ) : null}
+              {igdbSearchCooldownSeconds > 0 ? (
+                <HelperText type="info" visible>
+                  Give IGDB a second between searches so we stay under the live API rate limit.
+                </HelperText>
+              ) : null}
+              {igdbMessage ? (
+                <HelperText type="info" visible style={styles.successText}>
+                  {igdbMessage}
+                </HelperText>
+              ) : null}
+              {!igdbSearchLoading && (igdbResults.length > 0 || Boolean(igdbError) || Boolean(igdbMessage) || igdbHasSearched) ? (
+                <View style={styles.igdbDismissRow}>
+                  <IconButton
+                    icon="close"
+                    size={18}
+                    onPress={handleClearIgdbSearchResults}
+                    accessibilityLabel="Close IGDB search results"
+                    testID="lobby-add-game-close-results-button"
+                  />
+                </View>
+              ) : null}
+              {igdbResults.map((game) => {
+                const alreadyImported = importedIgdbIds.includes(game.igdb_id);
+
+                return (
+                  <Card
+                    key={`lobby-add-game-${game.igdb_id}`}
+                    style={styles.igdbResultCard}
+                    testID={`lobby-add-game-result-${game.igdb_id}`}>
+                    <Card.Content>
+                      <View style={styles.igdbResultRow}>
+                        {game.cover_url ? (
+                          <Avatar.Image size={52} source={{ uri: game.cover_url }} style={styles.avatar} />
+                        ) : (
+                          <Surface style={styles.igdbCoverPlaceholder} elevation={0}>
+                            <Text style={styles.igdbCoverPlaceholderText}>IGDB</Text>
+                          </Surface>
+                        )}
+                        <View style={styles.igdbResultMeta}>
+                          <Text variant="titleMedium">{game.title}</Text>
+                          <Text style={styles.friendNote}>
+                            {game.genre} | {game.platform}
+                          </Text>
+                          <View style={styles.quickPath}>
+                            <Chip compact>{game.player_count}</Chip>
+                            {game.release_date ? (
+                              <Chip compact>Released {formatReleaseDateLabel(game.release_date)}</Chip>
+                            ) : null}
+                            {typeof game.rating === 'number' ? <Chip compact>Rating {Math.round(game.rating)}</Chip> : null}
+                            {alreadyImported ? <Chip compact icon="check-circle">Imported</Chip> : null}
+                          </View>
+                          <Text style={styles.listText}>{game.description ?? 'No IGDB summary available yet.'}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.cardActions}>
+                        <Button
+                          mode="contained-tonal"
+                          onPress={() => {
+                            void handleImportLobbyGameFromDialog(game);
+                          }}
+                          loading={igdbImportBusyId === game.igdb_id}
+                          disabled={igdbImportBusyId !== null}
+                          testID={`lobby-add-game-import-button-${game.igdb_id}`}>
+                          {alreadyImported ? 'Refresh and use' : 'Add and use'}
+                        </Button>
+                      </View>
+                    </Card.Content>
+                  </Card>
+                );
+              })}
+              {igdbHasSearched && !igdbSearchLoading && !igdbError && igdbResults.length === 0 ? (
+                <Text style={styles.friendNote} testID="lobby-add-game-empty-state">
+                  No IGDB games matched that search yet.
+                </Text>
+              ) : null}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button
+              onPress={handleCloseLobbyAddGameDialog}
+              disabled={igdbImportBusyId !== null}
+              testID="close-lobby-add-game-dialog-button">
+              Close
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+        <Dialog
+          visible={friendCodeRegenerateConfirmVisible}
+          onDismiss={() => {
+            if (friendActionBusyId !== null) {
+              return;
+            }
+
+            setFriendCodeRegenerateConfirmVisible(false);
+          }}>
+          <Dialog.Title>Regenerate friend code?</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              Your current friend code will stop working. Anyone you still want to hear from will need
+              your new code.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              onPress={() => setFriendCodeRegenerateConfirmVisible(false)}
+              disabled={friendActionBusyId !== null}
+              testID="cancel-regenerate-friend-code-button">
+              Cancel
+            </Button>
+            <Button
+              onPress={() => {
+                void handleConfirmRegenerateFriendCode();
+              }}
+              loading={friendActionBusyId === 'regenerate-friend-code'}
+              disabled={friendActionBusyId !== null || friendCodeRegenerateCooldownSeconds > 0}
+              testID="confirm-regenerate-friend-code-button">
+              Regenerate
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
         <Dialog
           visible={Boolean(gamePendingRemoval)}
           onDismiss={() => {

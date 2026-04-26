@@ -1,6 +1,7 @@
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   username text unique,
+  friend_code text,
   avatar_url text,
   display_name text,
   onboarding_complete boolean not null default false,
@@ -13,6 +14,9 @@ alter table public.profiles
   add column if not exists birthday_day integer,
   add column if not exists birthday_visibility text not null default 'private',
   add column if not exists busy_visibility text not null default 'public';
+
+alter table public.profiles
+  add column if not exists friend_code text;
 
 alter table public.profiles
   drop constraint if exists profiles_birthday_visibility_check;
@@ -48,6 +52,215 @@ alter table public.profiles
       and birthday_day between 1 and 29
     )
   );
+
+create or replace function public.generate_friend_code()
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  alphabet constant text := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  next_code text;
+  code_body text;
+  position integer;
+begin
+  loop
+    code_body := '';
+    for position in 1..8 loop
+      code_body := code_body || substr(alphabet, 1 + floor(random() * length(alphabet))::integer, 1);
+    end loop;
+
+    next_code :=
+      'GS-' ||
+      substring(code_body from 1 for 4) ||
+      '-' ||
+      substring(code_body from 5 for 4);
+
+    exit when not exists (
+      select 1
+      from public.profiles
+      where lower(friend_code) = lower(next_code)
+    );
+  end loop;
+
+  return next_code;
+end;
+$$;
+
+create or replace function public.normalize_friend_code(p_code text)
+returns text
+language plpgsql
+immutable
+security definer
+set search_path = public
+as $$
+declare
+  cleaned_code text := upper(regexp_replace(coalesce(p_code, ''), '[^A-Z0-9]', '', 'g'));
+  code_body text;
+begin
+  if cleaned_code = '' then
+    return '';
+  end if;
+
+  code_body := case
+    when left(cleaned_code, 2) = 'GS' then substring(cleaned_code from 3)
+    else cleaned_code
+  end;
+
+  if length(code_body) <> 8 then
+    return '';
+  end if;
+
+  if code_body !~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$' then
+    return '';
+  end if;
+
+  return 'GS-' || substring(code_body from 1 for 4) || '-' || substring(code_body from 5 for 4);
+end;
+$$;
+
+do $$
+declare
+  profile_row record;
+  normalized_code text;
+begin
+  for profile_row in
+    select id, friend_code
+    from public.profiles
+    where friend_code is null
+      or btrim(friend_code) = ''
+      or friend_code <> public.normalize_friend_code(friend_code)
+  loop
+    normalized_code := public.normalize_friend_code(profile_row.friend_code);
+
+    update public.profiles
+    set friend_code = case
+      when normalized_code = '' then public.generate_friend_code()
+      else normalized_code
+    end
+    where id = profile_row.id;
+  end loop;
+end;
+$$;
+
+alter table public.profiles
+  alter column friend_code set default public.generate_friend_code();
+
+alter table public.profiles
+  drop constraint if exists profiles_friend_code_format_check;
+
+alter table public.profiles
+  add constraint profiles_friend_code_format_check
+  check (
+    friend_code ~ '^GS-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$'
+  );
+
+create unique index if not exists profiles_friend_code_lower_key
+  on public.profiles (lower(friend_code));
+
+alter table public.profiles
+  alter column friend_code set not null;
+
+create or replace function public.lookup_friend_code(p_code text)
+returns table (
+  id uuid,
+  username text,
+  avatar_url text,
+  display_name text,
+  birthday_label text,
+  is_discord_connected boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized_code text := public.normalize_friend_code(p_code);
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if normalized_code = '' then
+    return;
+  end if;
+
+  return query
+  select
+    profiles.id,
+    profiles.username,
+    coalesce(nullif(btrim(profiles.avatar_url), ''), nullif(btrim(profiles.discord_avatar_url), '')) as avatar_url,
+    profiles.display_name,
+    case
+      when profiles.birthday_visibility = 'public'
+        and profiles.birthday_month is not null
+        and profiles.birthday_day is not null
+      then to_char(make_date(2000, profiles.birthday_month, profiles.birthday_day), 'FMMonth') || ' ' || profiles.birthday_day::text
+      else null
+    end as birthday_label,
+    profiles.discord_user_id is not null as is_discord_connected
+  from public.profiles
+  where profiles.friend_code = normalized_code
+    and profiles.id <> auth.uid()
+    and not exists (
+      select 1
+      from public.friends
+      where friends.profile_id = auth.uid()
+        and friends.friend_profile_id = profiles.id
+    )
+    and not exists (
+      select 1
+      from public.friend_requests
+      where friend_requests.status = 'pending'
+        and (
+          (
+            friend_requests.requester_profile_id = auth.uid()
+            and friend_requests.addressee_profile_id = profiles.id
+          )
+          or (
+            friend_requests.addressee_profile_id = auth.uid()
+            and friend_requests.requester_profile_id = profiles.id
+          )
+        )
+    )
+  limit 1;
+end;
+$$;
+
+create or replace function public.regenerate_friend_code()
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  next_code text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  next_code := public.generate_friend_code();
+
+  update public.profiles
+  set friend_code = next_code
+  where id = auth.uid();
+
+  return next_code;
+end;
+$$;
+
+revoke all on function public.generate_friend_code() from public;
+grant execute on function public.generate_friend_code() to authenticated;
+
+revoke all on function public.normalize_friend_code(text) from public;
+
+revoke all on function public.lookup_friend_code(text) from public;
+grant execute on function public.lookup_friend_code(text) to authenticated;
+
+revoke all on function public.regenerate_friend_code() from public;
+grant execute on function public.regenerate_friend_code() to authenticated;
 
 alter table public.profiles enable row level security;
 

@@ -10,4 +10,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 // Shared Supabase client for the app. Uses Expo public env vars because this client runs on-device.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    detectSessionInUrl: true,
+    flowType: 'pkce',
+  },
+});

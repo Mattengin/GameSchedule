@@ -219,6 +219,30 @@ const getQueryValue = (url: string, key: string) => {
   return match ? decodeURIComponent(match[1]) : '';
 };
 
+const assertNoHorizontalOverflow = () => {
+  cy.window().then((win) => {
+    const viewportWidth = win.innerWidth;
+
+    cy.document().then((doc) => {
+      expect(doc.documentElement.scrollWidth, 'page should not overflow horizontally').to.be.lte(
+        viewportWidth + 1,
+      );
+    });
+  });
+};
+
+const clickSectionNav = (section: string) => {
+  cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
+    $button[0].scrollIntoView({
+      behavior: 'instant',
+      block: 'nearest',
+      inline: 'center',
+    });
+  });
+
+  cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });
+};
+
 const makeImportedGameRecord = (game: MockIgdbGame): MockGame => ({
   id: `igdb-${game.igdb_id}`,
   title: game.title,
@@ -599,6 +623,16 @@ const registerMockGameSocial = () => {
     body: [],
   }).as('friendRequestsRequest');
 
+  cy.intercept('POST', '**/rest/v1/rpc/get_discord_friend_suggestions', {
+    statusCode: 200,
+    body: [],
+  }).as('discordSuggestionsRpc');
+
+  cy.intercept('POST', '**/rest/v1/rpc/search_discord_profiles', {
+    statusCode: 200,
+    body: [],
+  }).as('searchDiscordProfilesRpc');
+
   cy.intercept('GET', '**/rest/v1/communities*', {
     statusCode: 200,
     body: null,
@@ -614,6 +648,9 @@ describe('game social persistence', () => {
   const email = `cypress-game-social-${Date.now()}@example.com`;
   const password = `Password123!${Date.now()}`;
   const userId = makeUserId(email);
+  const secondEmail = `cypress-game-social-peer-${Date.now()}@example.com`;
+  const secondPassword = `Password123!peer-${Date.now()}`;
+  const secondUserId = makeUserId(secondEmail);
 
   before(() => {
     authStore.clear();
@@ -649,10 +686,12 @@ describe('game social persistence', () => {
   it('favorites a game and shows it in the profile favorites section', () => {
     signInAndOpenGames();
 
-    cy.contains('Helix Arena')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Favorite$/).click();
+    cy.get('[data-testid="game-library-favorite-helix-arena"]').click();
+    cy.wait('@favoriteGamesInsert')
+      .its('request.body')
+      .should((body) => {
+        expect(body.profile_id).to.equal(userId);
+        expect(body.game_id).to.equal('helix-arena');
       });
 
     cy.contains(/game added to favorites/i).should('exist');
@@ -664,10 +703,12 @@ describe('game social persistence', () => {
   it('adds a game to the roulette pool and shows it on the roulette screen', () => {
     signInAndOpenGames();
 
-    cy.contains('Deep Raid')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Add to pool$/).click();
+    cy.get('[data-testid="game-library-pool-deep-raid"]').click();
+    cy.wait('@rouletteInsert')
+      .its('request.body')
+      .should((body) => {
+        expect(body.profile_id).to.equal(userId);
+        expect(body.game_id).to.equal('deep-raid');
       });
 
     cy.contains(/game added to roulette pool/i).should('be.visible');
@@ -687,19 +728,21 @@ describe('game social persistence', () => {
   it('removes games from favorites and roulette after they were added', () => {
     signInAndOpenGames();
 
-    cy.contains('Wild Rally Online')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Favorite$/).click();
-        cy.contains(/^Add to pool$/).click();
-      });
+    cy.get('[data-testid="game-library-favorite-wild-rally-online"]').click();
+    cy.wait('@favoriteGamesInsert');
+    cy.get('[data-testid="game-library-pool-wild-rally-online"]').click();
+    cy.wait('@rouletteInsert');
 
-    cy.contains('Wild Rally Online')
-      .closest('[class*="css-view"]')
-      .within(() => {
-        cy.contains(/^Unfavorite$/).click();
-        cy.contains(/^Remove from pool$/).click();
-      });
+    cy.get('[data-testid="game-library-favorite-wild-rally-online"]').click();
+    cy.wait('@favoriteGamesDelete')
+      .its('request.url')
+      .should('include', `profile_id=eq.${userId}`)
+      .and('include', 'game_id=eq.wild-rally-online');
+    cy.get('[data-testid="game-library-pool-wild-rally-online"]').click();
+    cy.wait('@rouletteDelete')
+      .its('request.url')
+      .should('include', `profile_id=eq.${userId}`)
+      .and('include', 'game_id=eq.wild-rally-online');
 
     cy.contains('Profile').click();
     cy.contains('Favorite games').scrollIntoView().should('exist');
@@ -717,11 +760,30 @@ describe('game social persistence', () => {
 
     cy.contains('Portal 2').should('be.visible');
     cy.get('[data-testid="igdb-import-button-1234"]').click();
+    cy.wait('@igdbImportRequest')
+      .its('request.body')
+      .should((body) => {
+        expect(body.igdb_id).to.equal(1234);
+        expect(body.title).to.equal('Portal 2');
+        expect(body.source).to.equal('igdb');
+      });
 
     cy.contains(/portal 2 imported into your library/i).should('be.visible');
     cy.get('[data-testid="game-library-card-igdb-1234"]').scrollIntoView().within(() => {
       cy.get('[data-testid="game-library-favorite-igdb-1234"]').click();
+      cy.wait('@favoriteGamesInsert')
+        .its('request.body')
+        .should((body) => {
+          expect(body.profile_id).to.equal(userId);
+          expect(body.game_id).to.equal('igdb-1234');
+        });
       cy.get('[data-testid="game-library-pool-igdb-1234"]').click();
+      cy.wait('@rouletteInsert')
+        .its('request.body')
+        .should((body) => {
+          expect(body.profile_id).to.equal(userId);
+          expect(body.game_id).to.equal('igdb-1234');
+        });
     });
 
     cy.contains('Profile').click();
@@ -877,6 +939,63 @@ describe('game social persistence', () => {
     cy.wait(2200);
 
     cy.get('[data-testid="igdb-search-button"]').should('not.be.disabled');
+  });
+
+  it('supports importing and removing a library game on a latest iPhone-sized viewport', () => {
+    cy.viewport(390, 844);
+    setOwnedGames(userId, []);
+
+    cy.visit('/');
+    cy.signupUi(email, password);
+    clickSectionNav('games');
+    cy.contains(/add games to library/i).should('be.visible');
+
+    cy.get('[data-testid="igdb-search-input"]').clear().type('portal');
+    cy.get('[data-testid="igdb-search-button"]').click();
+    cy.get('[data-testid="igdb-import-button-1234"]').click();
+    cy.wait('@igdbImportRequest');
+
+    cy.get('[data-testid="game-library-card-igdb-1234"]').scrollIntoView().should('be.visible');
+    cy.get('[data-testid="game-library-card-igdb-1234"]').within(() => {
+      cy.get('[data-testid="game-library-remove-igdb-1234"]').click();
+    });
+    cy.get('[data-testid="confirm-remove-game-button"]').click();
+    cy.wait('@removeGameFromLibraryRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_game_id).to.equal('igdb-1234');
+      });
+
+    cy.contains(/portal 2 removed from your library/i).should('exist');
+    cy.get('[data-testid="games-empty-library-state"]').should('be.visible');
+    assertNoHorizontalOverflow();
+  });
+
+  it('keeps shared catalog games in another user library when one user removes their own copy', () => {
+    signInAndOpenGames({ withLibrary: false });
+
+    cy.get('[data-testid="igdb-search-input"]').clear().type('portal');
+    cy.get('[data-testid="igdb-search-button"]').click();
+    cy.get('[data-testid="igdb-import-button-1234"]').click();
+    cy.wait('@igdbImportRequest');
+
+    setOwnedGames(secondUserId, ['igdb-1234']);
+
+    cy.get('[data-testid="game-library-card-igdb-1234"]').within(() => {
+      cy.get('[data-testid="game-library-remove-igdb-1234"]').click();
+    });
+    cy.get('[data-testid="confirm-remove-game-button"]').click();
+    cy.wait('@removeGameFromLibraryRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_game_id).to.equal('igdb-1234');
+      });
+
+    cy.get('[data-testid="logout-button"]').click();
+    cy.loginUi(secondEmail, secondPassword);
+    cy.contains('Games').click();
+    cy.get('[data-testid="game-library-card-igdb-1234"]').should('be.visible');
+    cy.get('[data-testid="games-empty-library-state"]').should('not.exist');
   });
 });
 

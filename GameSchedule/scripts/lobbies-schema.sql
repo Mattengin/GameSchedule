@@ -5,6 +5,7 @@ create table if not exists public.lobbies (
   title text not null,
   scheduled_for timestamptz,
   scheduled_until timestamptz,
+  meetup_details text,
   discord_guild_id text,
   discord_guild_name text,
   discord_guild_icon_url text,
@@ -15,6 +16,9 @@ create table if not exists public.lobbies (
 
 alter table public.lobbies
 add column if not exists scheduled_until timestamptz;
+
+alter table public.lobbies
+add column if not exists meetup_details text;
 
 alter table public.lobbies
 add column if not exists discord_guild_id text;
@@ -297,6 +301,7 @@ $$;
 
 drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[]);
 drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text, text, text);
+drop function if exists public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text);
 
 create or replace function public.create_lobby_with_invites(
   p_game_id text,
@@ -305,9 +310,7 @@ create or replace function public.create_lobby_with_invites(
   p_scheduled_until timestamptz,
   p_is_private boolean,
   p_invited_profile_ids uuid[] default '{}',
-  p_discord_guild_id text default null,
-  p_discord_guild_name text default null,
-  p_discord_guild_icon_url text default null
+  p_meetup_details text default null
 )
 returns public.lobbies
 language plpgsql
@@ -349,6 +352,7 @@ begin
     title,
     scheduled_for,
     scheduled_until,
+    meetup_details,
     discord_guild_id,
     discord_guild_name,
     discord_guild_icon_url,
@@ -361,9 +365,10 @@ begin
     p_title,
     p_scheduled_for,
     p_scheduled_until,
-    nullif(btrim(p_discord_guild_id), ''),
-    nullif(btrim(p_discord_guild_name), ''),
-    nullif(btrim(p_discord_guild_icon_url), ''),
+    nullif(btrim(p_meetup_details), ''),
+    null,
+    null,
+    null,
     p_is_private,
     'scheduled'
   )

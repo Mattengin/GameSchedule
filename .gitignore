@@ -8,6 +8,8 @@ GameSchedule-clone/
 *.err.log
 
 GameSchedule/.env
+GameSchedule/README.md
+GameSchedule/WORKING_CONTEXT.md
 GameSchedule/node_modules/
 GameSchedule/.expo/
 GameSchedule/supabase/.temp/

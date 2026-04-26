@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { Image, View } from 'react-native';
+import { Image, Platform, View, useWindowDimensions } from 'react-native';
 import { Button, Card, Chip, Divider, HelperText, IconButton, ProgressBar, Searchbar, Surface, Text } from 'react-native-paper';
+import { inboxHistoryPageSize } from './homeConstants';
 import { styles } from './homeStyles';
 import type { GameRecord, IgdbSearchResult, RouletteEntry } from './homeTypes';
 import { SectionTitle, StatCard, formatReleaseDateLabel } from './homeUtils';
 
 type NotificationItem = {
+  id: string;
   age: string;
   label: string;
   message: string;
@@ -28,100 +30,142 @@ export function DashboardSection({
   roulettePoolCount,
   roulettePoolGames,
 }: DashboardSectionProps) {
-  return (
-    <>
-      <Surface style={styles.heroCard} elevation={2}>
-        <Chip icon="motion-play" style={styles.liveChip}>
-          Live prototype
-        </Chip>
-        <Text variant="displaySmall" style={styles.heroTitle}>
-          Play together, faster.
-        </Text>
-        <Text style={styles.heroCopy}>
-          Placeholder data for the social gaming flow: invites, roulette, lobby setup, and
-          availability sync.
-        </Text>
-        <View style={styles.heroActions}>
-          <Button mode="contained" onPress={onStartGroupSpin}>
-            Start group spin
-          </Button>
-          <Button mode="outlined" onPress={onManageFriends}>
-            Manage friends
-          </Button>
-        </View>
-      </Surface>
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
 
-      <View style={styles.statRow}>
-        <StatCard label="Friends online" value="12" accent="#7C5CFF" />
-        <StatCard label="Open lobbies" value={String(lobbiesCount)} accent="#33D1FF" />
-        <StatCard label="Pool games" value={String(roulettePoolCount)} accent="#7DFFB3" />
+  const heroCard = (
+    <Surface style={[styles.heroCard, isDesktopWeb ? styles.desktopHeroPane : null]} elevation={2}>
+      <Chip icon="motion-play" style={styles.liveChip}>
+        Live prototype
+      </Chip>
+      <Text variant="displaySmall" style={styles.heroTitle}>
+        Play together, faster.
+      </Text>
+      <Text style={styles.heroCopy}>
+        Placeholder data for the social gaming flow: invites, roulette, lobby setup, and
+        availability sync.
+      </Text>
+      <View style={styles.heroActions}>
+        <Button mode="contained" onPress={onStartGroupSpin}>
+          Start group spin
+        </Button>
+        <Button mode="outlined" onPress={onManageFriends}>
+          Manage friends
+        </Button>
       </View>
+    </Surface>
+  );
 
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Setup wizard"
-            subtitle="Mirror the onboarding handoff before auth and API work land."
-          />
-          <Text style={styles.listText}>1. Create username and avatar</Text>
-          <Text style={styles.listText}>2. Connect Discord or Twitch later</Text>
-          <Text style={styles.listText}>3. Pick favorite games for your pool</Text>
-          <Text style={styles.listText}>4. Set weekly availability</Text>
-          <ProgressBar progress={0.75} color="#7C5CFF" style={styles.progress} />
-        </Card.Content>
-      </Card>
+  const statsRow = (
+    <View style={[styles.statRow, isDesktopWeb ? styles.desktopStatsStack : null]}>
+      <StatCard label="Friends online" value="12" accent="#7C5CFF" />
+      <StatCard label="Open lobbies" value={String(lobbiesCount)} accent="#33D1FF" />
+      <StatCard label="Pool games" value={String(roulettePoolCount)} accent="#7DFFB3" />
+    </View>
+  );
 
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Tonight's fastest route"
-            subtitle="One-tap path from roulette to live lobby."
-          />
-          <View style={styles.quickPath}>
-            <Chip icon="dice-multiple">Spin</Chip>
-            <Chip icon="account-multiple">Invite squad</Chip>
-            <Chip icon="calendar-clock">Confirm time</Chip>
-            <Chip icon="bell-ring">Send reminder</Chip>
-          </View>
-        </Card.Content>
-      </Card>
+  const setupWizardCard = (
+    <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+      <Card.Content>
+        <SectionTitle
+          title="Setup wizard"
+          subtitle="Mirror the onboarding handoff before auth and API work land."
+        />
+        <Text style={styles.listText}>1. Create username and avatar</Text>
+        <Text style={styles.listText}>2. Connect Discord or Twitch later</Text>
+        <Text style={styles.listText}>3. Pick favorite games for your pool</Text>
+        <Text style={styles.listText}>4. Set weekly availability</Text>
+        <ProgressBar progress={0.75} color="#7C5CFF" style={styles.progress} />
+      </Card.Content>
+    </Card>
+  );
 
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Featured games"
-            subtitle="Pulled from the games you already chose to keep in your library."
-          />
-          <View style={styles.quickPath}>
-            {libraryGames
-              .filter((game) => game.is_featured)
-              .slice(0, 3)
-              .map((game) => (
-                <Chip key={game.id}>{game.title}</Chip>
-              ))}
-            {libraryGames.length === 0 ? (
-              <Text style={styles.friendNote}>Add games to library to start building your personal list.</Text>
-            ) : null}
-          </View>
-        </Card.Content>
-      </Card>
+  const quickRouteCard = (
+    <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+      <Card.Content>
+        <SectionTitle
+          title="Tonight's fastest route"
+          subtitle="One-tap path from roulette to live lobby."
+        />
+        <View style={styles.quickPath}>
+          <Chip icon="dice-multiple">Spin</Chip>
+          <Chip icon="account-multiple">Invite squad</Chip>
+          <Chip icon="calendar-clock">Confirm time</Chip>
+          <Chip icon="bell-ring">Send reminder</Chip>
+        </View>
+      </Card.Content>
+    </Card>
+  );
 
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Your roulette pool"
-            subtitle="Personal pool saved in Supabase and ready for the next spin."
-          />
-          <View style={styles.quickPath}>
-            {roulettePoolGames.length > 0 ? (
-              roulettePoolGames.slice(0, 4).map((game) => <Chip key={game.id}>{game.title}</Chip>)
-            ) : (
-              <Text style={styles.friendNote}>Add games from the library to start building your pool.</Text>
-            )}
-          </View>
-        </Card.Content>
-      </Card>
-    </>
+  const featuredGamesCard = (
+    <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+      <Card.Content>
+        <SectionTitle
+          title="Featured games"
+          subtitle="Pulled from the games you already chose to keep in your library."
+        />
+        <View style={styles.quickPath}>
+          {libraryGames
+            .filter((game) => game.is_featured)
+            .slice(0, 3)
+            .map((game) => (
+              <Chip key={game.id}>{game.title}</Chip>
+            ))}
+          {libraryGames.length === 0 ? (
+            <Text style={styles.friendNote}>Add games to library to start building your personal list.</Text>
+          ) : null}
+        </View>
+      </Card.Content>
+    </Card>
+  );
+
+  const roulettePoolCard = (
+    <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+      <Card.Content>
+        <SectionTitle
+          title="Your roulette pool"
+          subtitle="Personal pool saved in Supabase and ready for the next spin."
+        />
+        <View style={styles.quickPath}>
+          {roulettePoolGames.length > 0 ? (
+            roulettePoolGames.slice(0, 4).map((game) => <Chip key={game.id}>{game.title}</Chip>)
+          ) : (
+            <Text style={styles.friendNote}>Add games from the library to start building your pool.</Text>
+          )}
+        </View>
+      </Card.Content>
+    </Card>
+  );
+
+  return (
+    <View style={styles.sectionStack}>
+      {isDesktopWeb ? (
+        <View style={styles.desktopHeroStatsRow}>
+          {heroCard}
+          <View style={styles.desktopStatsPane}>{statsRow}</View>
+        </View>
+      ) : (
+        <>
+          {heroCard}
+          {statsRow}
+        </>
+      )}
+      {isDesktopWeb ? (
+        <View style={styles.desktopPanelGrid}>
+          {setupWizardCard}
+          {quickRouteCard}
+          {featuredGamesCard}
+          {roulettePoolCard}
+        </View>
+      ) : (
+        <>
+          {setupWizardCard}
+          {quickRouteCard}
+          {featuredGamesCard}
+          {roulettePoolCard}
+        </>
+      )}
+    </View>
   );
 }
 
@@ -186,14 +230,135 @@ export function GamesSection({
   onToggleRoulettePool,
   rouletteEntries,
 }: GamesSectionProps) {
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
+  const isCompactLibraryCard = width < 700;
   const normalizedIgdbSearchQuery = igdbSearchQuery.trim();
   const isIgdbSearchQueryTooShort = normalizedIgdbSearchQuery.length > 0 && normalizedIgdbSearchQuery.length < 2;
   const hasLibraryGames = libraryGamesCount > 0;
   const canDismissIgdbSearchOutput =
     !igdbSearchLoading && (igdbResults.length > 0 || Boolean(igdbError) || Boolean(igdbMessage) || igdbHasSearched);
 
-  return (
-    <>
+  const igdbImportCard = (
+    <Card style={[styles.panel, isDesktopWeb ? styles.desktopCardStretch : null]}>
+      <Card.Content>
+        <SectionTitle
+          title="Import from IGDB"
+          subtitle="Search the live IGDB catalog, then import the games you want into your local library."
+        />
+        <View style={styles.igdbSearchStack}>
+          <Searchbar
+            placeholder="Search IGDB by game title"
+            value={igdbSearchQuery}
+            onChangeText={onChangeIgdbSearchQuery}
+            onSubmitEditing={() => {
+              onSearchIgdb();
+            }}
+            style={styles.igdbSearchInputStacked}
+            testID="igdb-search-input"
+          />
+          <Button
+            mode="contained"
+            onPress={onSearchIgdb}
+            loading={igdbSearchLoading}
+            disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0 || normalizedIgdbSearchQuery.length < 2}
+            style={styles.igdbSearchButton}
+            testID="igdb-search-button">
+            {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
+          </Button>
+        </View>
+        {isIgdbSearchQueryTooShort ? (
+          <HelperText type="info" visible testID="igdb-short-query-helper">
+            Start with at least 2 letters so we can find the right game.
+          </HelperText>
+        ) : null}
+        {igdbError ? (
+          <HelperText type="error" visible>
+            {igdbError}
+          </HelperText>
+        ) : null}
+        {igdbSearchCooldownSeconds > 0 ? (
+          <HelperText type="info" visible>
+            Give IGDB a second between searches so we stay under the live API rate limit.
+          </HelperText>
+        ) : null}
+        {igdbMessage ? (
+          <HelperText type="info" visible style={styles.successText}>
+            {igdbMessage}
+          </HelperText>
+        ) : null}
+        {canDismissIgdbSearchOutput ? (
+          <View style={styles.igdbDismissRow}>
+            <IconButton
+              icon="close"
+              size={18}
+              onPress={onClearIgdbSearchResults}
+              accessibilityLabel="Close IGDB search results"
+              testID="igdb-close-results-button"
+            />
+          </View>
+        ) : null}
+        {igdbResults.map((game) => {
+          const alreadyImported = importedIgdbIds.includes(game.igdb_id);
+
+          return (
+            <Card key={game.igdb_id} style={styles.igdbResultCard} testID={`igdb-result-${game.igdb_id}`}>
+              <Card.Content>
+                <View style={styles.igdbResultRow}>
+                  {game.cover_url ? (
+                    <Image
+                      source={{ uri: game.cover_url }}
+                      style={styles.igdbCoverImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <Surface style={styles.igdbCoverPlaceholder} elevation={0}>
+                      <Text style={styles.igdbCoverPlaceholderText}>IGDB</Text>
+                    </Surface>
+                  )}
+                  <View style={styles.igdbResultMeta}>
+                    <Text variant="titleMedium">{game.title}</Text>
+                    <Text style={styles.friendNote}>
+                      {game.genre} | {game.platform}
+                    </Text>
+                    <View style={styles.quickPath}>
+                      <Chip compact>{game.player_count}</Chip>
+                      {game.release_date ? (
+                        <Chip compact>Released {formatReleaseDateLabel(game.release_date)}</Chip>
+                      ) : null}
+                      {typeof game.rating === 'number' ? (
+                        <Chip compact>Rating {Math.round(game.rating)}</Chip>
+                      ) : null}
+                      {alreadyImported ? <Chip compact icon="check-circle">Imported</Chip> : null}
+                    </View>
+                    <Text style={styles.listText}>{game.description ?? 'No IGDB summary available yet.'}</Text>
+                  </View>
+                </View>
+                <View style={styles.cardActions}>
+                  <Button
+                    mode="contained-tonal"
+                    onPress={() => onImportIgdbGame(game)}
+                    loading={igdbImportBusyId === game.igdb_id}
+                    disabled={igdbImportBusyId !== null}
+                    testID={`igdb-import-button-${game.igdb_id}`}>
+                    {alreadyImported ? 'Refresh import' : 'Import game'}
+                  </Button>
+                </View>
+              </Card.Content>
+            </Card>
+          );
+        })}
+        {igdbHasSearched && !igdbSearchLoading && !igdbError && igdbResults.length === 0 ? (
+          <Text style={styles.friendNote} testID="igdb-empty-state">
+            No IGDB games matched that search yet.
+          </Text>
+        ) : null}
+      </Card.Content>
+    </Card>
+  );
+
+  const libraryColumn = (
+    <View style={styles.sectionStack}>
       <SectionTitle
         title="Game library"
         subtitle="Your personal library. Import what you want to keep, then use it for favorites, roulette, and lobbies."
@@ -204,120 +369,6 @@ export function GamesSection({
         onChangeText={onChangeGameSearch}
         testID="games-search-input"
       />
-      <Card style={styles.panel}>
-        <Card.Content>
-          <SectionTitle
-            title="Import from IGDB"
-            subtitle="Search the live IGDB catalog, then import the games you want into your local library."
-          />
-          <View style={styles.igdbSearchRow}>
-            <Searchbar
-              placeholder="Search IGDB by game title"
-              value={igdbSearchQuery}
-              onChangeText={onChangeIgdbSearchQuery}
-              onSubmitEditing={() => {
-                onSearchIgdb();
-              }}
-              style={styles.igdbSearchInput}
-              testID="igdb-search-input"
-            />
-            <Button
-              mode="contained"
-              onPress={onSearchIgdb}
-              loading={igdbSearchLoading}
-              disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0 || normalizedIgdbSearchQuery.length < 2}
-              testID="igdb-search-button">
-              {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
-            </Button>
-          </View>
-          {isIgdbSearchQueryTooShort ? (
-            <HelperText type="info" visible testID="igdb-short-query-helper">
-              Start with at least 2 letters so we can find the right game.
-            </HelperText>
-          ) : null}
-          {igdbError ? (
-            <HelperText type="error" visible>
-              {igdbError}
-            </HelperText>
-          ) : null}
-          {igdbSearchCooldownSeconds > 0 ? (
-            <HelperText type="info" visible>
-              Give IGDB a second between searches so we stay under the live API rate limit.
-            </HelperText>
-          ) : null}
-          {igdbMessage ? (
-            <HelperText type="info" visible style={styles.successText}>
-              {igdbMessage}
-            </HelperText>
-          ) : null}
-          {canDismissIgdbSearchOutput ? (
-            <View style={styles.igdbDismissRow}>
-              <IconButton
-                icon="close"
-                size={18}
-                onPress={onClearIgdbSearchResults}
-                accessibilityLabel="Close IGDB search results"
-                testID="igdb-close-results-button"
-              />
-            </View>
-          ) : null}
-          {igdbResults.map((game) => {
-            const alreadyImported = importedIgdbIds.includes(game.igdb_id);
-
-            return (
-              <Card key={game.igdb_id} style={styles.igdbResultCard} testID={`igdb-result-${game.igdb_id}`}>
-                <Card.Content>
-                  <View style={styles.igdbResultRow}>
-                    {game.cover_url ? (
-                      <Image
-                        source={{ uri: game.cover_url }}
-                        style={styles.igdbCoverImage}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <Surface style={styles.igdbCoverPlaceholder} elevation={0}>
-                        <Text style={styles.igdbCoverPlaceholderText}>IGDB</Text>
-                      </Surface>
-                    )}
-                    <View style={styles.igdbResultMeta}>
-                      <Text variant="titleMedium">{game.title}</Text>
-                      <Text style={styles.friendNote}>
-                        {game.genre} | {game.platform}
-                      </Text>
-                      <View style={styles.quickPath}>
-                        <Chip compact>{game.player_count}</Chip>
-                        {game.release_date ? (
-                          <Chip compact>Released {formatReleaseDateLabel(game.release_date)}</Chip>
-                        ) : null}
-                        {typeof game.rating === 'number' ? (
-                          <Chip compact>Rating {Math.round(game.rating)}</Chip>
-                        ) : null}
-                        {alreadyImported ? <Chip compact icon="check-circle">Imported</Chip> : null}
-                      </View>
-                      <Text style={styles.listText}>{game.description ?? 'No IGDB summary available yet.'}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.cardActions}>
-                    <Button
-                      mode="contained-tonal"
-                      onPress={() => onImportIgdbGame(game)}
-                      loading={igdbImportBusyId === game.igdb_id}
-                      disabled={igdbImportBusyId !== null}
-                      testID={`igdb-import-button-${game.igdb_id}`}>
-                      {alreadyImported ? 'Refresh import' : 'Import game'}
-                    </Button>
-                  </View>
-                </Card.Content>
-              </Card>
-            );
-          })}
-          {igdbHasSearched && !igdbSearchLoading && !igdbError && igdbResults.length === 0 ? (
-            <Text style={styles.friendNote} testID="igdb-empty-state">
-              No IGDB games matched that search yet.
-            </Text>
-          ) : null}
-        </Card.Content>
-      </Card>
       <View style={styles.quickPath}>
         <Chip icon="filter-variant">Genre</Chip>
         <Chip icon="devices">Platform</Chip>
@@ -341,16 +392,47 @@ export function GamesSection({
       {filteredGames.map((game) => {
         const isFavorite = favoriteGameIds.includes(game.id);
         const inRoulettePool = rouletteEntries.some((entry) => entry.game_id === game.id);
+        const coverFallbackLabel =
+          game.title
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((part) => part[0]?.toUpperCase() ?? '')
+            .join('') || 'GG';
 
         return (
           <Card key={game.id} style={styles.panel} testID={`game-library-card-${game.id}`}>
             <Card.Content>
-              <Text variant="titleLarge">{game.title}</Text>
-              <Text style={styles.supportingText}>{game.genre}</Text>
-              <Text style={styles.friendNote}>
-                {game.platform} | {game.player_count}
-              </Text>
-              <Text style={styles.listText}>{game.description ?? 'Description coming soon.'}</Text>
+              <View style={styles.gameLibraryCardRow}>
+                {game.cover_url ? (
+                  <Image
+                    source={{ uri: game.cover_url }}
+                    style={[
+                      styles.gameLibraryCoverImage,
+                      isCompactLibraryCard ? styles.gameLibraryCoverImageCompact : null,
+                    ]}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Surface
+                    style={[
+                      styles.gameLibraryCoverPlaceholder,
+                      isCompactLibraryCard ? styles.gameLibraryCoverImageCompact : null,
+                    ]}
+                    elevation={0}>
+                    <Text style={styles.gameLibraryCoverPlaceholderText}>{coverFallbackLabel}</Text>
+                    <Text style={styles.gameLibraryCoverPlaceholderSubtext}>Library</Text>
+                  </Surface>
+                )}
+                <View style={styles.gameLibraryMeta}>
+                  <Text variant="titleLarge">{game.title}</Text>
+                  <Text style={styles.supportingText}>{game.genre}</Text>
+                  <Text style={styles.friendNote}>
+                    {game.platform} | {game.player_count}
+                  </Text>
+                  <Text style={styles.listText}>{game.description ?? 'Description coming soon.'}</Text>
+                </View>
+              </View>
               <View style={styles.quickPath}>
                 {isFavorite ? (
                   <Chip icon="star" selected>
@@ -400,7 +482,7 @@ export function GamesSection({
           <Card.Content>
             <Text variant="titleMedium">Add games to library</Text>
             <Text style={styles.friendNote}>
-              Use the IGDB search above to import the games you actually want to keep.
+              Use the IGDB search alongside this library to import the games you actually want to keep.
             </Text>
           </Card.Content>
         </Card>
@@ -413,7 +495,21 @@ export function GamesSection({
           </Card.Content>
         </Card>
       ) : null}
-    </>
+    </View>
+  );
+
+  return (
+    isDesktopWeb ? (
+      <View style={styles.desktopSplitLayout}>
+        <View style={styles.desktopMainColumn}>{libraryColumn}</View>
+        <View style={styles.desktopSideColumn}>{igdbImportCard}</View>
+      </View>
+    ) : (
+      <View style={styles.sectionStack}>
+        {libraryColumn}
+        {igdbImportCard}
+      </View>
+    )
   );
 }
 
@@ -482,26 +578,141 @@ export function RouletteSection({
 
 type InboxSectionProps = {
   notifications: NotificationItem[];
+  pendingFriendRequestCount?: number;
+  pendingLobbyInviteCount?: number;
+  readNotificationIds?: string[];
+  onMarkNotificationsRead?: (notificationIds: string[]) => void;
+  onOpenFriends?: () => void;
 };
 
-export function InboxSection({ notifications }: InboxSectionProps) {
+export function InboxSection({
+  notifications,
+  pendingFriendRequestCount = 0,
+  pendingLobbyInviteCount = 0,
+  readNotificationIds = [],
+  onMarkNotificationsRead,
+  onOpenFriends,
+}: InboxSectionProps) {
+  const [visibleNotificationCount, setVisibleNotificationCount] = React.useState(inboxHistoryPageSize);
+  const readNotificationIdSet = React.useMemo(() => new Set(readNotificationIds), [readNotificationIds]);
+  const orderedNotifications = React.useMemo(() => {
+    const unreadNotifications = notifications.filter((item) => !readNotificationIdSet.has(item.id));
+    const readNotifications = notifications.filter((item) => readNotificationIdSet.has(item.id));
+    return [...unreadNotifications, ...readNotifications];
+  }, [notifications, readNotificationIdSet]);
+  const visibleNotifications = React.useMemo(
+    () => orderedNotifications.slice(0, visibleNotificationCount),
+    [orderedNotifications, visibleNotificationCount],
+  );
+  const hasMoreNotifications = orderedNotifications.length > visibleNotificationCount;
+  const visibleUnreadNotificationIdsRef = React.useRef<string[]>([]);
+
+  React.useEffect(() => {
+    setVisibleNotificationCount(inboxHistoryPageSize);
+  }, [notifications.length]);
+
+  React.useEffect(() => {
+    visibleUnreadNotificationIdsRef.current = visibleNotifications
+      .filter((item) => !readNotificationIdSet.has(item.id))
+      .map((item) => item.id);
+  }, [readNotificationIdSet, visibleNotifications]);
+
+  React.useEffect(() => {
+    return () => {
+      const visibleUnreadNotificationIds = visibleUnreadNotificationIdsRef.current;
+      if (visibleUnreadNotificationIds.length > 0) {
+        onMarkNotificationsRead?.(visibleUnreadNotificationIds);
+      }
+    };
+  }, [onMarkNotificationsRead]);
+
   return (
     <>
       <SectionTitle
         title="Notifications"
-        subtitle="Invites, reminders, and system states with placeholder messaging."
+        subtitle="Invites, reminders, and quick attention checks in one place."
       />
-      {notifications.map((item) => (
-        <Card key={`${item.label}-${item.message}`} style={styles.panel}>
+      <Text style={styles.friendNote}>
+        Pending items stay visible until you respond. Recent history is capped to the newest {inboxHistoryPageSize}{' '}
+        items by default.
+      </Text>
+      {pendingFriendRequestCount > 0 ? (
+        <Card style={styles.panel} onPress={onOpenFriends} testID="pending-friend-request-notification">
           <Card.Content>
             <View style={styles.notificationHeader}>
-              <Chip compact>{item.label}</Chip>
+              <Chip compact icon="account-arrow-right">
+                Friend requests
+              </Chip>
+              <Text style={styles.friendNote}>Pending</Text>
+            </View>
+            <Text variant="bodyLarge">
+              {pendingFriendRequestCount} friend request{pendingFriendRequestCount === 1 ? '' : 's'}{' '}
+              {pendingFriendRequestCount === 1 ? 'is' : 'are'} waiting on you.
+            </Text>
+            <View style={styles.cardActions}>
+              <Button mode="contained-tonal" onPress={onOpenFriends} testID="open-friends-from-inbox-button">
+                Open Friends
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+      ) : null}
+      {pendingLobbyInviteCount > 0 ? (
+        <Card style={styles.panel}>
+          <Card.Content>
+            <View style={styles.notificationHeader}>
+              <Chip compact icon="bell-badge-outline">
+                Needs attention
+              </Chip>
+              <Text style={styles.friendNote}>Right now</Text>
+            </View>
+            <Text variant="bodyLarge">
+              {pendingLobbyInviteCount} lobby invite{pendingLobbyInviteCount === 1 ? '' : 's'}{' '}
+              {pendingLobbyInviteCount === 1 ? 'is' : 'are'} waiting on you.
+            </Text>
+          </Card.Content>
+        </Card>
+      ) : null}
+      {visibleNotifications.map((item) => (
+        <Card key={item.id} style={styles.panel}>
+          <Card.Content>
+            <View style={styles.notificationHeader}>
+              <View style={styles.notificationMetaRow}>
+                <Chip compact>{item.label}</Chip>
+                <Chip compact style={styles.notificationStatusChip}>
+                  {readNotificationIdSet.has(item.id) ? 'Read' : 'Unread'}
+                </Chip>
+              </View>
               <Text style={styles.friendNote}>{item.age}</Text>
             </View>
             <Text variant="bodyLarge">{item.message}</Text>
           </Card.Content>
         </Card>
       ))}
+      {hasMoreNotifications ? (
+        <Card style={styles.panel}>
+          <Card.Content>
+            <Text style={styles.friendNote}>
+              Showing the newest {visibleNotificationCount} updates. Load more if you need older history.
+            </Text>
+            <View style={styles.cardActions}>
+              <Button
+                mode="outlined"
+                onPress={() => {
+                  const visibleUnreadNotificationIds = visibleUnreadNotificationIdsRef.current;
+                  if (visibleUnreadNotificationIds.length > 0) {
+                    onMarkNotificationsRead?.(visibleUnreadNotificationIds);
+                  }
+
+                  setVisibleNotificationCount((current) => current + inboxHistoryPageSize);
+                }}
+                testID="inbox-load-more-button">
+                Load {inboxHistoryPageSize} more
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+      ) : null}
       <Card style={styles.panel}>
         <Card.Content>
           <Text variant="titleMedium">Lobby chat preview</Text>
