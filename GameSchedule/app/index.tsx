@@ -35,6 +35,7 @@ import { useAvailabilityState } from '../features/home/homeAvailabilityHooks';
 import { useGamesState } from '../features/home/homeGameHooks';
 import { useLobbyState } from '../features/home/homeLobbyHooks';
 import { DashboardSection, GamesSection, InboxSection, RouletteSection } from '../features/home/homeSections';
+import { LobbyGameCarousel } from '../features/home/LobbyGameCarousel';
 import { useSocialState } from '../features/home/homeSocialHooks';
 import { styles } from '../features/home/homeStyles';
 import type {
@@ -132,6 +133,7 @@ export default function HomeScreen() {
   const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
   const lastDiscordProviderTokenRef = React.useRef<string | null>(null);
   const handledDiscordCallbackTokenRef = React.useRef<string | null>(null);
+  const hasAutoOpenedFriendsRef = React.useRef(false);
 
   const {
     favoriteGameIds,
@@ -670,7 +672,18 @@ export default function HomeScreen() {
   }, [session]);
 
   React.useEffect(() => {
-    if (session?.user && profile && !profile.primary_community_id && section === 'dashboard') {
+    if (!session?.user) {
+      hasAutoOpenedFriendsRef.current = false;
+      return;
+    }
+
+    if (
+      profile &&
+      !profile.primary_community_id &&
+      section === 'dashboard' &&
+      !hasAutoOpenedFriendsRef.current
+    ) {
+      hasAutoOpenedFriendsRef.current = true;
       setSection('friends');
     }
   }, [profile, section, session]);
@@ -2421,7 +2434,15 @@ export default function HomeScreen() {
                 <Text style={styles.friendNote}>Choose from the library or start from a game card.</Text>
               </View>
             </View>
-            {libraryGames.length === 0 ? (
+            {gamesLoading && libraryGames.length === 0 ? (
+              <Surface style={styles.inputShell} elevation={0}>
+                <View style={styles.inlineLoadingRow}>
+                  <ActivityIndicator animating size="small" />
+                  <Text style={styles.friendNote}>Loading your library...</Text>
+                </View>
+              </Surface>
+            ) : null}
+            {!gamesLoading && libraryGames.length === 0 ? (
               <Surface style={styles.inputShell} elevation={0}>
                 <Text style={styles.friendNote}>
                   Pick a game from your library to create a lobby.
@@ -2437,7 +2458,7 @@ export default function HomeScreen() {
                     onSubmitEditing={() => {
                       handleSearchIgdb();
                     }}
-                    style={styles.igdbSearchInput}
+                    style={styles.igdbSearchInputInline}
                     testID="lobby-igdb-search-input"
                   />
                   <Button
@@ -2531,38 +2552,20 @@ export default function HomeScreen() {
                 ) : null}
               </Surface>
             ) : null}
-            <View style={styles.gamePickGrid}>
-              {libraryGames.slice(0, 6).map((game) => (
-                <Surface
-                  key={game.id}
-                  style={[
-                    styles.gamePickCard,
-                    selectedLobbyGameId === game.id ? styles.gamePickCardSelected : null,
-                  ]}
-                  elevation={selectedLobbyGameId === game.id ? 2 : 0}>
-                  <Text variant="titleSmall" style={styles.gamePickTitle}>
-                    {game.title}
-                  </Text>
-                  <Text style={styles.friendNote}>
-                    {game.genre} - {game.player_count}
-                  </Text>
-                  <Button
-                    mode={selectedLobbyGameId === game.id ? 'contained' : 'outlined'}
-                    compact
-                    onPress={() => {
-                      setSelectedLobbyGameId(game.id);
-                      setLobbyForm((current) => ({
-                        ...current,
-                        title: `${game.title} Lobby`,
-                      }));
-                      setLobbyMessage('');
-                    }}
-                    testID={`lobby-game-${game.id}`}>
-                    {selectedLobbyGameId === game.id ? 'Selected' : 'Pick game'}
-                  </Button>
-                </Surface>
-              ))}
-            </View>
+            {libraryGames.length > 0 ? (
+              <LobbyGameCarousel
+                games={libraryGames}
+                selectedGameId={selectedLobbyGameId}
+                onSelectGame={(game) => {
+                  setSelectedLobbyGameId(game.id);
+                  setLobbyForm((current) => ({
+                    ...current,
+                    title: `${game.title} Lobby`,
+                  }));
+                  setLobbyMessage('');
+                }}
+              />
+            ) : null}
           </View>
           <View style={styles.schedulerStep}>
             <View style={styles.schedulerStepHeader}>

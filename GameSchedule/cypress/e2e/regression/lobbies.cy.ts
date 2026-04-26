@@ -163,7 +163,7 @@ const igdbResultsByQuery: Record<string, MockIgdbGame[]> = {
       platform: 'PC / PlayStation / Xbox',
       player_count: '2+ players',
       description: 'Solve co-op puzzles with portals, timing, and a very patient robot voice.',
-      cover_url: null,
+      cover_url: 'https://images.igdb.com/igdb/image/upload/t_cover_big/co1rs7.jpg',
       release_date: '2011-04-19',
       rating: 95,
       source: 'igdb',
@@ -1123,6 +1123,12 @@ describe('lobbies flow', () => {
 
   const ensureLobbyGameReady = () => {
     cy.contains('Select a game').scrollIntoView();
+    cy.get('body').should(($body) => {
+      const hasGameButtons = $body.find('[data-testid^="lobby-game-"]').length > 0;
+      const hasIgdbInput = $body.find('[data-testid="lobby-igdb-search-input"]').length > 0;
+
+      expect(hasGameButtons || hasIgdbInput, 'lobby game picker or inline IGDB import to be ready').to.equal(true);
+    });
     cy.get('body').then(($body) => {
       const gameButtons = $body.find('[data-testid^="lobby-game-"]');
 
@@ -1169,6 +1175,7 @@ describe('lobbies flow', () => {
     lobbyHistoryStore.length = 0;
     friendshipStore.length = 0;
     profileDiscordGuildStore.length = 0;
+    profileGamesStore.clear();
     currentSessionUserId = null;
     lobbySequence = 0;
     historySequence = 0;
@@ -1242,7 +1249,76 @@ describe('lobbies flow', () => {
     cy.wait('@igdbImportFunction');
     cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Portal 2 Lobby');
     cy.contains(/^Portal 2$/).should('exist');
+    cy.get('[data-testid="lobby-game-cover-igdb-1234"]').should('exist');
     cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
+  });
+
+  it('pages lobby game selection in sets of four on desktop web', () => {
+    games.push(
+      {
+        id: 'castle-circuit',
+        title: 'Castle Circuit',
+        genre: 'Party Strategy',
+        platform: 'PC / Console',
+        player_count: '2-6 players',
+        description: 'Short tactical rounds built for fast group sessions.',
+        is_featured: false,
+      },
+      {
+        id: 'drift-legends-x',
+        title: 'Drift Legends X',
+        genre: 'Racing',
+        platform: 'PC / Console',
+        player_count: '2-8 players',
+        description: 'Competitive drifting playlists with quick rematches.',
+        is_featured: false,
+      },
+      {
+        id: 'void-divers',
+        title: 'Void Divers',
+        genre: 'Co-op Action',
+        platform: 'PC',
+        player_count: '2-4 players',
+        description: 'Squad dives into short missions with escalating chaos.',
+        is_featured: false,
+      },
+      {
+        id: 'nebula-knights',
+        title: 'Nebula Knights',
+        genre: 'Action RPG',
+        platform: 'PC / Console',
+        player_count: '3-5 players',
+        description: 'Flexible drop-in runs for a regular group night.',
+        is_featured: false,
+      },
+      {
+        id: 'midnight-brawl',
+        title: 'Midnight Brawl',
+        genre: 'Fighter',
+        platform: 'PC / Console',
+        player_count: '2-4 players',
+        description: 'Fast versus rounds built for couch-style tournament energy.',
+        is_featured: false,
+      },
+    );
+
+    cy.viewport(1280, 900);
+    signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.contains('Select a game').scrollIntoView();
+    cy.get('[data-testid="lobby-game-carousel"]').should('be.visible');
+    cy.get('[data-testid="lobby-game-carousel-status"]').should('contain', '1-4 of 8');
+    cy.get('[data-testid="lobby-game-cover-placeholder-helix-arena"]').should('exist');
+    cy.get('[data-testid="lobby-game-carousel-prev"]').should('be.disabled');
+    cy.get('[data-testid="lobby-game-carousel-next"]').should('not.be.disabled').click();
+    cy.get('[data-testid="lobby-game-carousel-status"]').should('contain', '5-8 of 8');
+    cy.contains(/^Drift Legends X$/).should('be.visible');
+    cy.get('[data-testid="lobby-game-drift-legends-x"]').click();
+    cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Drift Legends X Lobby');
+    cy.get('[data-testid="lobby-game-carousel-next"]').should('be.disabled');
+    cy.get('[data-testid="lobby-game-carousel-prev"]').click();
+    cy.get('[data-testid="lobby-game-carousel-status"]').should('contain', '1-4 of 8');
   });
 
   it('lets a linked host pick a Discord server and carries it through hosted, incoming, and schedule views', () => {
@@ -1318,17 +1394,7 @@ describe('lobbies flow', () => {
 
     signUpHost();
     cy.contains(/^Lobbies$/).click({ force: true });
-    cy.get('body').then(($body) => {
-      if ($body.find('[data-testid="lobby-igdb-search-input"]').length > 0) {
-        cy.get('[data-testid="lobby-igdb-search-input"]').clear().type('portal');
-        cy.get('[data-testid="lobby-igdb-search-button"]').click();
-        cy.wait('@igdbSearchFunction');
-        cy.get('[data-testid="lobby-igdb-import-button-1234"]').click();
-        cy.wait('@igdbImportFunction');
-      } else {
-        ensureLobbyGameReady();
-      }
-    });
+    ensureLobbyGameReady();
     cy.contains('Invite people').scrollIntoView();
     cy.contains(/^Busy$/).should('exist');
     cy.contains('Playing Helix Arena during this window').should('exist');

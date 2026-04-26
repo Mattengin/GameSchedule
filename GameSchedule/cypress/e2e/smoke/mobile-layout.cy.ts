@@ -256,6 +256,78 @@ describe('mobile layout smoke', () => {
         source: 'seed',
       },
     },
+    {
+      created_at: new Date().toISOString(),
+      game_id: 'deep-raid',
+      games: {
+        id: 'deep-raid',
+        title: 'Deep Raid',
+        genre: 'Extraction',
+        platform: 'PC',
+        player_count: '2-4 players',
+        description: 'High-risk co-op missions with short planning sessions and long-term loot.',
+        is_featured: true,
+        igdb_id: null,
+        cover_url: null,
+        release_date: null,
+        rating: null,
+        source: 'seed',
+      },
+    },
+    {
+      created_at: new Date().toISOString(),
+      game_id: 'wild-rally-online',
+      games: {
+        id: 'wild-rally-online',
+        title: 'Wild Rally Online',
+        genre: 'Racing',
+        platform: 'Cross-platform',
+        player_count: '2-12 players',
+        description: 'Chaotic off-road playlists with short races and easy drop-in play.',
+        is_featured: true,
+        igdb_id: null,
+        cover_url: null,
+        release_date: null,
+        rating: null,
+        source: 'seed',
+      },
+    },
+    {
+      created_at: new Date().toISOString(),
+      game_id: 'castle-circuit',
+      games: {
+        id: 'castle-circuit',
+        title: 'Castle Circuit',
+        genre: 'Party Strategy',
+        platform: 'PC / Console',
+        player_count: '2-6 players',
+        description: 'Short tactical rounds built for fast group sessions.',
+        is_featured: false,
+        igdb_id: null,
+        cover_url: null,
+        release_date: null,
+        rating: null,
+        source: 'seed',
+      },
+    },
+    {
+      created_at: new Date().toISOString(),
+      game_id: 'drift-legends-x',
+      games: {
+        id: 'drift-legends-x',
+        title: 'Drift Legends X',
+        genre: 'Racing',
+        platform: 'PC / Console',
+        player_count: '2-8 players',
+        description: 'Competitive drifting playlists with quick rematches.',
+        is_featured: false,
+        igdb_id: null,
+        cover_url: null,
+        release_date: null,
+        rating: null,
+        source: 'seed',
+      },
+    },
   ];
 
   beforeEach(() => {
@@ -282,6 +354,8 @@ describe('mobile layout smoke', () => {
 
     cy.contains('button', /^Lobbies$/).click();
     cy.contains(/^Create event$/).should('be.visible');
+    cy.get('[data-testid="lobby-game-carousel"]').should('be.visible');
+    cy.get('[data-testid="lobby-game-carousel-scroll"]').should('exist');
     assertNoHorizontalOverflow();
 
     cy.contains('button', /^Friends$/).click();
@@ -290,6 +364,20 @@ describe('mobile layout smoke', () => {
 
     cy.contains('button', /^Profile$/).click();
     cy.contains(/^Profile details$/).should('be.visible');
+    assertNoHorizontalOverflow();
+  });
+
+  it('lets users return to Home after the onboarding redirect opens Friends first', () => {
+    cy.viewport(390, 844);
+
+    cy.visit('/');
+    cy.loginUi(accountEmail, accountPassword);
+    cy.wait('@signinRequest');
+    cy.wait('@profilesRequest');
+
+    cy.contains(/^Friends & contacts$/).should('be.visible');
+    cy.contains('button', /^Home$/).click();
+    cy.contains(/play together, faster/i).should('be.visible');
     assertNoHorizontalOverflow();
   });
 });

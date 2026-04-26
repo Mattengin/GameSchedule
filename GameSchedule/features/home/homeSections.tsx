@@ -230,6 +230,7 @@ export function GamesSection({
 }: GamesSectionProps) {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
+  const isCompactLibraryCard = width < 700;
   const normalizedIgdbSearchQuery = igdbSearchQuery.trim();
   const isIgdbSearchQueryTooShort = normalizedIgdbSearchQuery.length > 0 && normalizedIgdbSearchQuery.length < 2;
   const hasLibraryGames = libraryGamesCount > 0;
@@ -243,7 +244,7 @@ export function GamesSection({
           title="Import from IGDB"
           subtitle="Search the live IGDB catalog, then import the games you want into your local library."
         />
-        <View style={styles.igdbSearchRow}>
+        <View style={styles.igdbSearchStack}>
           <Searchbar
             placeholder="Search IGDB by game title"
             value={igdbSearchQuery}
@@ -251,7 +252,7 @@ export function GamesSection({
             onSubmitEditing={() => {
               onSearchIgdb();
             }}
-            style={styles.igdbSearchInput}
+            style={styles.igdbSearchInputStacked}
             testID="igdb-search-input"
           />
           <Button
@@ -259,6 +260,7 @@ export function GamesSection({
             onPress={onSearchIgdb}
             loading={igdbSearchLoading}
             disabled={igdbSearchLoading || igdbSearchCooldownSeconds > 0 || normalizedIgdbSearchQuery.length < 2}
+            style={styles.igdbSearchButton}
             testID="igdb-search-button">
             {igdbSearchCooldownSeconds > 0 ? `Search again in ${igdbSearchCooldownSeconds}s` : 'Search IGDB'}
           </Button>
@@ -388,16 +390,47 @@ export function GamesSection({
       {filteredGames.map((game) => {
         const isFavorite = favoriteGameIds.includes(game.id);
         const inRoulettePool = rouletteEntries.some((entry) => entry.game_id === game.id);
+        const coverFallbackLabel =
+          game.title
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((part) => part[0]?.toUpperCase() ?? '')
+            .join('') || 'GG';
 
         return (
           <Card key={game.id} style={styles.panel} testID={`game-library-card-${game.id}`}>
             <Card.Content>
-              <Text variant="titleLarge">{game.title}</Text>
-              <Text style={styles.supportingText}>{game.genre}</Text>
-              <Text style={styles.friendNote}>
-                {game.platform} | {game.player_count}
-              </Text>
-              <Text style={styles.listText}>{game.description ?? 'Description coming soon.'}</Text>
+              <View style={styles.gameLibraryCardRow}>
+                {game.cover_url ? (
+                  <Image
+                    source={{ uri: game.cover_url }}
+                    style={[
+                      styles.gameLibraryCoverImage,
+                      isCompactLibraryCard ? styles.gameLibraryCoverImageCompact : null,
+                    ]}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Surface
+                    style={[
+                      styles.gameLibraryCoverPlaceholder,
+                      isCompactLibraryCard ? styles.gameLibraryCoverImageCompact : null,
+                    ]}
+                    elevation={0}>
+                    <Text style={styles.gameLibraryCoverPlaceholderText}>{coverFallbackLabel}</Text>
+                    <Text style={styles.gameLibraryCoverPlaceholderSubtext}>Library</Text>
+                  </Surface>
+                )}
+                <View style={styles.gameLibraryMeta}>
+                  <Text variant="titleLarge">{game.title}</Text>
+                  <Text style={styles.supportingText}>{game.genre}</Text>
+                  <Text style={styles.friendNote}>
+                    {game.platform} | {game.player_count}
+                  </Text>
+                  <Text style={styles.listText}>{game.description ?? 'Description coming soon.'}</Text>
+                </View>
+              </View>
               <View style={styles.quickPath}>
                 {isFavorite ? (
                   <Chip icon="star" selected>

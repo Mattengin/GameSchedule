@@ -276,11 +276,23 @@ export const styles = StyleSheet.create({
     gap: 10,
     alignItems: 'center',
   },
-  igdbSearchInput: {
+  igdbSearchStack: {
+    gap: 10,
+    alignItems: 'stretch',
+  },
+  igdbSearchInputInline: {
     flexGrow: 1,
     flexBasis: isWeb ? 620 : undefined,
-    minWidth: 240,
+    minWidth: isWeb ? 0 : 240,
     maxWidth: isWeb ? 760 : undefined,
+  },
+  igdbSearchInputStacked: {
+    width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
+  },
+  igdbSearchButton: {
+    alignSelf: 'flex-start',
   },
   igdbDismissRow: {
     alignItems: 'flex-end',
@@ -400,6 +412,50 @@ export const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 2,
   },
+  gameLibraryCardRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+  },
+  gameLibraryMeta: {
+    flex: 1,
+    minWidth: 0,
+  },
+  gameLibraryCoverImage: {
+    backgroundColor: '#1F2744',
+    borderRadius: 16,
+    height: 120,
+    width: 88,
+  },
+  gameLibraryCoverImageCompact: {
+    height: 96,
+    width: 72,
+  },
+  gameLibraryCoverPlaceholder: {
+    alignItems: 'center',
+    backgroundColor: '#1D2543',
+    borderColor: '#32417E',
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 120,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    width: 88,
+  },
+  gameLibraryCoverPlaceholderText: {
+    color: '#F5F7FF',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  gameLibraryCoverPlaceholderSubtext: {
+    color: '#9AA5CA',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
   subsectionTitle: {
     color: '#F5F7FF',
     fontWeight: '700',
@@ -447,6 +503,86 @@ export const styles = StyleSheet.create({
   gamePickGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 10,
+  },
+  lobbyGameCarousel: {
+    gap: 10,
+    width: '100%',
+  },
+  lobbyGameCarouselHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  lobbyGameCarouselStatus: {
+    color: '#95A0C8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  lobbyGameCarouselControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  lobbyGameCarouselDesktopTrack: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  lobbyGameCarouselDesktopCard: {
+    flex: 1,
+    minWidth: 0,
+    maxWidth: undefined,
+  },
+  lobbyGameCarouselMobileTrack: {
+    paddingRight: 12,
+  },
+  lobbyGameCarouselMobileCard: {
+    flexGrow: 0,
+    minWidth: undefined,
+    maxWidth: undefined,
+  },
+  lobbyGameCardMeta: {
+    gap: 4,
+    minWidth: 0,
+  },
+  lobbyGameCoverImage: {
+    alignSelf: 'center',
+    backgroundColor: '#1F2744',
+    borderRadius: 16,
+    height: 128,
+    marginBottom: 4,
+    width: 92,
+  },
+  lobbyGameCoverPlaceholder: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: '#1D2543',
+    borderColor: '#32417E',
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 128,
+    justifyContent: 'center',
+    marginBottom: 4,
+    paddingHorizontal: 10,
+    width: 92,
+  },
+  lobbyGameCoverPlaceholderText: {
+    color: '#F5F7FF',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  lobbyGameCoverPlaceholderSubtext: {
+    color: '#9AA5CA',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
+  inlineLoadingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
     gap: 10,
   },
   gamePickCard: {
