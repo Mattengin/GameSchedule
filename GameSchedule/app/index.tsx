@@ -24,8 +24,7 @@ import {
   allowSignup,
   availabilityDays,
   demoLabel,
-  discordClientId,
-  discordStateStorageKey,
+  discordLinkIntentStorageKey,
   notifications,
   profileSelectFields,
   sections,
@@ -56,7 +55,7 @@ import {
   EventTimePicker,
   SectionTitle,
   TimeRangePicker,
-  clearOAuthHashFromUrl,
+  clearOAuthRedirectParamsFromUrl,
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
   doesTimeRangeOverlap,
@@ -72,15 +71,11 @@ import {
   getBusyStatusLabel,
   getBirthdayDate,
   getDefaultEndDate,
-  getDiscordCallbackPath,
   getDiscordIdentityFromSession,
   hasExplicitLobbyEnd,
   getLobbyEndDate,
-  getSessionProviderToken,
   getWebBasePath,
   getWebRedirectUrl,
-  isDiscordCallbackPath,
-  readHashParams,
   resolveAvatarUrl,
   setDatePart,
 } from '../features/home/homeUtils';
@@ -133,7 +128,6 @@ export default function HomeScreen() {
   );
   const [friendCodeRegenerateCooldownSeconds, setFriendCodeRegenerateCooldownSeconds] = React.useState(0);
   const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
-  const handledDiscordCallbackTokenRef = React.useRef<string | null>(null);
 
   const {
     favoriteGameIds,
@@ -270,89 +264,38 @@ export default function HomeScreen() {
   >({});
   const [acceptConflictAcknowledgementId, setAcceptConflictAcknowledgementId] = React.useState<string | null>(null);
 
-  const syncDiscordIdentity = React.useCallback(
-    async (
-      providerToken: string,
-      options?: {
-        silent?: boolean;
-        successMessage?: string;
-      },
-    ) => {
-      if (!session?.user) {
-        return null;
-      }
-
-      const shouldStaySilent = options?.silent ?? false;
-
-      try {
-        const userResponse = await fetch('https://discord.com/api/v10/users/@me', {
-          headers: {
-            Authorization: `Bearer ${providerToken}`,
-          },
-        });
-
-        if (!userResponse.ok) {
-          throw new Error('Unable to fetch the Discord account details.');
-        }
-
-        const discordUser = (await userResponse.json()) as {
-          id: string;
-          username?: string;
-          global_name?: string | null;
-          avatar?: string | null;
-        };
-
-        const discordDisplayName =
-          discordUser.global_name?.trim() ||
-          discordUser.username?.trim() ||
-          profile?.display_name?.trim() ||
-          profile?.username?.trim() ||
-          'Discord user';
-        const discordAvatarUrl = discordUser.avatar
-          ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png?size=128`
-          : null;
-
-        const { data: updatedProfile, error: updateError } = await supabase
-          .from('profiles')
-          .update({
-            discord_user_id: discordUser.id,
-            discord_username: discordDisplayName,
-            discord_avatar_url: discordAvatarUrl,
-            discord_connected_at: new Date().toISOString(),
-            avatar_url: profile?.avatar_url ?? discordAvatarUrl,
-            display_name: profile?.display_name ?? discordDisplayName,
-          })
-          .eq('id', session.user.id)
-          .select(profileSelectFields)
-          .single();
-
-        if (updateError) {
-          throw updateError;
-        }
-
-        setProfile(updatedProfile);
-
-        if (!shouldStaySilent) {
-          setDiscordMessage(options?.successMessage ?? 'Discord identity linked.');
-        }
-
-        return updatedProfile;
-      } catch (error) {
-        if (!shouldStaySilent) {
-          setDiscordMessage(error instanceof Error ? error.message : 'Unable to sync Discord identity.');
-        }
-
-        return null;
-      }
-    },
-    [profile, session],
-  );
-
   React.useEffect(() => {
     if (!allowSignup && authMode === 'signup') {
       setAuthMode('signin');
     }
   }, [authMode]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    const currentLocation = globalThis.window?.location;
+    const sessionStorage = globalThis.window?.sessionStorage;
+
+    if (!currentLocation || !sessionStorage) {
+      return;
+    }
+
+    if (sessionStorage.getItem(discordLinkIntentStorageKey) !== 'pending') {
+      return;
+    }
+
+    const queryParams = new URLSearchParams(currentLocation.search);
+    if (!queryParams.get('error')) {
+      return;
+    }
+
+    sessionStorage.removeItem(discordLinkIntentStorageKey);
+    setDiscordBusy(false);
+    setDiscordMessage('Discord authorization was canceled or failed.');
+    setSection('profile');
+  }, []);
 
   React.useEffect(() => {
     let active = true;
@@ -371,11 +314,9 @@ export default function HomeScreen() {
         setAuthError(error.message);
       } else {
         setSession(currentSession);
-        if (!isDiscordCallbackPath()) {
-          clearOAuthHashFromUrl();
-        }
       }
 
+      clearOAuthRedirectParamsFromUrl();
       setAuthLoading(false);
     };
 
@@ -385,9 +326,7 @@ export default function HomeScreen() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (!isDiscordCallbackPath()) {
-        clearOAuthHashFromUrl();
-      }
+      clearOAuthRedirectParamsFromUrl();
       setAuthLoading(false);
     });
 
@@ -398,48 +337,20 @@ export default function HomeScreen() {
   }, []);
 
   React.useEffect(() => {
-    if (Platform.OS !== 'web' || !session?.user || !isDiscordCallbackPath()) {
+    if (Platform.OS !== 'web' || !profile?.discord_user_id) {
       return;
     }
 
-    const hashParams = readHashParams();
-    const accessToken = hashParams.get('access_token');
-    const returnedState = hashParams.get('state');
-
-    if (!accessToken || handledDiscordCallbackTokenRef.current === accessToken) {
+    const sessionStorage = globalThis.window?.sessionStorage;
+    if (!sessionStorage || sessionStorage.getItem(discordLinkIntentStorageKey) !== 'pending') {
       return;
     }
 
-    const expectedState = globalThis.window?.sessionStorage?.getItem(discordStateStorageKey) ?? '';
-    if (expectedState && returnedState && expectedState !== returnedState) {
-      setDiscordMessage('Discord link could not be verified. Please try again.');
-      globalThis.window?.history.replaceState(
-        globalThis.window.history.state,
-        '',
-        `${getWebBasePath()}/`,
-      );
-      return;
-    }
-
-    handledDiscordCallbackTokenRef.current = accessToken;
-    globalThis.window?.sessionStorage?.removeItem(discordStateStorageKey);
-    setDiscordBusy(true);
-    setDiscordMessage('');
-
-    void (async () => {
-      await syncDiscordIdentity(accessToken, {
-        successMessage: 'Discord linked.',
-      });
-
-      globalThis.window?.history.replaceState(
-        globalThis.window.history.state,
-        '',
-        `${getWebBasePath()}/`,
-      );
-      setSection('profile');
-      setDiscordBusy(false);
-    })();
-  }, [session, syncDiscordIdentity]);
+    sessionStorage.removeItem(discordLinkIntentStorageKey);
+    setDiscordBusy(false);
+    setDiscordMessage('Discord linked.');
+    setSection('profile');
+  }, [profile?.discord_user_id]);
 
   React.useEffect(() => {
     const syncProfile = async () => {
@@ -479,14 +390,19 @@ export default function HomeScreen() {
         const hasDiscordUsername = Boolean(discordIdentity?.discord_username);
         const needsDiscordBackfill =
           Boolean(discordIdentity) &&
-          Boolean(existingProfile.discord_user_id) &&
-          ((!existingProfile.discord_avatar_url && hasDiscordAvatar) ||
+          (!existingProfile.discord_user_id ||
+            (!existingProfile.discord_username && hasDiscordUsername) ||
+            (!existingProfile.discord_avatar_url && hasDiscordAvatar) ||
+            !existingProfile.discord_connected_at ||
             (!existingProfile.avatar_url && hasDiscordAvatar) ||
             (!existingProfile.display_name && hasDiscordUsername));
 
         if (needsDiscordBackfill && discordIdentity) {
           const updatePayload: Partial<Profile> = {};
 
+          if (!existingProfile.discord_user_id) {
+            updatePayload.discord_user_id = discordIdentity.discord_user_id;
+          }
           if (!existingProfile.discord_username && hasDiscordUsername) {
             updatePayload.discord_username = discordIdentity.discord_username;
           }
@@ -3004,7 +2920,7 @@ export default function HomeScreen() {
           <Text style={styles.friendNote}>
             {profile?.discord_user_id
               ? 'Discord is linked for identity, avatar fallback, and account continuity.'
-              : 'Link Discord if you want your app identity to match the account you already use with friends.'}
+              : 'Link Discord if you want your app identity to match the account you already use elsewhere.'}
           </Text>
           <Text style={styles.friendNote}>
             Birthday: {profile?.birthday_month && profile?.birthday_day
@@ -3016,24 +2932,14 @@ export default function HomeScreen() {
           </Text>
           <View style={styles.cardActions}>
             {profile?.discord_user_id ? (
-              <>
-                <Button
-                  mode="contained-tonal"
-                  onPress={handleDiscordConnect}
-                  loading={discordBusy}
-                  disabled={discordBusy}
-                  testID="discord-refresh-servers-button">
-                  Refresh Discord identity
-                </Button>
-                <Button
-                  mode="outlined"
-                  onPress={handleDiscordDisconnect}
-                  loading={discordBusy}
-                  disabled={discordBusy}
-                  testID="discord-disconnect-button">
-                  Disconnect Discord
-                </Button>
-              </>
+              <Button
+                mode="outlined"
+                onPress={handleDiscordDisconnect}
+                loading={discordBusy}
+                disabled={discordBusy}
+                testID="discord-disconnect-button">
+                Disconnect Discord
+              </Button>
             ) : (
               <Button
                 mode="contained"
@@ -3442,29 +3348,12 @@ export default function HomeScreen() {
   }
 
   async function handleDiscordConnect() {
-    if (!profile) {
+    if (!profile || !session?.user) {
       return;
     }
 
     setDiscordBusy(true);
     setDiscordMessage('');
-
-    const providerToken = getSessionProviderToken(session);
-    if (profile.discord_user_id && providerToken) {
-      await syncDiscordIdentity(providerToken, {
-        successMessage: 'Discord identity refreshed.',
-      });
-      setDiscordBusy(false);
-      return;
-    }
-
-    if (!discordClientId) {
-      setDiscordMessage(
-        'Discord client setup is not configured yet. Add EXPO_PUBLIC_DISCORD_CLIENT_ID before wiring OAuth.',
-      );
-      setDiscordBusy(false);
-      return;
-    }
 
     if (Platform.OS !== 'web') {
       setDiscordMessage(
@@ -3481,21 +3370,24 @@ export default function HomeScreen() {
       return;
     }
 
-    const redirectUri = `${currentLocation.origin}${getDiscordCallbackPath()}`;
-    const state = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    globalThis.window.sessionStorage?.setItem(discordLinkIntentStorageKey, 'pending');
 
-    globalThis.window.sessionStorage?.setItem(discordStateStorageKey, state);
+    const { error } = await supabase.auth.linkIdentity({
+      provider: 'discord',
+      options: {
+        redirectTo: `${currentLocation.origin}${getWebBasePath()}/`,
+        scopes: 'identify',
+      },
+    });
 
-    const authorizeUrl = new URL('https://discord.com/oauth2/authorize');
-    authorizeUrl.searchParams.set('response_type', 'token');
-    authorizeUrl.searchParams.set('client_id', discordClientId);
-    authorizeUrl.searchParams.set('scope', 'identify');
-    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
-    authorizeUrl.searchParams.set('prompt', 'consent');
-    authorizeUrl.searchParams.set('state', state);
+    if (error) {
+      globalThis.window.sessionStorage?.removeItem(discordLinkIntentStorageKey);
+      setDiscordMessage(error.message);
+      setDiscordBusy(false);
+      return;
+    }
 
-    globalThis.window.location.assign(authorizeUrl.toString());
-    setDiscordBusy(false);
+    setDiscordMessage('Redirecting to Discord...');
   }
 
   async function handleDiscordDisconnect() {

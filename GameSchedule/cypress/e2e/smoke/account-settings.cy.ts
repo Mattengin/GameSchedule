@@ -198,6 +198,11 @@ const registerMockAccountSettings = (account: MockAccount) => {
     });
   }).as('profileUpdateRequest');
 
+  cy.intercept('DELETE', '**/rest/v1/profile_discord_guilds*', {
+    statusCode: 204,
+    body: {},
+  }).as('discordGuildCleanupRequest');
+
   cy.intercept('**/auth/v1/user*', (req) => {
     const body = (req.body as Record<string, unknown>) ?? {};
     updateUserBodies.push(body);
@@ -379,15 +384,36 @@ describe('account settings', () => {
     cy.get('[data-testid="account-password-confirm-input"]').should('have.value', '');
   });
 
-  it('cleans oauth tokens out of the URL hash on load', () => {
+  it('shows disconnect-only Discord actions for linked users and returns to Connect after disconnect', () => {
+    signInAndOpenProfile();
+
+    cy.contains(/^Discord$/).should('be.visible');
+    cy.get('[data-testid="discord-disconnect-button"]').should('be.visible');
+    cy.get('[data-testid="discord-refresh-servers-button"]').should('not.exist');
+
+    cy.get('[data-testid="discord-disconnect-button"]').click();
+
+    cy.wait('@profileUpdateRequest')
+      .its('request.body')
+      .should((body) => {
+        expect(body.discord_user_id).to.equal(null);
+        expect(body.discord_username).to.equal(null);
+        expect(body.discord_avatar_url).to.equal(null);
+        expect(body.discord_connected_at).to.equal(null);
+      });
+
+    cy.wait('@discordGuildCleanupRequest');
+    cy.contains(/^Not connected$/).should('be.visible');
+    cy.get('[data-testid="discord-connect-button"]').should('be.visible');
+  });
+
+  it('cleans oauth redirect params out of the URL query on load', () => {
     cy.clearCookies();
     cy.clearLocalStorage();
-    cy.visit(
-      '/#access_token=demo-token&refresh_token=demo-refresh&provider_token=discord-token&token_type=bearer&expires_in=3600',
-    );
+    cy.visit('/?error=access_denied&error_description=Denied');
 
-    cy.location('hash').should('eq', '');
-    cy.location('href').should('not.include', 'access_token=');
+    cy.location('search').should('eq', '');
+    cy.location('href').should('not.include', 'error=');
     cy.contains(/friend management app/i).should('be.visible');
   });
 });

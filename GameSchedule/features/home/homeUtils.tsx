@@ -28,51 +28,46 @@ export const getWebRedirectUrl = () => {
   return `${currentLocation.origin}${getWebBasePath()}/`;
 };
 
-export const getDiscordCallbackPath = () => `${getWebBasePath()}/discord-oauth-callback`;
-
-export const isDiscordCallbackPath = () => {
-  if (Platform.OS !== 'web') {
-    return false;
-  }
-
-  const currentPath = globalThis.window?.location.pathname ?? '';
-  return currentPath === getDiscordCallbackPath();
-};
-
-export const clearOAuthHashFromUrl = () => {
+export const clearOAuthRedirectParamsFromUrl = () => {
   if (Platform.OS !== 'web') {
     return;
   }
 
   const currentLocation = globalThis.window?.location;
   const currentHistory = globalThis.window?.history;
-  if (!currentLocation?.hash || !currentHistory?.replaceState) {
+  if (!currentLocation || !currentHistory?.replaceState) {
     return;
   }
 
-  const hasOAuthToken = /(?:^#|&)(access_token|refresh_token|provider_token|error|error_description)=/.test(
+  const searchParams = new URLSearchParams(currentLocation.search);
+  const nextSearchParams = new URLSearchParams(searchParams);
+  const oauthQueryKeys = ['code', 'error', 'error_code', 'error_description', 'state'];
+  let removedQueryParam = false;
+
+  oauthQueryKeys.forEach((key) => {
+    if (!nextSearchParams.has(key)) {
+      return;
+    }
+
+    nextSearchParams.delete(key);
+    removedQueryParam = true;
+  });
+
+  const hasOAuthHashToken = /(?:^#|&)(access_token|refresh_token|provider_token|token_type|expires_in|error|error_description|state)=/.test(
     currentLocation.hash,
   );
 
-  if (!hasOAuthToken) {
+  if (!removedQueryParam && !hasOAuthHashToken) {
     return;
   }
 
-  currentHistory.replaceState(currentHistory.state, '', `${currentLocation.pathname}${currentLocation.search}`);
-};
-
-export const getSessionProviderToken = (session: Session | null) => {
-  const providerToken = (session as Session & { provider_token?: string | null } | null)?.provider_token;
-  return typeof providerToken === 'string' && providerToken.trim() ? providerToken : null;
-};
-
-export const readHashParams = () => {
-  if (Platform.OS !== 'web') {
-    return new URLSearchParams();
-  }
-
-  const currentHash = globalThis.window?.location.hash ?? '';
-  return new URLSearchParams(currentHash.startsWith('#') ? currentHash.slice(1) : currentHash);
+  const nextSearch = nextSearchParams.toString();
+  const preservedHash = hasOAuthHashToken ? '' : currentLocation.hash;
+  currentHistory.replaceState(
+    currentHistory.state,
+    '',
+    `${currentLocation.pathname}${nextSearch ? `?${nextSearch}` : ''}${preservedHash}`,
+  );
 };
 
 export const buildDiscordGuildIconUrl = (guildId: string, iconHash: string | null | undefined) => {
