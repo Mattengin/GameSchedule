@@ -92,6 +92,7 @@ registerTranslation('en', en);
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
+  const friendCodeRegenerateCooldownMs = 15_000;
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [session, setSession] = React.useState<Session | null>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
@@ -125,6 +126,12 @@ export default function HomeScreen() {
   });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
   const [friendFilter, setFriendFilter] = React.useState<'all' | 'favorites' | 'pending'>('all');
+  const [friendCodeRegenerateConfirmVisible, setFriendCodeRegenerateConfirmVisible] =
+    React.useState(false);
+  const [friendCodeRegenerateCooldownUntil, setFriendCodeRegenerateCooldownUntil] = React.useState<number | null>(
+    null,
+  );
+  const [friendCodeRegenerateCooldownSeconds, setFriendCodeRegenerateCooldownSeconds] = React.useState(0);
   const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
   const handledDiscordCallbackTokenRef = React.useRef<string | null>(null);
 
@@ -1506,10 +1513,43 @@ export default function HomeScreen() {
     if (nextFriendCode) {
       setProfile((current) => (current ? { ...current, friend_code: nextFriendCode } : current));
       setFriendMessage('Friend code regenerated.');
+      setFriendCodeRegenerateCooldownUntil(Date.now() + friendCodeRegenerateCooldownMs);
     }
 
     setFriendActionBusyId(null);
-  }, [session, setFriendActionBusyId, setFriendError, setFriendMessage]);
+  }, [
+    friendCodeRegenerateCooldownMs,
+    session,
+    setFriendActionBusyId,
+    setFriendError,
+    setFriendMessage,
+  ]);
+
+  const handleConfirmRegenerateFriendCode = React.useCallback(async () => {
+    await handleRegenerateFriendCode();
+    setFriendCodeRegenerateConfirmVisible(false);
+  }, [handleRegenerateFriendCode]);
+
+  React.useEffect(() => {
+    if (!friendCodeRegenerateCooldownUntil) {
+      setFriendCodeRegenerateCooldownSeconds(0);
+      return undefined;
+    }
+
+    const updateRemaining = () => {
+      const remainingSeconds = Math.max(0, Math.ceil((friendCodeRegenerateCooldownUntil - Date.now()) / 1000));
+      setFriendCodeRegenerateCooldownSeconds(remainingSeconds);
+
+      if (remainingSeconds <= 0) {
+        setFriendCodeRegenerateCooldownUntil(null);
+      }
+    };
+
+    updateRemaining();
+    const intervalId = globalThis.setInterval(updateRemaining, 250);
+
+    return () => globalThis.clearInterval(intervalId);
+  }, [friendCodeRegenerateCooldownUntil]);
 
   const respondToFriendRequest = async (
     request: FriendRequestRecord,
@@ -2924,13 +2964,13 @@ export default function HomeScreen() {
             </Button>
             <Button
               mode="outlined"
-              onPress={() => {
-                void handleRegenerateFriendCode();
-              }}
+              onPress={() => setFriendCodeRegenerateConfirmVisible(true)}
               loading={friendActionBusyId === 'regenerate-friend-code'}
-              disabled={friendActionBusyId !== null}
+              disabled={friendActionBusyId !== null || friendCodeRegenerateCooldownSeconds > 0}
               testID="regenerate-friend-code-button">
-              Regenerate
+              {friendCodeRegenerateCooldownSeconds > 0
+                ? `Regenerate in ${friendCodeRegenerateCooldownSeconds}s`
+                : 'Regenerate'}
             </Button>
           </View>
           {friendError ? (
@@ -2941,6 +2981,11 @@ export default function HomeScreen() {
           {friendMessage ? (
             <HelperText type="info" visible style={styles.successText}>
               {friendMessage}
+            </HelperText>
+          ) : null}
+          {friendCodeRegenerateCooldownSeconds > 0 ? (
+            <HelperText type="info" visible>
+              You can regenerate again in {friendCodeRegenerateCooldownSeconds}s.
             </HelperText>
           ) : null}
         </Card.Content>
@@ -3933,6 +3978,40 @@ export default function HomeScreen() {
       </ScrollView>
 
       <Portal>
+        <Dialog
+          visible={friendCodeRegenerateConfirmVisible}
+          onDismiss={() => {
+            if (friendActionBusyId !== null) {
+              return;
+            }
+
+            setFriendCodeRegenerateConfirmVisible(false);
+          }}>
+          <Dialog.Title>Regenerate friend code?</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              Your current friend code will stop working. Anyone you still want to hear from will need
+              your new code.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              onPress={() => setFriendCodeRegenerateConfirmVisible(false)}
+              disabled={friendActionBusyId !== null}
+              testID="cancel-regenerate-friend-code-button">
+              Cancel
+            </Button>
+            <Button
+              onPress={() => {
+                void handleConfirmRegenerateFriendCode();
+              }}
+              loading={friendActionBusyId === 'regenerate-friend-code'}
+              disabled={friendActionBusyId !== null || friendCodeRegenerateCooldownSeconds > 0}
+              testID="confirm-regenerate-friend-code-button">
+              Regenerate
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
         <Dialog
           visible={Boolean(gamePendingRemoval)}
           onDismiss={() => {

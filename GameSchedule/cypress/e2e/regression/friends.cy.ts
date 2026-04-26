@@ -460,9 +460,13 @@ describe('friends', () => {
     cy.contains(/^Your friend code$/).should('be.visible');
     cy.get('[data-testid="friend-code-value"]').should('contain', currentUser.profile.friend_code);
     cy.get('[data-testid="regenerate-friend-code-button"]').click();
+    cy.contains(/your current friend code will stop working/i).should('be.visible');
+    cy.get('[data-testid="confirm-regenerate-friend-code-button"]').click();
     cy.wait('@regenerateFriendCodeRpc');
     cy.get('[data-testid="friend-code-value"]').should('not.contain', 'GS-CURR-AAAA-1111');
     cy.contains(/friend code regenerated/i).should('be.visible');
+    cy.contains(/you can regenerate again in/i).should('be.visible');
+    cy.get('[data-testid="regenerate-friend-code-button"]').should('be.disabled');
   });
 
   it('looks up a player by friend code and sends a friend request', () => {
