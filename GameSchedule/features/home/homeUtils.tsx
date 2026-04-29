@@ -4,7 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import { Button, Chip, Surface, Text } from 'react-native-paper';
 import { DatePickerInput, TimePickerModal } from 'react-native-paper-dates';
 import { styles } from './homeStyles';
-import type { BusyBlock, LobbyRecord } from './homeTypes';
+import type { BusyBlock, LobbyRecord, LobbySeriesFrequency } from './homeTypes';
 
 export const getWebBasePath = () => {
   if (Platform.OS !== 'web') {
@@ -209,6 +209,41 @@ export const getBusyFallbackEndDate = (startDate: Date) => {
   endDate.setHours(endDate.getHours() + 2);
   return endDate;
 };
+
+export const formatDateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const parseDateInputValue = (value: string | null | undefined) => {
+  if (!value) {
+    return undefined;
+  }
+
+  const [yearValue, monthValue, dayValue] = value.split('-');
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+
+  if ([year, month, day].some((part) => Number.isNaN(part))) {
+    return undefined;
+  }
+
+  const date = new Date(year, month - 1, day);
+  date.setHours(12, 0, 0, 0);
+  return date;
+};
+
+export const createRecurringWindowEndDate = (startDate: Date) => {
+  const nextDate = new Date(startDate);
+  nextDate.setDate(nextDate.getDate() + 42);
+  return nextDate;
+};
+
+export const formatLobbyRecurrenceLabel = (frequency: LobbySeriesFrequency) =>
+  frequency === 'biweekly' ? 'Every 2 weeks' : 'Weekly';
 
 export const resolveAvatarUrl = (
   record: { avatar_url: string | null; discord_avatar_url?: string | null } | null | undefined,

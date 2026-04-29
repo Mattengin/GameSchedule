@@ -52,6 +52,8 @@ import type {
   LobbyInviteStatus,
   LobbyMemberRecord,
   LobbyRecord,
+  LobbySeriesEndMode,
+  LobbySeriesFrequency,
   Profile,
   PublicProfileCard,
   SectionKey,
@@ -64,13 +66,16 @@ import {
   clearOAuthRedirectParamsFromUrl,
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
+  createRecurringWindowEndDate,
   doesTimeRangeOverlap,
   formatAvailabilityRange,
   formatBirthdayLabel,
   formatBusyBlockNote,
+  formatDateInputValue,
   formatDbTime,
   formatEventRange,
   formatEventTime,
+  formatLobbyRecurrenceLabel,
   formatLobbyScheduleLabel,
   formatReleaseDateLabel,
   getBusyFallbackEndDate,
@@ -82,6 +87,7 @@ import {
   getLobbyEndDate,
   getWebBasePath,
   getWebRedirectUrl,
+  parseDateInputValue,
   resolveAvatarUrl,
   setDatePart,
 } from '../features/home/homeUtils';
@@ -94,6 +100,7 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
   const lobbyAddGameDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
+  const recurringEditDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
   const compactDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 520 : 420);
   const friendCodeRegenerateCooldownMs = 15_000;
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
@@ -149,6 +156,21 @@ export default function HomeScreen() {
   const [friendCodeRegenerateCooldownSeconds, setFriendCodeRegenerateCooldownSeconds] = React.useState(0);
   const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
   const [lobbyAddGameDialogVisible, setLobbyAddGameDialogVisible] = React.useState(false);
+  const [recurringSeriesEditVisible, setRecurringSeriesEditVisible] = React.useState(false);
+  const [editingRecurringLobbyId, setEditingRecurringLobbyId] = React.useState<string | null>(null);
+  const [recurringSeriesEditForm, setRecurringSeriesEditForm] = React.useState({
+    title: '',
+    gameId: '',
+    startAt: createDefaultLobbyStartDate().toISOString(),
+    endAt: createDefaultLobbyEndDate().toISOString(),
+    hasExplicitEnd: true,
+    repeatMode: 'weekly' as LobbySeriesFrequency,
+    repeatEndMode: 'until_date' as LobbySeriesEndMode,
+    repeatUntilDate: formatDateInputValue(createRecurringWindowEndDate(createDefaultLobbyStartDate())),
+    repeatOccurrenceCount: '6',
+    meetupDetails: '',
+    visibility: 'private' as 'private' | 'public',
+  });
   const [readNotificationIds, setReadNotificationIds] = React.useState<string[]>([]);
   const inboxReadStorageKey = session?.user?.id ? `gameschedule-inbox-read:${session.user.id}` : null;
 
@@ -233,6 +255,7 @@ export default function HomeScreen() {
     lobbyForm,
     lobbyMessage,
     lobbyProfileDirectory,
+    lobbySeriesDirectory,
     hostedLobbies,
     rescheduleDraft,
     rescheduleEndAt,
@@ -737,6 +760,36 @@ export default function HomeScreen() {
 
   const pendingInboxCount = incomingFriendRequests.length + pendingLobbyInviteCount;
   const pendingInboxCountLabel = pendingInboxCount > 99 ? '99+' : String(pendingInboxCount);
+  const actionableIncomingLobbies = React.useMemo(
+    () =>
+      incomingLobbies.filter((lobby) => {
+        const membership = getCurrentLobbyMembership(lobby.id);
+        return Boolean(membership && membership.rsvp_status !== 'accepted');
+      }),
+    [getCurrentLobbyMembership, incomingLobbies],
+  );
+  const committedScheduleLobbies = React.useMemo(
+    () =>
+      lobbies
+        .filter((lobby) => {
+          if (!lobby.scheduled_for) {
+            return false;
+          }
+
+          if (lobby.host_profile_id === session?.user?.id) {
+            return true;
+          }
+
+          const membership = getCurrentLobbyMembership(lobby.id);
+          return membership?.rsvp_status === 'accepted';
+        })
+        .sort((left, right) => {
+          const leftTime = new Date(left.scheduled_for ?? '').getTime();
+          const rightTime = new Date(right.scheduled_for ?? '').getTime();
+          return leftTime - rightTime;
+        }),
+    [getCurrentLobbyMembership, lobbies, session],
+  );
   const dashboardUpcomingEvents = React.useMemo<DashboardUpcomingEvent[]>(() => {
     const now = Date.now();
     const sevenDaysFromNow = new Date(now);
@@ -747,21 +800,11 @@ export default function HomeScreen() {
       { lobby: LobbyRecord; status: DashboardUpcomingEvent['status'] }[]
     >((accumulator, lobby) => {
         const membership = getCurrentLobbyMembership(lobby.id);
-        if (!membership || membership.rsvp_status === 'declined') {
+        if (!membership || membership.rsvp_status !== 'accepted') {
           return accumulator;
         }
 
-        if (membership.rsvp_status === 'accepted') {
-          accumulator.push({ lobby, status: 'accepted' });
-          return accumulator;
-        }
-
-        if (membership.rsvp_status === 'suggested_time') {
-          accumulator.push({ lobby, status: 'suggested_time' });
-          return accumulator;
-        }
-
-        accumulator.push({ lobby, status: 'pending' });
+        accumulator.push({ lobby, status: 'accepted' });
         return accumulator;
       }, []);
 
@@ -1051,6 +1094,75 @@ export default function HomeScreen() {
     [],
   );
 
+  const getDefaultRecurringUntilDate = React.useCallback((startAtIso: string) => {
+    const parsedStartAt = new Date(startAtIso);
+    const safeStartAt = Number.isNaN(parsedStartAt.getTime()) ? createDefaultLobbyStartDate() : parsedStartAt;
+    return formatDateInputValue(createRecurringWindowEndDate(safeStartAt));
+  }, []);
+
+  const getLobbySeries = React.useCallback(
+    (lobby: Pick<LobbyRecord, 'lobby_series_id'>) =>
+      lobby.lobby_series_id ? lobbySeriesDirectory[lobby.lobby_series_id] ?? null : null,
+    [lobbySeriesDirectory],
+  );
+
+  const resetLobbyComposer = React.useCallback(
+    (game: GameRecord | null) => {
+      const nextStartAt = createDefaultLobbyStartDate();
+      setLobbyForm({
+        title: game ? `${game.title} Lobby` : '',
+        timeMode: 'later',
+        startAt: nextStartAt.toISOString(),
+        endAt: createDefaultLobbyEndDate().toISOString(),
+        hasExplicitEnd: true,
+        repeatMode: 'none',
+        repeatEndMode: 'until_date',
+        repeatUntilDate: formatDateInputValue(createRecurringWindowEndDate(nextStartAt)),
+        repeatOccurrenceCount: '6',
+        scheduledFor: '',
+        meetupDetails: '',
+        visibility: 'private',
+      });
+    },
+    [setLobbyForm],
+  );
+
+  const recurringSeriesEditStartAt = React.useMemo(() => {
+    const parsedDate = new Date(recurringSeriesEditForm.startAt);
+    return Number.isNaN(parsedDate.getTime()) ? createDefaultLobbyStartDate() : parsedDate;
+  }, [recurringSeriesEditForm.startAt]);
+
+  const recurringSeriesEditEndAt = React.useMemo(() => {
+    const parsedDate = new Date(recurringSeriesEditForm.endAt);
+    return Number.isNaN(parsedDate.getTime()) ? getDefaultEndDate(recurringSeriesEditStartAt) : parsedDate;
+  }, [recurringSeriesEditForm.endAt, recurringSeriesEditStartAt]);
+
+  const recurringSeriesEditUntilDate = React.useMemo(
+    () => parseDateInputValue(recurringSeriesEditForm.repeatUntilDate),
+    [recurringSeriesEditForm.repeatUntilDate],
+  );
+
+  const recurringSeriesEditGames = React.useMemo(() => {
+    const gamesById = new Map(libraryGames.map((game) => [game.id, game] as const));
+
+    if (editingRecurringLobbyId) {
+      const targetLobby = hostedLobbies.find((lobby) => lobby.id === editingRecurringLobbyId) ?? null;
+      if (targetLobby && !gamesById.has(targetLobby.game_id)) {
+        gamesById.set(targetLobby.game_id, {
+          id: targetLobby.game_id,
+          title: targetLobby.games?.title ?? targetLobby.title ?? 'Current game',
+          genre: targetLobby.games?.genre ?? 'Library game',
+          platform: targetLobby.games?.platform ?? 'Unknown platform',
+          player_count: targetLobby.games?.player_count ?? 'Players unknown',
+          description: null,
+          is_featured: false,
+        });
+      }
+    }
+
+    return Array.from(gamesById.values());
+  }, [editingRecurringLobbyId, hostedLobbies, libraryGames]);
+
   const prepareLobbyDraft = React.useCallback(
     (gameId: string, inviteeProfileIds: string[] = []) => {
       const game = libraryGames.find((item) => item.id === gameId);
@@ -1289,15 +1401,66 @@ export default function HomeScreen() {
     setLobbyMessage('');
 
     const invitedProfileIds = Array.from(new Set(selectedLobbyInviteProfileIds));
-    const { error: lobbyError } = await supabase.rpc('create_lobby_with_invites', {
-      p_game_id: selectedLobbyGame.id,
-      p_title: title,
-      p_scheduled_for: scheduledFor,
-      p_scheduled_until: scheduledUntil,
-      p_meetup_details: lobbyForm.meetupDetails.trim() || null,
-      p_is_private: lobbyForm.visibility === 'private',
-      p_invited_profile_ids: invitedProfileIds,
-    });
+    let lobbyError: { message: string } | null = null;
+    const isRecurring = lobbyForm.repeatMode !== 'none';
+
+    if (isRecurring) {
+      if (lobbyForm.timeMode !== 'later' || !scheduledFor) {
+        setLobbiesError('Recurring lobbies need a scheduled future start time.');
+        setLobbyBusy(false);
+        return;
+      }
+
+      const occurrenceCount =
+        lobbyForm.repeatEndMode === 'occurrence_count'
+          ? Number.parseInt(lobbyForm.repeatOccurrenceCount.trim(), 10)
+          : null;
+
+      if (lobbyForm.repeatEndMode === 'occurrence_count' && (!occurrenceCount || occurrenceCount < 1)) {
+        setLobbiesError('Enter a recurring occurrence count of at least 1.');
+        setLobbyBusy(false);
+        return;
+      }
+
+      const untilDate =
+        lobbyForm.repeatEndMode === 'until_date'
+          ? parseDateInputValue(lobbyForm.repeatUntilDate)
+          : undefined;
+
+      if (lobbyForm.repeatEndMode === 'until_date' && (!untilDate || untilDate < selectedLobbyStartAt)) {
+        setLobbiesError('Pick a recurring end date on or after the first occurrence.');
+        setLobbyBusy(false);
+        return;
+      }
+
+      const { error } = await supabase.rpc('create_recurring_lobby_series', {
+        p_game_id: selectedLobbyGame.id,
+        p_title: title,
+        p_scheduled_for: scheduledFor,
+        p_scheduled_until: scheduledUntil,
+        p_meetup_details: lobbyForm.meetupDetails.trim() || null,
+        p_is_private: lobbyForm.visibility === 'private',
+        p_invited_profile_ids: invitedProfileIds,
+        p_frequency: lobbyForm.repeatMode,
+        p_end_mode: lobbyForm.repeatEndMode,
+        p_until_date: lobbyForm.repeatEndMode === 'until_date' ? lobbyForm.repeatUntilDate : null,
+        p_occurrence_count: lobbyForm.repeatEndMode === 'occurrence_count' ? occurrenceCount : null,
+      });
+
+      lobbyError = error;
+    } else {
+      const { error } = await supabase.rpc('create_lobby_with_invites', {
+        p_game_id: selectedLobbyGame.id,
+        p_title: title,
+        p_scheduled_for: scheduledFor,
+        p_scheduled_until: scheduledUntil,
+        p_meetup_details: lobbyForm.meetupDetails.trim() || null,
+        p_is_private: lobbyForm.visibility === 'private',
+        p_invited_profile_ids: invitedProfileIds,
+      });
+
+      lobbyError = error;
+    }
 
     if (lobbyError) {
       setLobbiesError(lobbyError.message);
@@ -1307,20 +1470,15 @@ export default function HomeScreen() {
 
     await loadLobbies();
     setLobbyMessage(
-      invitedProfileIds.length > 0
-        ? `Lobby created and ${invitedProfileIds.length} invite${invitedProfileIds.length === 1 ? '' : 's'} sent.`
-        : 'Lobby created.',
+      isRecurring
+        ? invitedProfileIds.length > 0
+          ? `Recurring lobby created and ${invitedProfileIds.length} invite${invitedProfileIds.length === 1 ? '' : 's'} queued for the upcoming occurrences.`
+          : 'Recurring lobby created.'
+        : invitedProfileIds.length > 0
+          ? `Lobby created and ${invitedProfileIds.length} invite${invitedProfileIds.length === 1 ? '' : 's'} sent.`
+          : 'Lobby created.',
     );
-    setLobbyForm({
-      title: `${selectedLobbyGame.title} Lobby`,
-      timeMode: 'later',
-      startAt: createDefaultLobbyStartDate().toISOString(),
-      endAt: createDefaultLobbyEndDate().toISOString(),
-      hasExplicitEnd: true,
-      scheduledFor: '',
-      meetupDetails: '',
-      visibility: 'private',
-    });
+    resetLobbyComposer(selectedLobbyGame);
     setSelectedLobbyInviteProfileIds([]);
     setLobbyBusy(false);
   };
@@ -1490,6 +1648,139 @@ export default function HomeScreen() {
     await loadLobbies();
     setEditingLobbyId(null);
     setLobbyMessage('Lobby time updated.');
+    setLobbyBusy(false);
+  };
+
+  const closeRecurringSeriesEdit = React.useCallback(() => {
+    setRecurringSeriesEditVisible(false);
+    setEditingRecurringLobbyId(null);
+  }, []);
+
+  const handleOpenRecurringSeriesEdit = React.useCallback(
+    (lobby: LobbyRecord) => {
+      const series = getLobbySeries(lobby);
+      if (!series) {
+        return;
+      }
+
+      const startAt = lobby.scheduled_for ? new Date(lobby.scheduled_for) : createDefaultLobbyStartDate();
+      const safeStartAt = Number.isNaN(startAt.getTime()) ? createDefaultLobbyStartDate() : startAt;
+      const endAt = getLobbyEndDate({
+        scheduled_for: safeStartAt.toISOString(),
+        scheduled_until: lobby.scheduled_until,
+      });
+
+      setEditingRecurringLobbyId(lobby.id);
+      setRecurringSeriesEditForm({
+        title: lobby.title,
+        gameId: lobby.game_id,
+        startAt: safeStartAt.toISOString(),
+        endAt: endAt.toISOString(),
+        hasExplicitEnd: hasExplicitLobbyEnd(lobby),
+        repeatMode: series.frequency,
+        repeatEndMode: series.end_mode,
+        repeatUntilDate: series.until_date ?? getDefaultRecurringUntilDate(safeStartAt.toISOString()),
+        repeatOccurrenceCount: String(series.occurrence_count ?? 6),
+        meetupDetails: lobby.meetup_details ?? '',
+        visibility: lobby.is_private ? 'private' : 'public',
+      });
+      setLobbiesError('');
+      setLobbyMessage('');
+      setRecurringSeriesEditVisible(true);
+    },
+    [getDefaultRecurringUntilDate, getLobbySeries, setLobbiesError, setLobbyMessage],
+  );
+
+  const handleSaveRecurringSeriesFuture = async () => {
+    if (!session?.user || !editingRecurringLobbyId) {
+      return;
+    }
+
+    const targetLobby = hostedLobbies.find((lobby) => lobby.id === editingRecurringLobbyId) ?? null;
+    if (!targetLobby) {
+      setLobbiesError('Recurring lobby not found.');
+      return;
+    }
+
+    if (!recurringSeriesEditForm.gameId) {
+      setLobbiesError('Pick a game for the recurring series.');
+      return;
+    }
+
+    const parsedStartAt = new Date(recurringSeriesEditForm.startAt);
+    const parsedEndAt = new Date(recurringSeriesEditForm.endAt);
+
+    if (Number.isNaN(parsedStartAt.getTime())) {
+      setLobbiesError('Pick a valid recurring series start time.');
+      return;
+    }
+
+    if (recurringSeriesEditForm.hasExplicitEnd) {
+      if (Number.isNaN(parsedEndAt.getTime())) {
+        setLobbiesError('Pick a valid recurring series end time.');
+        return;
+      }
+
+      if (parsedEndAt <= parsedStartAt) {
+        setLobbiesError('Pick a recurring series end time after the start time.');
+        return;
+      }
+    }
+
+    const occurrenceCount =
+      recurringSeriesEditForm.repeatEndMode === 'occurrence_count'
+        ? Number.parseInt(recurringSeriesEditForm.repeatOccurrenceCount.trim(), 10)
+        : null;
+
+    if (
+      recurringSeriesEditForm.repeatEndMode === 'occurrence_count' &&
+      (!occurrenceCount || occurrenceCount < 1)
+    ) {
+      setLobbiesError('Enter a recurring occurrence count of at least 1.');
+      return;
+    }
+
+    const untilDate =
+      recurringSeriesEditForm.repeatEndMode === 'until_date'
+        ? parseDateInputValue(recurringSeriesEditForm.repeatUntilDate)
+        : undefined;
+
+    if (recurringSeriesEditForm.repeatEndMode === 'until_date' && (!untilDate || untilDate < parsedStartAt)) {
+      setLobbiesError('Pick a recurring end date on or after the edited anchor occurrence.');
+      return;
+    }
+
+    setLobbyBusy(true);
+    setLobbiesError('');
+    setLobbyMessage('');
+
+    const { error } = await supabase.rpc('update_recurring_lobby_series_future', {
+      p_lobby_id: targetLobby.id,
+      p_game_id: recurringSeriesEditForm.gameId,
+      p_title: recurringSeriesEditForm.title.trim() || targetLobby.title,
+      p_scheduled_for: parsedStartAt.toISOString(),
+      p_scheduled_until: recurringSeriesEditForm.hasExplicitEnd ? parsedEndAt.toISOString() : null,
+      p_meetup_details: recurringSeriesEditForm.meetupDetails.trim() || null,
+      p_is_private: recurringSeriesEditForm.visibility === 'private',
+      p_frequency: recurringSeriesEditForm.repeatMode,
+      p_end_mode: recurringSeriesEditForm.repeatEndMode,
+      p_until_date:
+        recurringSeriesEditForm.repeatEndMode === 'until_date'
+          ? recurringSeriesEditForm.repeatUntilDate
+          : null,
+      p_occurrence_count:
+        recurringSeriesEditForm.repeatEndMode === 'occurrence_count' ? occurrenceCount : null,
+    });
+
+    if (error) {
+      setLobbiesError(error.message);
+      setLobbyBusy(false);
+      return;
+    }
+
+    await loadLobbies();
+    closeRecurringSeriesEdit();
+    setLobbyMessage('Future recurring events updated.');
     setLobbyBusy(false);
   };
 
@@ -2031,6 +2322,7 @@ export default function HomeScreen() {
       onCompleteSetup={() => setSection('profile')}
       onCreateLobby={() => setSection('lobbies')}
       onManageFriends={() => setSection('friends')}
+      onOpenLobbies={() => setSection('lobbies')}
       onOpenSchedule={() => setSection('schedule')}
       onStartGroupSpin={() => setSection('roulette')}
     />
@@ -2541,7 +2833,7 @@ export default function HomeScreen() {
     <View style={styles.sectionStack}>
       <SectionTitle
         title="Schedule a game night"
-        subtitle="Create hosted sessions, review invite responses, and let invitees accept, decline, or suggest a better time."
+        subtitle="Create hosted sessions first, then handle invite decisions and host follow-up without bouncing between screens."
       />
       {lobbiesError ? (
         <HelperText type="error" visible>
@@ -2554,167 +2846,9 @@ export default function HomeScreen() {
         </HelperText>
       ) : null}
       <View style={isDesktopWeb ? styles.desktopPanelGrid : styles.sectionStack}>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-        <Card.Content>
-          <Text variant="titleMedium">Incoming invites</Text>
-          <Text style={styles.friendNote}>
-            Accept, decline, or suggest a better date and time with an optional note for the host.
-          </Text>
-          {lobbiesLoading ? <Text style={styles.friendNote}>Loading invite responses...</Text> : null}
-          {!lobbiesLoading && incomingLobbies.length === 0 ? (
-            <Text style={styles.friendNote}>No incoming invites right now.</Text>
-          ) : null}
-          {!lobbiesLoading &&
-            incomingLobbies.map((lobby) => {
-              const membership = getCurrentLobbyMembership(lobby.id);
-              if (!membership) {
-                return null;
-              }
-
-              const responseDraft = getInviteResponseDraft(lobby, membership);
-              const conflictBlock = getCurrentUserConflictBlock(lobby);
-              const history = getMemberHistory(lobby.id, membership.profile_id);
-              const { chipStyle, textStyle } = getLobbyStatusColors(membership.rsvp_status, true);
-              const parsedDraftStartAt = new Date(responseDraft.startAt);
-              const safeDraftStartAt = Number.isNaN(parsedDraftStartAt.getTime())
-                ? createDefaultLobbyStartDate()
-                : parsedDraftStartAt;
-              const parsedDraftEndAt = new Date(responseDraft.endAt);
-              const safeDraftEndAt = Number.isNaN(parsedDraftEndAt.getTime())
-                ? getDefaultEndDate(safeDraftStartAt)
-                : parsedDraftEndAt;
-
-              return (
-                <Surface key={`incoming-${lobby.id}`} style={styles.inviteResponseCard} elevation={1}>
-                  <View style={styles.inviteCardHeader}>
-                    <View style={styles.friendMeta}>
-                      <Text variant="titleMedium">{lobby.title}</Text>
-                      <Text style={styles.friendNote}>
-                        {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
-                      </Text>
-                      <Text style={styles.friendNote}>Host: {getLobbyProfileLabel(lobby.host_profile_id)}</Text>
-                      {getLobbyMeetupLabel(lobby) ? (
-                        <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
-                      ) : null}
-                    </View>
-                    <Chip compact style={chipStyle} textStyle={textStyle}>
-                      {formatInviteStatusLabel(membership.rsvp_status)}
-                    </Chip>
-                  </View>
-                  {conflictBlock ? (
-                    <View style={styles.inviteBusyMeta}>
-                      <Chip
-                        compact
-                        style={conflictBlock.busy_status === 'busy' ? styles.friendBusyChip : styles.friendMaybeBusyChip}
-                        textStyle={
-                          conflictBlock.busy_status === 'busy' ? styles.friendBusyText : styles.friendMaybeBusyText
-                        }>
-                        {getBusyStatusLabel(conflictBlock.busy_status)}
-                      </Chip>
-                      <Text style={styles.friendNote}>{formatBusyBlockNote(conflictBlock)}</Text>
-                    </View>
-                  ) : null}
-                  <View style={styles.inviteDecisionRow}>
-                    <Chip
-                      selected={responseDraft.decision === 'accepted'}
-                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'accepted' })}
-                      testID={`lobby-response-accept-${lobby.id}`}>
-                      Accept
-                    </Chip>
-                    <Chip
-                      selected={responseDraft.decision === 'declined'}
-                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'declined' })}
-                      testID={`lobby-response-decline-${lobby.id}`}>
-                      Decline
-                    </Chip>
-                    <Chip
-                      selected={responseDraft.decision === 'suggested_time'}
-                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'suggested_time' })}
-                      testID={`lobby-response-suggest-${lobby.id}`}>
-                      Suggest new time
-                    </Chip>
-                  </View>
-                  <TextInput
-                    mode="outlined"
-                    label="Comment (optional)"
-                    multiline
-                    value={responseDraft.comment}
-                    onChangeText={(value) => updateInviteResponseDraft(lobby, membership, { comment: value })}
-                    style={styles.input}
-                    testID={`lobby-response-comment-${lobby.id}`}
-                  />
-                  {responseDraft.decision === 'suggested_time' ? (
-                    <View style={styles.pickerFieldGroup}>
-                      <DatePickerInput
-                        locale="en"
-                        label="Suggested date"
-                        value={safeDraftStartAt}
-                        onChange={(nextDate) => {
-                          if (nextDate) {
-                            updateInviteResponseDraft(lobby, membership, (current) => ({
-                              ...current,
-                              startAt: setDatePart(safeDraftStartAt, nextDate).toISOString(),
-                              endAt: setDatePart(safeDraftEndAt, nextDate).toISOString(),
-                            }));
-                          }
-                        }}
-                        inputMode="start"
-                        mode="outlined"
-                        withModal
-                        style={styles.input}
-                        testID={`lobby-suggest-date-${lobby.id}`}
-                      />
-                      <TimeRangePicker
-                        startAt={safeDraftStartAt}
-                        endAt={safeDraftEndAt}
-                        onStartAtChange={(startAt) => {
-                          const currentDurationMs = Math.max(
-                            safeDraftEndAt.getTime() - safeDraftStartAt.getTime(),
-                            60 * 60 * 1000,
-                          );
-                          const nextEndAt = new Date(startAt.getTime() + currentDurationMs);
-
-                          updateInviteResponseDraft(lobby, membership, {
-                            startAt: startAt.toISOString(),
-                            endAt: nextEndAt.toISOString(),
-                          });
-                        }}
-                        onEndAtChange={(endAt) =>
-                          updateInviteResponseDraft(lobby, membership, {
-                            endAt: endAt.toISOString(),
-                          })
-                        }
-                        startTestID={`lobby-suggest-start-${lobby.id}`}
-                        endTestID={`lobby-suggest-end-${lobby.id}`}
-                      />
-                    </View>
-                  ) : null}
-                  <Button
-                    mode="contained"
-                    onPress={() => handleRespondToLobbyInvite(lobby, membership)}
-                    loading={lobbyBusy}
-                    disabled={lobbyBusy}
-                    testID={`lobby-response-submit-${lobby.id}`}>
-                    {responseDraft.decision === 'accepted'
-                      ? 'Save accept'
-                      : responseDraft.decision === 'declined'
-                        ? 'Save decline'
-                        : 'Send suggested time'}
-                  </Button>
-                  {history.length > 0 ? (
-                    <View style={styles.inviteHistorySection}>
-                      <Text variant="titleSmall" style={styles.eventTimeTitle}>
-                        Your response history
-                      </Text>
-                      {renderResponseHistoryCards(history)}
-                    </View>
-                  ) : null}
-                </Surface>
-              );
-            })}
-        </Card.Content>
-      </Card>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopFullSpan : null]}>
+      <Card
+        style={[styles.panel, isDesktopWeb ? styles.desktopFullSpan : null]}
+        testID="lobbies-create-event-card">
         <Card.Content>
           <Text variant="titleMedium">Create event</Text>
           <Text style={styles.friendNote}>
@@ -2942,6 +3076,97 @@ export default function HomeScreen() {
                 }))
               }
             />
+            <View style={styles.inputShell}>
+              <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                Repeat
+              </Text>
+              <Text style={styles.friendNote}>
+                Weekly and every-2-weeks are supported in v1. Monthly is intentionally out of scope for now.
+              </Text>
+              <SegmentedButtons
+                value={lobbyForm.repeatMode}
+                onValueChange={(value) =>
+                  setLobbyForm((current) => {
+                    const nextRepeatMode = value as 'none' | LobbySeriesFrequency;
+                    const nextStartAt = current.startAt;
+                    return {
+                      ...current,
+                      repeatMode: nextRepeatMode,
+                      timeMode: nextRepeatMode === 'none' ? current.timeMode : 'later',
+                      repeatUntilDate:
+                        nextRepeatMode === 'none'
+                          ? current.repeatUntilDate
+                          : current.repeatUntilDate || getDefaultRecurringUntilDate(nextStartAt),
+                    };
+                  })
+                }
+                style={styles.segmented}
+                buttons={[
+                  { value: 'none', label: 'Does not repeat' },
+                  { value: 'weekly', label: 'Weekly' },
+                  { value: 'biweekly', label: 'Every 2 weeks' },
+                ]}
+              />
+              {lobbyForm.repeatMode !== 'none' ? (
+                <>
+                  <SegmentedButtons
+                    value={lobbyForm.repeatEndMode}
+                    onValueChange={(value) =>
+                      setLobbyForm((current) => ({
+                        ...current,
+                        repeatEndMode: value as LobbySeriesEndMode,
+                        repeatUntilDate:
+                          value === 'until_date'
+                            ? current.repeatUntilDate || getDefaultRecurringUntilDate(current.startAt)
+                            : current.repeatUntilDate,
+                      }))
+                    }
+                    style={styles.segmented}
+                    buttons={[
+                      { value: 'until_date', label: 'End on date' },
+                      { value: 'occurrence_count', label: 'End after N' },
+                    ]}
+                  />
+                  {lobbyForm.repeatEndMode === 'until_date' ? (
+                    <DatePickerInput
+                      locale="en"
+                      label="Repeat until"
+                      value={parseDateInputValue(lobbyForm.repeatUntilDate)}
+                      onChange={(nextDate) => {
+                        if (!nextDate) {
+                          return;
+                        }
+
+                        setLobbyForm((current) => ({
+                          ...current,
+                          repeatUntilDate: formatDateInputValue(nextDate),
+                        }));
+                      }}
+                      inputMode="start"
+                      mode="outlined"
+                      withModal
+                      style={styles.input}
+                      testID="lobby-repeat-until-input"
+                    />
+                  ) : (
+                    <TextInput
+                      mode="outlined"
+                      label="Occurrences"
+                      value={lobbyForm.repeatOccurrenceCount}
+                      onChangeText={(value) =>
+                        setLobbyForm((current) => ({
+                          ...current,
+                          repeatOccurrenceCount: value.replace(/[^0-9]/g, ''),
+                        }))
+                      }
+                      keyboardType="number-pad"
+                      style={styles.input}
+                      testID="lobby-repeat-occurrence-count-input"
+                    />
+                  )}
+                </>
+              ) : null}
+            </View>
           </View>
           <View style={styles.schedulerStep}>
             <View style={styles.schedulerStepHeader}>
@@ -3093,6 +3318,11 @@ export default function HomeScreen() {
             <Chip icon="account">
               Host: {profile?.display_name ?? profile?.username ?? 'You'}
             </Chip>
+            {lobbyForm.repeatMode !== 'none' ? (
+              <Chip icon="repeat">
+                {formatLobbyRecurrenceLabel(lobbyForm.repeatMode)}
+              </Chip>
+            ) : null}
             {lobbyForm.meetupDetails.trim() ? (
               <Chip icon="map-marker">
                 {lobbyForm.meetupDetails.trim()}
@@ -3111,11 +3341,175 @@ export default function HomeScreen() {
             disabled={lobbyBusy || !selectedLobbyGame}
             style={styles.loginButton}
             testID="create-lobby-button">
-            Create lobby
+            {lobbyForm.repeatMode === 'none' ? 'Create lobby' : 'Create recurring lobby'}
           </Button>
         </Card.Content>
       </Card>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+      <Card
+        style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}
+        testID="lobbies-incoming-invites-card">
+        <Card.Content>
+          <Text variant="titleMedium">Incoming invites</Text>
+          <Text style={styles.friendNote}>
+            Pending, declined, or suggested-time invites stay here until you resolve them.
+          </Text>
+          {lobbiesLoading ? <Text style={styles.friendNote}>Loading invite responses...</Text> : null}
+          {!lobbiesLoading && actionableIncomingLobbies.length === 0 ? (
+            <Text style={styles.friendNote}>No invite decisions right now.</Text>
+          ) : null}
+          {!lobbiesLoading &&
+            actionableIncomingLobbies.map((lobby) => {
+              const membership = getCurrentLobbyMembership(lobby.id);
+              if (!membership) {
+                return null;
+              }
+
+              const responseDraft = getInviteResponseDraft(lobby, membership);
+              const conflictBlock = getCurrentUserConflictBlock(lobby);
+              const history = getMemberHistory(lobby.id, membership.profile_id);
+              const { chipStyle, textStyle } = getLobbyStatusColors(membership.rsvp_status, true);
+              const parsedDraftStartAt = new Date(responseDraft.startAt);
+              const safeDraftStartAt = Number.isNaN(parsedDraftStartAt.getTime())
+                ? createDefaultLobbyStartDate()
+                : parsedDraftStartAt;
+              const parsedDraftEndAt = new Date(responseDraft.endAt);
+              const safeDraftEndAt = Number.isNaN(parsedDraftEndAt.getTime())
+                ? getDefaultEndDate(safeDraftStartAt)
+                : parsedDraftEndAt;
+
+              return (
+                <Surface key={`incoming-${lobby.id}`} style={styles.inviteResponseCard} elevation={1}>
+                  <View style={styles.inviteCardHeader}>
+                    <View style={styles.friendMeta}>
+                      <Text variant="titleMedium">{lobby.title}</Text>
+                      <Text style={styles.friendNote}>
+                        {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
+                      </Text>
+                      <Text style={styles.friendNote}>Host: {getLobbyProfileLabel(lobby.host_profile_id)}</Text>
+                      {getLobbyMeetupLabel(lobby) ? (
+                        <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
+                      ) : null}
+                    </View>
+                    <Chip compact style={chipStyle} textStyle={textStyle}>
+                      {formatInviteStatusLabel(membership.rsvp_status)}
+                    </Chip>
+                  </View>
+                  {conflictBlock ? (
+                    <View style={styles.inviteBusyMeta}>
+                      <Chip
+                        compact
+                        style={conflictBlock.busy_status === 'busy' ? styles.friendBusyChip : styles.friendMaybeBusyChip}
+                        textStyle={
+                          conflictBlock.busy_status === 'busy' ? styles.friendBusyText : styles.friendMaybeBusyText
+                        }>
+                        {getBusyStatusLabel(conflictBlock.busy_status)}
+                      </Chip>
+                      <Text style={styles.friendNote}>{formatBusyBlockNote(conflictBlock)}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.inviteDecisionRow}>
+                    <Chip
+                      selected={responseDraft.decision === 'accepted'}
+                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'accepted' })}
+                      testID={`lobby-response-accept-${lobby.id}`}>
+                      Accept
+                    </Chip>
+                    <Chip
+                      selected={responseDraft.decision === 'declined'}
+                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'declined' })}
+                      testID={`lobby-response-decline-${lobby.id}`}>
+                      Decline
+                    </Chip>
+                    <Chip
+                      selected={responseDraft.decision === 'suggested_time'}
+                      onPress={() => updateInviteResponseDraft(lobby, membership, { decision: 'suggested_time' })}
+                      testID={`lobby-response-suggest-${lobby.id}`}>
+                      Suggest new time
+                    </Chip>
+                  </View>
+                  <TextInput
+                    mode="outlined"
+                    label="Comment (optional)"
+                    multiline
+                    value={responseDraft.comment}
+                    onChangeText={(value) => updateInviteResponseDraft(lobby, membership, { comment: value })}
+                    style={styles.input}
+                    testID={`lobby-response-comment-${lobby.id}`}
+                  />
+                  {responseDraft.decision === 'suggested_time' ? (
+                    <View style={styles.pickerFieldGroup}>
+                      <DatePickerInput
+                        locale="en"
+                        label="Suggested date"
+                        value={safeDraftStartAt}
+                        onChange={(nextDate) => {
+                          if (nextDate) {
+                            updateInviteResponseDraft(lobby, membership, (current) => ({
+                              ...current,
+                              startAt: setDatePart(safeDraftStartAt, nextDate).toISOString(),
+                              endAt: setDatePart(safeDraftEndAt, nextDate).toISOString(),
+                            }));
+                          }
+                        }}
+                        inputMode="start"
+                        mode="outlined"
+                        withModal
+                        style={styles.input}
+                        testID={`lobby-suggest-date-${lobby.id}`}
+                      />
+                      <TimeRangePicker
+                        startAt={safeDraftStartAt}
+                        endAt={safeDraftEndAt}
+                        onStartAtChange={(startAt) => {
+                          const currentDurationMs = Math.max(
+                            safeDraftEndAt.getTime() - safeDraftStartAt.getTime(),
+                            60 * 60 * 1000,
+                          );
+                          const nextEndAt = new Date(startAt.getTime() + currentDurationMs);
+
+                          updateInviteResponseDraft(lobby, membership, {
+                            startAt: startAt.toISOString(),
+                            endAt: nextEndAt.toISOString(),
+                          });
+                        }}
+                        onEndAtChange={(endAt) =>
+                          updateInviteResponseDraft(lobby, membership, {
+                            endAt: endAt.toISOString(),
+                          })
+                        }
+                        startTestID={`lobby-suggest-start-${lobby.id}`}
+                        endTestID={`lobby-suggest-end-${lobby.id}`}
+                      />
+                    </View>
+                  ) : null}
+                  <Button
+                    mode="contained"
+                    onPress={() => handleRespondToLobbyInvite(lobby, membership)}
+                    loading={lobbyBusy}
+                    disabled={lobbyBusy}
+                    testID={`lobby-response-submit-${lobby.id}`}>
+                    {responseDraft.decision === 'accepted'
+                      ? 'Save accept'
+                      : responseDraft.decision === 'declined'
+                        ? 'Save decline'
+                        : 'Send suggested time'}
+                  </Button>
+                  {history.length > 0 ? (
+                    <View style={styles.inviteHistorySection}>
+                      <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                        Your response history
+                      </Text>
+                      {renderResponseHistoryCards(history)}
+                    </View>
+                  ) : null}
+                </Surface>
+              );
+            })}
+        </Card.Content>
+      </Card>
+      <Card
+        style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}
+        testID="lobbies-hosted-lobbies-card">
         <Card.Content>
           <Text variant="titleMedium">Hosted lobbies</Text>
           <Text style={styles.friendNote}>
@@ -3127,6 +3521,10 @@ export default function HomeScreen() {
           ) : null}
           {!lobbiesLoading &&
             hostedLobbies.map((lobby) => {
+              const recurringSeries = getLobbySeries(lobby);
+              const recurrenceLabel = lobby.recurring_frequency
+                ? formatLobbyRecurrenceLabel(lobby.recurring_frequency)
+                : null;
               const hostedMembers = (lobbyMembersByLobbyId[lobby.id] ?? []).filter((member) => member.role === 'member');
 
               return (
@@ -3138,6 +3536,7 @@ export default function HomeScreen() {
                         {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                       </Text>
                       <Text style={styles.friendNote}>{lobby.is_private ? 'Private lobby' : 'Public lobby'}</Text>
+                      {recurrenceLabel ? <Text style={styles.friendNote}>Repeats: {recurrenceLabel}</Text> : null}
                       {getLobbyMeetupLabel(lobby) ? (
                         <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
                       ) : null}
@@ -3147,9 +3546,23 @@ export default function HomeScreen() {
                     </Chip>
                   </View>
                   <View style={styles.cardActions}>
-                    <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
-                      Reschedule
-                    </Button>
+                    {recurringSeries ? (
+                      <>
+                        <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
+                          Edit this event
+                        </Button>
+                        <Button
+                          mode="outlined"
+                          onPress={() => handleOpenRecurringSeriesEdit(lobby)}
+                          testID={`edit-recurring-series-${lobby.id}`}>
+                          Edit all future
+                        </Button>
+                      </>
+                    ) : (
+                      <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
+                        Reschedule
+                      </Button>
+                    )}
                     <Button mode="text" onPress={() => setSection('inbox')}>
                       Send reminder
                     </Button>
@@ -3245,19 +3658,22 @@ export default function HomeScreen() {
       />
       <Card style={styles.panel}>
         <Card.Content>
-          <Text variant="titleMedium">Upcoming games</Text>
+          <Text variant="titleMedium">Committed events</Text>
           <Text style={styles.friendNote}>
-            Hosted and accepted lobbies count as booked time. Sessions without a set end show as Maybe busy to friends.
+            Hosted and accepted lobbies count as booked time here. Pending invite decisions stay in Lobbies instead.
           </Text>
-          {lobbies.length === 0 ? (
-            <Text style={styles.friendNote}>No scheduled lobbies yet. Create one from the Lobbies tab.</Text>
+          {committedScheduleLobbies.length === 0 ? (
+            <Text style={styles.friendNote}>No committed events yet. Create one from the Lobbies tab or accept an invite there first.</Text>
           ) : null}
-          {lobbies.map((lobby) => {
+          {committedScheduleLobbies.map((lobby) => {
             const isHost = lobby.host_profile_id === session?.user?.id;
             const currentMembership = getCurrentLobbyMembership(lobby.id);
             const isEditing = isHost && editingLobbyId === lobby.id;
             const membershipColors = currentMembership
               ? getLobbyStatusColors(currentMembership.rsvp_status, true)
+              : null;
+            const recurrenceLabel = lobby.recurring_frequency
+              ? formatLobbyRecurrenceLabel(lobby.recurring_frequency)
               : null;
 
             return (
@@ -3268,6 +3684,7 @@ export default function HomeScreen() {
                     <Text style={styles.friendNote}>
                       {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
                     </Text>
+                    {recurrenceLabel ? <Text style={styles.friendNote}>Repeats: {recurrenceLabel}</Text> : null}
                     {getLobbyMeetupLabel(lobby) ? (
                       <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
                     ) : null}
@@ -4818,6 +5235,265 @@ export default function HomeScreen() {
               disabled={igdbImportBusyId !== null}
               testID="close-lobby-add-game-dialog-button">
               Close
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+        <Dialog
+          visible={recurringSeriesEditVisible}
+          style={[
+            styles.lobbyAddGameDialog,
+            recurringEditDialogWidth > 0 ? { width: recurringEditDialogWidth } : null,
+          ]}
+          onDismiss={() => {
+            if (lobbyBusy) {
+              return;
+            }
+
+            closeRecurringSeriesEdit();
+          }}
+          testID="edit-recurring-series-dialog">
+          <Dialog.Title>Edit all future events</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.friendNote}>
+              Update the recurring template from this occurrence forward. Monthly stays out of scope in
+              v1 so month-end calendar rules do not surprise people.
+            </Text>
+          </Dialog.Content>
+          <Dialog.ScrollArea style={styles.lobbyAddGameDialogScrollShell}>
+            <ScrollView
+              style={styles.lobbyAddGameDialogScrollArea}
+              contentContainerStyle={styles.lobbyAddGameDialogContent}>
+              <View style={styles.sectionStack}>
+                <View style={styles.inputShell}>
+                  <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                    Game
+                  </Text>
+                  <Text style={styles.friendNote}>
+                    Choose the game for this occurrence and everything after it in the series.
+                  </Text>
+                  <View style={styles.quickPath}>
+                    {recurringSeriesEditGames.map((game) => (
+                      <Chip
+                        key={`edit-recurring-game-${game.id}`}
+                        selected={recurringSeriesEditForm.gameId === game.id}
+                        onPress={() =>
+                          setRecurringSeriesEditForm((current) => ({
+                            ...current,
+                            gameId: game.id,
+                            title: current.title.trim() ? current.title : `${game.title} Lobby`,
+                          }))
+                        }
+                        testID={`edit-recurring-series-game-${game.id}`}>
+                        {game.title}
+                      </Chip>
+                    ))}
+                  </View>
+                </View>
+                <TextInput
+                  mode="outlined"
+                  label="Event title"
+                  value={recurringSeriesEditForm.title}
+                  onChangeText={(value) =>
+                    setRecurringSeriesEditForm((current) => ({
+                      ...current,
+                      title: value,
+                    }))
+                  }
+                  style={styles.input}
+                  testID="edit-recurring-series-title-input"
+                />
+                <View style={styles.inputShell}>
+                  <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                    Occurrence timing
+                  </Text>
+                  <Text style={styles.friendNote}>
+                    This selected occurrence becomes the new anchor for all future materialized events.
+                  </Text>
+                  <DatePickerInput
+                    locale="en"
+                    label="Event date"
+                    value={recurringSeriesEditStartAt}
+                    onChange={(nextDate) => {
+                      if (!nextDate) {
+                        return;
+                      }
+
+                      setRecurringSeriesEditForm((current) => ({
+                        ...current,
+                        startAt: setDatePart(recurringSeriesEditStartAt, nextDate).toISOString(),
+                        endAt: setDatePart(recurringSeriesEditEndAt, nextDate).toISOString(),
+                      }));
+                    }}
+                    inputMode="start"
+                    mode="outlined"
+                    withModal
+                    style={styles.input}
+                    testID="edit-recurring-series-date-input"
+                  />
+                  <TimeRangePicker
+                    startAt={recurringSeriesEditStartAt}
+                    endAt={recurringSeriesEditEndAt}
+                    hasExplicitEnd={recurringSeriesEditForm.hasExplicitEnd}
+                    onToggleHasExplicitEnd={(nextValue) =>
+                      setRecurringSeriesEditForm((current) => ({
+                        ...current,
+                        hasExplicitEnd: nextValue,
+                        endAt:
+                          nextValue && new Date(current.endAt) <= new Date(current.startAt)
+                            ? getDefaultEndDate(new Date(current.startAt)).toISOString()
+                            : current.endAt,
+                      }))
+                    }
+                    onStartAtChange={(startAt) => {
+                      const currentDurationMs = Math.max(
+                        recurringSeriesEditEndAt.getTime() - recurringSeriesEditStartAt.getTime(),
+                        60 * 60 * 1000,
+                      );
+                      const nextEndAt = new Date(startAt.getTime() + currentDurationMs);
+
+                      setRecurringSeriesEditForm((current) => ({
+                        ...current,
+                        startAt: startAt.toISOString(),
+                        endAt: nextEndAt.toISOString(),
+                      }));
+                    }}
+                    onEndAtChange={(endAt) =>
+                      setRecurringSeriesEditForm((current) => ({
+                        ...current,
+                        endAt: endAt.toISOString(),
+                      }))
+                    }
+                    startTestID="edit-recurring-series-start-time-button"
+                    endTestID="edit-recurring-series-end-time-button"
+                  />
+                </View>
+                <View style={styles.inputShell}>
+                  <Text variant="titleSmall" style={styles.eventTimeTitle}>
+                    Repeat
+                  </Text>
+                  <Text style={styles.friendNote}>
+                    Weekly and every-2-weeks are supported here. Monthly stays intentionally deferred.
+                  </Text>
+                  <SegmentedButtons
+                    value={recurringSeriesEditForm.repeatMode}
+                    onValueChange={(value) =>
+                      setRecurringSeriesEditForm((current) => ({
+                        ...current,
+                        repeatMode: value as LobbySeriesFrequency,
+                      }))
+                    }
+                    style={styles.segmented}
+                    buttons={[
+                      { value: 'weekly', label: 'Weekly' },
+                      { value: 'biweekly', label: 'Every 2 weeks' },
+                    ]}
+                  />
+                  <SegmentedButtons
+                    value={recurringSeriesEditForm.repeatEndMode}
+                    onValueChange={(value) =>
+                      setRecurringSeriesEditForm((current) => ({
+                        ...current,
+                        repeatEndMode: value as LobbySeriesEndMode,
+                        repeatUntilDate:
+                          value === 'until_date'
+                            ? current.repeatUntilDate || getDefaultRecurringUntilDate(current.startAt)
+                            : current.repeatUntilDate,
+                      }))
+                    }
+                    style={styles.segmented}
+                    buttons={[
+                      { value: 'until_date', label: 'End on date' },
+                      { value: 'occurrence_count', label: 'End after N' },
+                    ]}
+                  />
+                  {recurringSeriesEditForm.repeatEndMode === 'until_date' ? (
+                    <DatePickerInput
+                      locale="en"
+                      label="Repeat until"
+                      value={recurringSeriesEditUntilDate}
+                      onChange={(nextDate) => {
+                        if (!nextDate) {
+                          return;
+                        }
+
+                        setRecurringSeriesEditForm((current) => ({
+                          ...current,
+                          repeatUntilDate: formatDateInputValue(nextDate),
+                        }));
+                      }}
+                      inputMode="start"
+                      mode="outlined"
+                      withModal
+                      style={styles.input}
+                      testID="edit-recurring-series-repeat-until-input"
+                    />
+                  ) : (
+                    <TextInput
+                      mode="outlined"
+                      label="Occurrences"
+                      value={recurringSeriesEditForm.repeatOccurrenceCount}
+                      onChangeText={(value) =>
+                        setRecurringSeriesEditForm((current) => ({
+                          ...current,
+                          repeatOccurrenceCount: value.replace(/[^0-9]/g, ''),
+                        }))
+                      }
+                      keyboardType="number-pad"
+                      style={styles.input}
+                      testID="edit-recurring-series-repeat-occurrence-count-input"
+                    />
+                  )}
+                </View>
+                <TextInput
+                  mode="outlined"
+                  label="Meetup details (optional)"
+                  value={recurringSeriesEditForm.meetupDetails}
+                  onChangeText={(value) =>
+                    setRecurringSeriesEditForm((current) => ({
+                      ...current,
+                      meetupDetails: value,
+                    }))
+                  }
+                  style={styles.input}
+                  testID="edit-recurring-series-meetup-details-input"
+                />
+                <SegmentedButtons
+                  value={recurringSeriesEditForm.visibility}
+                  onValueChange={(value) =>
+                    setRecurringSeriesEditForm((current) => ({
+                      ...current,
+                      visibility: value as 'private' | 'public',
+                    }))
+                  }
+                  style={styles.segmented}
+                  buttons={[
+                    { value: 'private', label: 'Private' },
+                    { value: 'public', label: 'Public' },
+                  ]}
+                />
+                {lobbiesError ? (
+                  <HelperText type="error" visible>
+                    {lobbiesError}
+                  </HelperText>
+                ) : null}
+              </View>
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button
+              onPress={closeRecurringSeriesEdit}
+              disabled={lobbyBusy}
+              testID="cancel-recurring-series-future-button">
+              Cancel
+            </Button>
+            <Button
+              onPress={() => {
+                void handleSaveRecurringSeriesFuture();
+              }}
+              loading={lobbyBusy}
+              disabled={lobbyBusy}
+              testID="save-recurring-series-future-button">
+              Save all future
             </Button>
           </Dialog.Actions>
         </Dialog>

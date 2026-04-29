@@ -59,6 +59,7 @@ type DashboardSectionProps = {
   onCompleteSetup: () => void;
   onCreateLobby: () => void;
   onManageFriends: () => void;
+  onOpenLobbies: () => void;
   onOpenSchedule: () => void;
   onStartGroupSpin: () => void;
 };
@@ -72,6 +73,7 @@ export function DashboardSection({
   onCompleteSetup,
   onCreateLobby,
   onManageFriends,
+  onOpenLobbies,
   onOpenSchedule,
   onStartGroupSpin,
 }: DashboardSectionProps) {
@@ -155,7 +157,7 @@ export function DashboardSection({
             Play together, faster.
           </Text>
           <Text style={styles.heroCopy}>
-            Real scheduled lobbies from the week ahead, including invites waiting on you.
+            Hosted and accepted game nights from the week ahead, grouped by day so tonight is easy to scan.
           </Text>
         </View>
         <Button mode="outlined" onPress={onOpenSchedule} testID="dashboard-open-schedule-button">
@@ -263,7 +265,7 @@ export function DashboardSection({
           title="Needs attention"
           subtitle={
             needsAttentionCount > 0
-              ? 'Pending friend requests and lobby invites stay here until you answer them.'
+              ? 'Pending friend requests stay compact here, and lobby invite decisions route into Lobbies.'
               : "You're caught up right now. New requests and invites will surface here first."
           }
         />
@@ -277,6 +279,23 @@ export function DashboardSection({
             <Chip compact>{pendingLobbyInviteCount}</Chip>
           </View>
         </View>
+        {needsAttentionCount > 0 ? (
+          <View style={styles.cardActions}>
+            {pendingLobbyInviteCount > 0 ? (
+              <Button
+                mode="contained-tonal"
+                onPress={onOpenLobbies}
+                testID="dashboard-open-lobbies-button">
+                Open lobbies
+              </Button>
+            ) : null}
+            {pendingFriendRequestCount > 0 ? (
+              <Button mode="outlined" onPress={onManageFriends} testID="dashboard-open-friends-button">
+                Open friends
+              </Button>
+            ) : null}
+          </View>
+        ) : null}
       </Card.Content>
     </Card>
   );

@@ -623,13 +623,21 @@ describe('mobile layout smoke', () => {
     cy.get('[data-testid="dashboard-upcoming-events"]').should('be.visible');
     cy.get('[data-testid="dashboard-event-hosted-lobby"]').should('contain.text', 'Hosting');
     cy.get('[data-testid="dashboard-event-accepted-lobby"]').should('contain.text', 'Accepted');
-    cy.get('[data-testid="dashboard-event-pending-lobby"]').should('contain.text', 'Pending invite');
     cy.contains('Helix Arena Ranked').should('be.visible');
     cy.contains('Deep Raid Night').should('be.visible');
-    cy.contains('Wild Rally Warmup').should('be.visible');
+    cy.get('[data-testid="dashboard-event-pending-lobby"]').should('not.exist');
+    cy.contains('Wild Rally Warmup').should('not.exist');
     cy.contains('Unscheduled Draft').should('not.exist');
+    cy.get('[data-testid="dashboard-open-lobbies-button"]').click();
+    cy.contains(/^Create event$/).scrollIntoView().should('be.visible');
+    cy.contains(/^Incoming invites$/).scrollIntoView().should('be.visible');
+    cy.contains('Wild Rally Warmup').scrollIntoView().should('be.visible');
+    clickSectionNav('dashboard');
 
     cy.get('[data-testid="dashboard-open-schedule-button"]').click();
+    cy.contains('Helix Arena Ranked').scrollIntoView().should('be.visible');
+    cy.contains('Deep Raid Night').scrollIntoView().should('be.visible');
+    cy.contains('Wild Rally Warmup').should('not.exist');
     cy.contains(/^Weekly availability$/).scrollIntoView().should('be.visible');
     assertNoHorizontalOverflow();
   });

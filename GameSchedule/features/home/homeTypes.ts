@@ -96,6 +96,9 @@ export type LobbyRecord = {
   scheduled_for: string | null;
   scheduled_until: string | null;
   meetup_details: string | null;
+  lobby_series_id: string | null;
+  series_occurrence_key: string | null;
+  recurring_frequency: LobbySeriesFrequency | null;
   discord_guild_id: string | null;
   discord_guild_name: string | null;
   discord_guild_icon_url: string | null;
@@ -110,6 +113,36 @@ export type LobbyRecord = {
 export type LobbyInviteStatus = 'accepted' | 'pending' | 'declined' | 'suggested_time';
 
 export type LobbyMemberRole = 'host' | 'member';
+
+export type LobbySeriesFrequency = 'weekly' | 'biweekly';
+
+export type LobbySeriesEndMode = 'until_date' | 'occurrence_count';
+
+export type LobbySeriesStatus = 'active' | 'ended';
+
+export type LobbySeriesRecord = {
+  id: string;
+  host_profile_id: string;
+  game_id: string;
+  title: string;
+  meetup_details: string | null;
+  is_private: boolean;
+  frequency: LobbySeriesFrequency;
+  anchor_starts_at: string;
+  anchor_ends_at: string | null;
+  end_mode: LobbySeriesEndMode;
+  until_date: string | null;
+  occurrence_count: number | null;
+  status: LobbySeriesStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LobbySeriesInviteeRecord = {
+  lobby_series_id: string;
+  profile_id: string;
+  created_at: string;
+};
 
 export type LobbyMemberRecord = {
   lobby_id: string;
@@ -133,7 +166,7 @@ export type LobbyInviteHistoryRecord = {
   comment: string | null;
   suggested_start_at: string | null;
   suggested_end_at: string | null;
-  origin: 'member' | 'host_apply';
+  origin: 'member' | 'host_apply' | 'host_series_edit';
   created_at: string;
 };
 

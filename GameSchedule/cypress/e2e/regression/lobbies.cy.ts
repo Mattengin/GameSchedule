@@ -57,6 +57,9 @@ type MockLobby = {
   scheduled_for: string | null;
   scheduled_until: string | null;
   meetup_details: string | null;
+  lobby_series_id: string | null;
+  series_occurrence_key: string | null;
+  recurring_frequency: 'weekly' | 'biweekly' | null;
   discord_guild_id: string | null;
   discord_guild_name: string | null;
   discord_guild_icon_url: string | null;
@@ -96,7 +99,31 @@ type MockLobbyHistory = {
   comment: string | null;
   suggested_start_at: string | null;
   suggested_end_at: string | null;
-  origin: 'member' | 'host_apply';
+  origin: 'member' | 'host_apply' | 'host_series_edit';
+  created_at: string;
+};
+
+type MockLobbySeries = {
+  id: string;
+  host_profile_id: string;
+  game_id: string;
+  title: string;
+  meetup_details: string | null;
+  is_private: boolean;
+  frequency: 'weekly' | 'biweekly';
+  anchor_starts_at: string;
+  anchor_ends_at: string | null;
+  end_mode: 'until_date' | 'occurrence_count';
+  until_date: string | null;
+  occurrence_count: number | null;
+  status: 'active' | 'ended';
+  created_at: string;
+  updated_at: string;
+};
+
+type MockLobbySeriesInvitee = {
+  lobby_series_id: string;
+  profile_id: string;
   created_at: string;
 };
 
@@ -191,6 +218,8 @@ const authStore = new Map<string, MockAccount>();
 const lobbyStore: MockLobby[] = [];
 const lobbyMembersStore: MockLobbyMember[] = [];
 const lobbyHistoryStore: MockLobbyHistory[] = [];
+const lobbySeriesStore: MockLobbySeries[] = [];
+const lobbySeriesInviteesStore: MockLobbySeriesInvitee[] = [];
 const friendshipStore: MockFriendship[] = [];
 const friendGroupsStore: MockFriendGroup[] = [];
 const friendGroupMembersStore: MockFriendGroupMember[] = [];
@@ -199,6 +228,7 @@ const profileGamesStore = new Map<string, string[]>();
 
 let currentSessionUserId: string | null = null;
 let lobbySequence = 0;
+let lobbySeriesSequence = 0;
 let historySequence = 0;
 let timestampSequence = 0;
 
@@ -239,6 +269,14 @@ const createEveningWindow = (durationHours = 2) => {
     endAt: endAt.toISOString(),
   };
 };
+
+const addDays = (isoTimestamp: string, days: number) => {
+  const nextDate = new Date(isoTimestamp);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate.toISOString();
+};
+
+const getSeriesIntervalDays = (frequency: MockLobbySeries['frequency']) => (frequency === 'biweekly' ? 14 : 7);
 
 const makeAccount = (
   email: string,
@@ -515,6 +553,11 @@ const buildLobby = (
   scheduledUntil: string | null,
   isPrivate: boolean,
   meetupDetails: string | null = null,
+  recurringOptions?: {
+    lobbySeriesId?: string | null;
+    seriesOccurrenceKey?: string | null;
+    recurringFrequency?: 'weekly' | 'biweekly' | null;
+  },
 ): MockLobby => {
   lobbySequence += 1;
   const game = games.find((item) => item.id === gameId) ?? null;
@@ -525,6 +568,9 @@ const buildLobby = (
     scheduled_for: scheduledFor,
     scheduled_until: scheduledUntil,
     meetup_details: meetupDetails,
+    lobby_series_id: recurringOptions?.lobbySeriesId ?? null,
+    series_occurrence_key: recurringOptions?.seriesOccurrenceKey ?? null,
+    recurring_frequency: recurringOptions?.recurringFrequency ?? null,
     discord_guild_id: null,
     discord_guild_name: null,
     discord_guild_icon_url: null,
@@ -543,6 +589,20 @@ const buildLobby = (
       : null,
     created_at: nextIsoTimestamp(),
   };
+};
+
+const getLobbyGameSummary = (gameId: string) => {
+  const game = games.find((item) => item.id === gameId) ?? null;
+
+  return game
+    ? {
+        id: game.id,
+        title: game.title,
+        genre: game.genre,
+        platform: game.platform,
+        player_count: game.player_count,
+      }
+    : null;
 };
 
 const appendHistory = (
@@ -568,6 +628,230 @@ const appendHistory = (
     origin,
     created_at: nextIsoTimestamp(),
   });
+};
+
+const removeLobbyById = (lobbyId: string) => {
+  for (let index = lobbyStore.length - 1; index >= 0; index -= 1) {
+    if (lobbyStore[index].id === lobbyId) {
+      lobbyStore.splice(index, 1);
+    }
+  }
+
+  for (let index = lobbyMembersStore.length - 1; index >= 0; index -= 1) {
+    if (lobbyMembersStore[index].lobby_id === lobbyId) {
+      lobbyMembersStore.splice(index, 1);
+    }
+  }
+
+  for (let index = lobbyHistoryStore.length - 1; index >= 0; index -= 1) {
+    if (lobbyHistoryStore[index].lobby_id === lobbyId) {
+      lobbyHistoryStore.splice(index, 1);
+    }
+  }
+};
+
+const getSeriesOccurrenceSpecs = (series: MockLobbySeries) => {
+  const intervalDays = getSeriesIntervalDays(series.frequency);
+  const maxWindowEnd = addDays(series.anchor_starts_at, 42);
+  const specs: {
+    occurrenceKey: string;
+    scheduledFor: string;
+    scheduledUntil: string | null;
+  }[] = [];
+
+  let currentStart = series.anchor_starts_at;
+  let currentEnd = series.anchor_ends_at;
+  let occurrenceNumber = 0;
+
+  while (occurrenceNumber < 8) {
+    const currentStartDate = new Date(currentStart);
+    if (Number.isNaN(currentStartDate.getTime()) || currentStart > maxWindowEnd) {
+      break;
+    }
+
+    if (series.end_mode === 'until_date' && series.until_date) {
+      const occurrenceDay = currentStart.slice(0, 10);
+      if (occurrenceDay > series.until_date) {
+        break;
+      }
+    }
+
+    if (series.end_mode === 'occurrence_count' && series.occurrence_count && occurrenceNumber >= series.occurrence_count) {
+      break;
+    }
+
+    specs.push({
+      occurrenceKey: currentStart,
+      scheduledFor: currentStart,
+      scheduledUntil: currentEnd,
+    });
+
+    occurrenceNumber += 1;
+    currentStart = addDays(currentStart, intervalDays);
+    currentEnd = currentEnd ? addDays(currentEnd, intervalDays) : null;
+  }
+
+  return specs;
+};
+
+const upsertRecurringOccurrenceMembers = (lobbyId: string, hostProfileId: string, inviteeProfileIds: string[]) => {
+  const existingMemberKeys = new Set(
+    lobbyMembersStore
+      .filter((member) => member.lobby_id === lobbyId)
+      .map((member) => `${member.lobby_id}:${member.profile_id}`),
+  );
+
+  if (!existingMemberKeys.has(`${lobbyId}:${hostProfileId}`)) {
+    lobbyMembersStore.push({
+      lobby_id: lobbyId,
+      profile_id: hostProfileId,
+      role: 'host',
+      rsvp_status: 'accepted',
+      response_comment: null,
+      suggested_start_at: null,
+      suggested_end_at: null,
+      responded_at: nextIsoTimestamp(),
+      invited_at: nextIsoTimestamp(),
+      created_at: nextIsoTimestamp(),
+    });
+  }
+
+  inviteeProfileIds.forEach((profileId) => {
+    if (existingMemberKeys.has(`${lobbyId}:${profileId}`)) {
+      return;
+    }
+
+    lobbyMembersStore.push({
+      lobby_id: lobbyId,
+      profile_id: profileId,
+      role: 'member',
+      rsvp_status: 'pending',
+      response_comment: null,
+      suggested_start_at: null,
+      suggested_end_at: null,
+      responded_at: null,
+      invited_at: nextIsoTimestamp(),
+      created_at: nextIsoTimestamp(),
+    });
+  });
+};
+
+const syncRecurringSeriesOccurrences = (seriesId: string) => {
+  const series = lobbySeriesStore.find((entry) => entry.id === seriesId) ?? null;
+  const hostAccount = series ? getAccountById(series.host_profile_id) : null;
+
+  if (!series || !hostAccount) {
+    return [];
+  }
+
+  const desiredOccurrences = getSeriesOccurrenceSpecs(series);
+  const inviteeProfileIds = lobbySeriesInviteesStore
+    .filter((invitee) => invitee.lobby_series_id === series.id)
+    .map((invitee) => invitee.profile_id);
+  const existingOccurrences = lobbyStore
+    .filter((lobby) => lobby.lobby_series_id === series.id)
+    .sort((left, right) => {
+      const leftKey = left.series_occurrence_key ?? left.scheduled_for ?? '';
+      const rightKey = right.series_occurrence_key ?? right.scheduled_for ?? '';
+      return leftKey.localeCompare(rightKey);
+    });
+
+  desiredOccurrences.forEach((occurrence, index) => {
+    const existingLobby = existingOccurrences[index];
+    if (existingLobby) {
+      existingLobby.title = series.title;
+      existingLobby.game_id = series.game_id;
+      existingLobby.games = getLobbyGameSummary(series.game_id);
+      existingLobby.scheduled_for = occurrence.scheduledFor;
+      existingLobby.scheduled_until = occurrence.scheduledUntil;
+      existingLobby.meetup_details = series.meetup_details;
+      existingLobby.is_private = series.is_private;
+      existingLobby.series_occurrence_key = occurrence.occurrenceKey;
+      existingLobby.recurring_frequency = series.frequency;
+      upsertRecurringOccurrenceMembers(existingLobby.id, hostAccount.userId, inviteeProfileIds);
+      return;
+    }
+
+    const nextLobby = buildLobby(
+      hostAccount,
+      series.game_id,
+      series.title,
+      occurrence.scheduledFor,
+      occurrence.scheduledUntil,
+      series.is_private,
+      series.meetup_details,
+      {
+        lobbySeriesId: series.id,
+        seriesOccurrenceKey: occurrence.occurrenceKey,
+        recurringFrequency: series.frequency,
+      },
+    );
+    lobbyStore.unshift(nextLobby);
+    upsertRecurringOccurrenceMembers(nextLobby.id, hostAccount.userId, inviteeProfileIds);
+  });
+
+  existingOccurrences.slice(desiredOccurrences.length).forEach((lobby) => {
+    removeLobbyById(lobby.id);
+  });
+
+  return lobbyStore
+    .filter((lobby) => lobby.lobby_series_id === series.id)
+    .sort((left, right) => {
+      const leftKey = left.series_occurrence_key ?? left.scheduled_for ?? '';
+      const rightKey = right.series_occurrence_key ?? right.scheduled_for ?? '';
+      return leftKey.localeCompare(rightKey);
+    });
+};
+
+const createRecurringSeries = (
+  hostAccount: MockAccount,
+  options: {
+    gameId: string;
+    title: string;
+    scheduledFor: string;
+    scheduledUntil: string | null;
+    isPrivate: boolean;
+    meetupDetails?: string | null;
+    invitedProfileIds?: string[];
+    frequency: MockLobbySeries['frequency'];
+    endMode: MockLobbySeries['end_mode'];
+    untilDate?: string | null;
+    occurrenceCount?: number | null;
+  },
+) => {
+  lobbySeriesSequence += 1;
+  const series: MockLobbySeries = {
+    id: `series-${lobbySeriesSequence}`,
+    host_profile_id: hostAccount.userId,
+    game_id: options.gameId,
+    title: options.title,
+    meetup_details: options.meetupDetails ?? null,
+    is_private: options.isPrivate,
+    frequency: options.frequency,
+    anchor_starts_at: options.scheduledFor,
+    anchor_ends_at: options.scheduledUntil,
+    end_mode: options.endMode,
+    until_date: options.endMode === 'until_date' ? options.untilDate ?? null : null,
+    occurrence_count: options.endMode === 'occurrence_count' ? options.occurrenceCount ?? null : null,
+    status: 'active',
+    created_at: nextIsoTimestamp(),
+    updated_at: nextIsoTimestamp(),
+  };
+
+  lobbySeriesStore.push(series);
+
+  (options.invitedProfileIds ?? []).forEach((profileId) => {
+    lobbySeriesInviteesStore.push({
+      lobby_series_id: series.id,
+      profile_id: profileId,
+      created_at: nextIsoTimestamp(),
+    });
+  });
+
+  return {
+    series,
+    occurrences: syncRecurringSeriesOccurrences(series.id),
+  };
 };
 
 const getAccessibleLobbyIds = (profileId: string) =>
@@ -835,9 +1119,44 @@ const registerMockLobbies = () => {
     const accessibleLobbyIds = new Set(getAccessibleLobbyIds(currentSessionUserId ?? ''));
     req.reply({
       statusCode: 200,
-      body: lobbyStore.filter((lobby) => accessibleLobbyIds.has(lobby.id)),
+      body: lobbyStore
+        .filter((lobby) => accessibleLobbyIds.has(lobby.id))
+        .sort((left, right) => right.created_at.localeCompare(left.created_at)),
     });
   }).as('lobbiesRequest');
+
+  cy.intercept('GET', '**/rest/v1/lobby_series*', (req) => {
+    const requestedSeriesIds = getQueryValues(req.url, 'id');
+    const accessibleSeriesIds = new Set(
+      lobbyStore
+        .filter((lobby) => {
+          if (!lobby.lobby_series_id) {
+            return false;
+          }
+
+          if (lobby.host_profile_id === currentSessionUserId) {
+            return true;
+          }
+
+          return lobbyMembersStore.some(
+            (member) => member.lobby_id === lobby.id && member.profile_id === currentSessionUserId,
+          );
+        })
+        .map((lobby) => lobby.lobby_series_id)
+        .filter((seriesId): seriesId is string => Boolean(seriesId)),
+    );
+
+    req.reply({
+      statusCode: 200,
+      body: lobbySeriesStore.filter((series) => {
+        if (requestedSeriesIds.length > 0 && !requestedSeriesIds.includes(series.id)) {
+          return false;
+        }
+
+        return accessibleSeriesIds.has(series.id);
+      }),
+    });
+  }).as('lobbySeriesRequest');
 
   cy.intercept('GET', '**/rest/v1/lobby_members*', (req) => {
     const requestedLobbyIds = getQueryValues(req.url, 'lobby_id');
@@ -1001,6 +1320,164 @@ const registerMockLobbies = () => {
       body: lobby,
     });
   }).as('createLobbyRpc');
+
+  cy.intercept('POST', '**/rest/v1/rpc/create_recurring_lobby_series', (req) => {
+    const currentAccount = getAccountById(currentSessionUserId ?? '');
+    if (!currentAccount) {
+      req.reply({
+        statusCode: 401,
+        body: { message: 'Missing authenticated user' },
+      });
+      return;
+    }
+
+    const {
+      p_game_id: gameId,
+      p_title: title,
+      p_scheduled_for: scheduledFor,
+      p_scheduled_until: scheduledUntil,
+      p_is_private: isPrivate,
+      p_invited_profile_ids: invitedProfileIds = [],
+      p_meetup_details: meetupDetails = null,
+      p_frequency: frequency,
+      p_end_mode: endMode,
+      p_until_date: untilDate = null,
+      p_occurrence_count: occurrenceCount = null,
+    } = req.body as {
+      p_game_id: string;
+      p_title: string;
+      p_scheduled_for: string;
+      p_scheduled_until: string | null;
+      p_is_private: boolean;
+      p_invited_profile_ids?: string[];
+      p_meetup_details?: string | null;
+      p_frequency: MockLobbySeries['frequency'];
+      p_end_mode: MockLobbySeries['end_mode'];
+      p_until_date?: string | null;
+      p_occurrence_count?: number | null;
+    };
+
+    const { occurrences } = createRecurringSeries(currentAccount, {
+      gameId,
+      title,
+      scheduledFor,
+      scheduledUntil,
+      isPrivate,
+      meetupDetails,
+      invitedProfileIds,
+      frequency,
+      endMode,
+      untilDate,
+      occurrenceCount,
+    });
+
+    req.reply({
+      statusCode: 200,
+      body: occurrences[0] ?? null,
+    });
+  }).as('createRecurringLobbySeriesRpc');
+
+  cy.intercept('POST', '**/rest/v1/rpc/update_recurring_lobby_series_future', (req) => {
+    const {
+      p_lobby_id: lobbyId,
+      p_game_id: gameId,
+      p_title: title,
+      p_scheduled_for: scheduledFor,
+      p_scheduled_until: scheduledUntil,
+      p_is_private: isPrivate,
+      p_frequency: frequency,
+      p_end_mode: endMode,
+      p_until_date: untilDate = null,
+      p_occurrence_count: occurrenceCount = null,
+      p_meetup_details: meetupDetails = null,
+    } = req.body as {
+      p_lobby_id: string;
+      p_game_id: string;
+      p_title: string;
+      p_scheduled_for: string;
+      p_scheduled_until: string | null;
+      p_is_private: boolean;
+      p_frequency: MockLobbySeries['frequency'];
+      p_end_mode: MockLobbySeries['end_mode'];
+      p_until_date?: string | null;
+      p_occurrence_count?: number | null;
+      p_meetup_details?: string | null;
+    };
+
+    const targetLobby = lobbyStore.find((lobby) => lobby.id === lobbyId) ?? null;
+    const series = targetLobby?.lobby_series_id
+      ? lobbySeriesStore.find((entry) => entry.id === targetLobby.lobby_series_id) ?? null
+      : null;
+
+    if (!targetLobby || !series) {
+      req.reply({
+        statusCode: 404,
+        body: { message: 'Recurring lobby occurrence not found' },
+      });
+      return;
+    }
+
+    const shouldResetFuture =
+      targetLobby.game_id !== gameId ||
+      targetLobby.scheduled_for !== scheduledFor ||
+      targetLobby.scheduled_until !== scheduledUntil ||
+      series.frequency !== frequency;
+
+    series.game_id = gameId;
+    series.title = title;
+    series.meetup_details = meetupDetails;
+    series.is_private = isPrivate;
+    series.frequency = frequency;
+    series.anchor_starts_at = scheduledFor;
+    series.anchor_ends_at = scheduledUntil;
+    series.end_mode = endMode;
+    series.until_date = endMode === 'until_date' ? untilDate : null;
+    series.occurrence_count = endMode === 'occurrence_count' ? occurrenceCount : null;
+    series.updated_at = nextIsoTimestamp();
+
+    const updatedOccurrences = syncRecurringSeriesOccurrences(series.id).filter((lobby) => {
+      const occurrenceKey = lobby.series_occurrence_key ?? lobby.scheduled_for ?? '';
+      const targetKey = targetLobby.series_occurrence_key ?? targetLobby.scheduled_for ?? '';
+      return occurrenceKey >= targetKey;
+    });
+
+    if (shouldResetFuture) {
+      updatedOccurrences.forEach((lobby) => {
+        lobbyMembersStore.forEach((member, index) => {
+          if (member.lobby_id !== lobby.id || member.role !== 'member') {
+            return;
+          }
+
+          lobbyMembersStore[index] = {
+            ...member,
+            rsvp_status: 'pending',
+            response_comment: null,
+            suggested_start_at: null,
+            suggested_end_at: null,
+            responded_at: null,
+          };
+
+          appendHistory(
+            lobby.id,
+            member.profile_id,
+            currentSessionUserId ?? targetLobby.host_profile_id,
+            'pending',
+            'Series changed, please respond again.',
+            null,
+            null,
+            'host_series_edit',
+          );
+        });
+      });
+    }
+
+    const updatedTargetLobby = lobbyStore.find((lobby) => lobby.id === lobbyId) ?? null;
+
+    req.reply({
+      statusCode: 200,
+      body: updatedTargetLobby,
+    });
+  }).as('updateRecurringLobbySeriesFutureRpc');
 
   cy.intercept('POST', '**/rest/v1/rpc/respond_to_lobby_invite', (req) => {
     const {
@@ -1290,6 +1767,8 @@ describe('lobbies flow', () => {
     lobbyStore.length = 0;
     lobbyMembersStore.length = 0;
     lobbyHistoryStore.length = 0;
+    lobbySeriesStore.length = 0;
+    lobbySeriesInviteesStore.length = 0;
     friendshipStore.length = 0;
     friendGroupsStore.length = 0;
     friendGroupMembersStore.length = 0;
@@ -1297,6 +1776,7 @@ describe('lobbies flow', () => {
     profileGamesStore.clear();
     currentSessionUserId = null;
     lobbySequence = 0;
+    lobbySeriesSequence = 0;
     historySequence = 0;
     timestampSequence = 0;
     registerMockLobbies();
@@ -1306,6 +1786,14 @@ describe('lobbies flow', () => {
     signUpHost();
 
     cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('[data-testid="lobbies-create-event-card"]').then(($createCard) => {
+      const createCardTop = $createCard[0].getBoundingClientRect().top;
+
+      cy.get('[data-testid="lobbies-incoming-invites-card"]').then(($incomingCard) => {
+        const incomingCardTop = $incomingCard[0].getBoundingClientRect().top;
+        expect(createCardTop).to.be.lessThan(incomingCardTop);
+      });
+    });
     scrollToMeetupDetailsStep();
     cy.get('[data-testid="lobby-meetup-details-input"]').should('be.visible');
 
@@ -1332,6 +1820,68 @@ describe('lobbies flow', () => {
     cy.contains(/private lobby/i).should('be.visible');
   });
 
+  it('creates a weekly recurring lobby with an end date and shows it across Home, Lobbies, and Schedule', () => {
+    signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    ensureLobbyGameReady();
+    cy.contains('Repeat').scrollIntoView();
+    cy.contains(/^Weekly$/).click({ force: true });
+    cy.get('[data-testid="create-lobby-button"]').click();
+
+    cy.wait('@createRecurringLobbySeriesRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_frequency).to.equal('weekly');
+        expect(body.p_end_mode).to.equal('until_date');
+        expect(body.p_until_date).to.match(/^\d{4}-\d{2}-\d{2}$/);
+      });
+
+    cy.contains(/recurring lobby created/i).should('exist');
+    cy.contains('Repeats: Weekly').should('exist');
+
+    cy.contains(/^Home$/).click({ force: true });
+    cy.get('[data-testid="dashboard-upcoming-events"]').should('be.visible');
+    cy.contains('Helix Arena Lobby').should('be.visible');
+
+    cy.contains(/^Schedule$/).click({ force: true });
+    cy.contains('Helix Arena Lobby').should('be.visible');
+    cy.contains('Repeats: Weekly').should('be.visible');
+  });
+
+  it('creates a biweekly recurring lobby with bounded future materialization from an occurrence count', () => {
+    signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    ensureLobbyGameReady();
+    cy.contains('Repeat').scrollIntoView();
+    cy.contains('Every 2 weeks').click({ force: true });
+    cy.contains('End after N').click({ force: true });
+    cy.get('[data-testid="lobby-repeat-occurrence-count-input"]').clear().type('20');
+    cy.get('[data-testid="create-lobby-button"]').click();
+
+    cy.wait('@createRecurringLobbySeriesRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_frequency).to.equal('biweekly');
+        expect(body.p_end_mode).to.equal('occurrence_count');
+        expect(body.p_occurrence_count).to.equal(20);
+      });
+
+    cy.then(() => {
+      const latestSeries = lobbySeriesStore[lobbySeriesStore.length - 1];
+      const materializedOccurrences = lobbyStore.filter((lobby) => lobby.lobby_series_id === latestSeries.id);
+
+      expect(materializedOccurrences.length).to.equal(4);
+      expect(materializedOccurrences.length).to.be.lte(8);
+      materializedOccurrences.forEach((lobby) => {
+        expect(lobby.recurring_frequency).to.equal('biweekly');
+      });
+    });
+
+    cy.contains('Repeats: Every 2 weeks').should('be.visible');
+  });
+
   it('captures optional meetup details and carries them through hosted, incoming, and schedule views', () => {
     signUpHost();
     createLobbyWithInvitees([novaUserId], { submit: false });
@@ -1347,14 +1897,14 @@ describe('lobbies flow', () => {
         expect(body.p_meetup_details).to.equal('Discord voice room 2');
       });
 
-    cy.contains('Meetup: Discord voice room 2').should('be.visible');
+    cy.contains('Meetup: Discord voice room 2').scrollIntoView().should('be.visible');
     cy.contains(/^Schedule$/).click({ force: true });
-    cy.contains('Meetup: Discord voice room 2').should('be.visible');
+    cy.contains('Meetup: Discord voice room 2').scrollIntoView().should('be.visible');
 
     logout();
     logInAs(novaEmail, friendPassword);
     cy.contains(/^Lobbies$/).click({ force: true });
-    cy.contains('Meetup: Discord voice room 2').should('be.visible');
+    cy.contains('Meetup: Discord voice room 2').scrollIntoView().should('be.visible');
   });
 
   it('lets a user with an empty library import a game inline in lobbies and auto-select it for the draft', () => {
@@ -1421,6 +1971,82 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="lobby-title-input"]').should('have.value', 'Portal 2 Lobby');
     cy.get('[data-testid="lobby-game-cover-igdb-1234"]').should('exist');
     cy.get('[data-testid="create-lobby-button"]').should('not.be.disabled');
+  });
+
+  it('edits all future recurring lobbies and resets future invitees when the game changes', () => {
+    const hostAccount = ensureAccount(hostEmail, hostPassword, {
+      displayName: 'Host Player',
+      username: 'hostplayer',
+    });
+    const { novaAccount, pixelAccount } = ensureInviteGraphForHost(hostAccount);
+    setOwnedGames(hostAccount.userId, games.map((game) => game.id));
+
+    const eveningWindow = createEveningWindow();
+    const { series, occurrences } = createRecurringSeries(hostAccount, {
+      gameId: 'helix-arena',
+      title: 'Weekly Squad Night',
+      scheduledFor: eveningWindow.startAt,
+      scheduledUntil: eveningWindow.endAt,
+      isPrivate: true,
+      invitedProfileIds: [novaAccount.userId, pixelAccount.userId],
+      frequency: 'weekly',
+      endMode: 'occurrence_count',
+      occurrenceCount: 4,
+    });
+
+    occurrences.forEach((lobby) => {
+      lobbyMembersStore.forEach((member, index) => {
+        if (member.lobby_id !== lobby.id || member.role !== 'member') {
+          return;
+        }
+
+        lobbyMembersStore[index] = {
+          ...member,
+          rsvp_status: 'accepted',
+          response_comment: 'I am in',
+          responded_at: nextIsoTimestamp(),
+        };
+      });
+    });
+
+    signUpHost();
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get(`[data-testid="edit-recurring-series-${occurrences[0].id}"]`).click();
+    cy.get('[data-testid="edit-recurring-series-dialog"]').should('be.visible');
+    cy.get('[data-testid="edit-recurring-series-game-deep-raid"]').click({ force: true });
+    cy.get('[data-testid="edit-recurring-series-title-input"]').clear().type('Deep Raid Rotation');
+    cy.get('[data-testid="save-recurring-series-future-button"]').click();
+
+    cy.wait('@updateRecurringLobbySeriesFutureRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_lobby_id).to.equal(occurrences[0].id);
+        expect(body.p_game_id).to.equal('deep-raid');
+      });
+
+    cy.contains(/future recurring events updated/i).should('exist');
+    cy.get('[data-testid="lobbies-hosted-lobbies-card"]').contains('Deep Raid Rotation').should('exist');
+
+    cy.then(() => {
+      const updatedOccurrences = lobbyStore.filter((lobby) => lobby.lobby_series_id === series.id);
+      expect(updatedOccurrences.length).to.equal(4);
+      updatedOccurrences.forEach((lobby) => {
+        expect(lobby.game_id).to.equal('deep-raid');
+      });
+
+      updatedOccurrences.forEach((lobby) => {
+        const invitees = lobbyMembersStore.filter((member) => member.lobby_id === lobby.id && member.role === 'member');
+        invitees.forEach((member) => {
+          expect(member.rsvp_status).to.equal('pending');
+          expect(member.response_comment).to.equal(null);
+          expect(member.suggested_start_at).to.equal(null);
+          expect(member.suggested_end_at).to.equal(null);
+        });
+      });
+
+      const seriesEditHistory = lobbyHistoryStore.filter((entry) => entry.origin === 'host_series_edit');
+      expect(seriesEditHistory.length).to.be.greaterThan(0);
+    });
   });
 
   it('hands a roulette winner and random accepted friends into the lobby draft', () => {
@@ -1756,6 +2382,7 @@ describe('lobbies flow', () => {
       });
 
     cy.contains(/invite declined/i).should('exist');
+    cy.contains('Your response history').should('exist');
     cy.contains('Can only do one match tonight.').should('exist');
 
     cy.get('[data-testid="lobby-response-accept-lobby-1"]').click();
@@ -1770,9 +2397,14 @@ describe('lobbies flow', () => {
       });
 
     cy.contains(/invite accepted/i).should('exist');
-    cy.contains('Your response history').should('exist');
+    cy.contains(/^Incoming invites$/).scrollIntoView().should('be.visible');
+    cy.contains('No invite decisions right now.').should('exist');
+
+    cy.contains(/^Schedule$/).click({ force: true });
+    cy.contains(/^Committed events$/).scrollIntoView().should('be.visible');
+    cy.contains('Helix Arena Lobby').scrollIntoView().should('be.visible');
     cy.contains('Actually I can play for 2 hours.').should('exist');
-    cy.contains('Can only do one match tonight.').should('exist');
+    cy.contains('Can only do one match tonight.').should('not.exist');
   });
 
   it('warns before accepting an overlapping invite and sends the accept on a second intentional submit', () => {

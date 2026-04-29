@@ -7,13 +7,16 @@ import type {
   LobbyInviteHistoryRecord,
   LobbyMemberRecord,
   LobbyRecord,
+  LobbySeriesRecord,
   PublicProfileCard,
   RelatedLobbyGameSummary,
 } from './homeTypes';
 import {
+  createRecurringWindowEndDate,
   getBusyFallbackEndDate,
   createDefaultLobbyEndDate,
   createDefaultLobbyStartDate,
+  formatDateInputValue,
   getDefaultEndDate,
   unwrapRelation,
 } from './homeUtils';
@@ -33,6 +36,7 @@ export function useLobbyState({
   const [lobbyBusy, setLobbyBusy] = React.useState(false);
   const [lobbyMessage, setLobbyMessage] = React.useState('');
   const [lobbies, setLobbies] = React.useState<LobbyRecord[]>([]);
+  const [lobbySeriesDirectory, setLobbySeriesDirectory] = React.useState<Record<string, LobbySeriesRecord>>({});
   const [inviteBusyBlocks, setInviteBusyBlocks] = React.useState<BusyBlock[]>([]);
   const [lobbyMembers, setLobbyMembers] = React.useState<LobbyMemberRecord[]>([]);
   const [lobbyInviteHistory, setLobbyInviteHistory] = React.useState<LobbyInviteHistoryRecord[]>([]);
@@ -51,6 +55,10 @@ export function useLobbyState({
     startAt: createDefaultLobbyStartDate().toISOString(),
     endAt: createDefaultLobbyEndDate().toISOString(),
     hasExplicitEnd: true,
+    repeatMode: 'none' as 'none' | 'weekly' | 'biweekly',
+    repeatEndMode: 'until_date' as 'until_date' | 'occurrence_count',
+    repeatUntilDate: formatDateInputValue(createRecurringWindowEndDate(createDefaultLobbyStartDate())),
+    repeatOccurrenceCount: '6',
     scheduledFor: '',
     meetupDetails: '',
     visibility: 'private' as 'private' | 'public',
@@ -77,6 +85,7 @@ export function useLobbyState({
   const loadLobbies = React.useCallback(async () => {
     if (!session?.user) {
       setLobbies([]);
+      setLobbySeriesDirectory({});
       setLobbyMembers([]);
       setLobbyInviteHistory([]);
       setLobbyProfileDirectory({});
@@ -90,12 +99,13 @@ export function useLobbyState({
     const { data, error } = await supabase
       .from('lobbies')
       .select(
-        'id, title, scheduled_for, scheduled_until, meetup_details, discord_guild_id, discord_guild_name, discord_guild_icon_url, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
+        'id, title, scheduled_for, scheduled_until, meetup_details, lobby_series_id, series_occurrence_key, discord_guild_id, discord_guild_name, discord_guild_icon_url, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
       )
       .order('created_at', { ascending: false });
 
     if (error) {
       setLobbies([]);
+      setLobbySeriesDirectory({});
       setLobbyMembers([]);
       setLobbyInviteHistory([]);
       setLobbyProfileDirectory({});
@@ -105,17 +115,57 @@ export function useLobbyState({
     }
 
     const nextLobbies = ((data ?? []) as (
-      Omit<LobbyRecord, 'games'> & {
+      Omit<LobbyRecord, 'games' | 'recurring_frequency'> & {
         games: RelatedLobbyGameSummary[] | RelatedLobbyGameSummary | null;
       }
     )[]).map((lobby) => ({
       ...lobby,
+      recurring_frequency: null,
       games: unwrapRelation(lobby.games),
     }));
 
-    setLobbies(nextLobbies);
+    const seriesIds = Array.from(
+      new Set(nextLobbies.map((lobby) => lobby.lobby_series_id).filter((seriesId): seriesId is string => Boolean(seriesId))),
+    );
 
-    const lobbyIds = nextLobbies.map((lobby) => lobby.id);
+    let nextSeriesDirectory: Record<string, LobbySeriesRecord> = {};
+    if (seriesIds.length > 0) {
+      const { data: seriesData, error: seriesError } = await supabase
+        .from('lobby_series')
+        .select(
+          'id, host_profile_id, game_id, title, meetup_details, is_private, frequency, anchor_starts_at, anchor_ends_at, end_mode, until_date, occurrence_count, status, created_at, updated_at',
+        )
+        .in('id', seriesIds);
+
+      if (seriesError) {
+        setLobbies([]);
+        setLobbySeriesDirectory({});
+        setLobbyMembers([]);
+        setLobbyInviteHistory([]);
+        setLobbyProfileDirectory({});
+        setLobbiesError(seriesError.message);
+        setLobbiesLoading(false);
+        return;
+      }
+
+      nextSeriesDirectory = ((seriesData as LobbySeriesRecord[] | null) ?? []).reduce<Record<string, LobbySeriesRecord>>(
+        (accumulator, series) => {
+          accumulator[series.id] = series;
+          return accumulator;
+        },
+        {},
+      );
+    }
+
+    const lobbiesWithSeries = nextLobbies.map((lobby) => ({
+      ...lobby,
+      recurring_frequency: lobby.lobby_series_id ? nextSeriesDirectory[lobby.lobby_series_id]?.frequency ?? null : null,
+    }));
+
+    setLobbies(lobbiesWithSeries);
+    setLobbySeriesDirectory(nextSeriesDirectory);
+
+    const lobbyIds = lobbiesWithSeries.map((lobby) => lobby.id);
     if (lobbyIds.length === 0) {
       setLobbyMembers([]);
       setLobbyInviteHistory([]);
@@ -158,7 +208,7 @@ export function useLobbyState({
     const profileIds = Array.from(
       new Set(
         [
-          ...nextLobbies.map((lobby) => lobby.host_profile_id),
+          ...lobbiesWithSeries.map((lobby) => lobby.host_profile_id),
           ...nextMembers.map((member) => member.profile_id),
         ].filter(Boolean),
       ),
@@ -354,6 +404,7 @@ export function useLobbyState({
     lobbyForm,
     lobbyMessage,
     lobbyProfileDirectory,
+    lobbySeriesDirectory,
     hostedLobbies,
     rescheduleDraft,
     rescheduleEndAt,
