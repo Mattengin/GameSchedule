@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
@@ -13,6 +13,7 @@ import {
   FAB,
   HelperText,
   IconButton,
+  Menu,
   Portal,
   Searchbar,
   SegmentedButtons,
@@ -41,6 +42,7 @@ import type {
   AcceptedFriend,
   AvailabilityWindow,
   BusyBlock,
+  DashboardUpcomingEvent,
   FriendGroupMembershipRecord,
   FriendGroupRecord,
   FriendRequestRecord,
@@ -92,6 +94,7 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
   const lobbyAddGameDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
+  const compactDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 520 : 420);
   const friendCodeRegenerateCooldownMs = 15_000;
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [session, setSession] = React.useState<Session | null>(null);
@@ -125,6 +128,9 @@ export default function HomeScreen() {
     confirmPassword: '',
   });
   const [section, setSection] = React.useState<SectionKey>('dashboard');
+  const [mobileSectionMenuVisible, setMobileSectionMenuVisible] = React.useState(false);
+  const [accountMenuVisible, setAccountMenuVisible] = React.useState(false);
+  const [desktopAccountHovered, setDesktopAccountHovered] = React.useState(false);
   const [friendFilter, setFriendFilter] = React.useState<'all' | 'groups' | 'pending'>('all');
   const [selectedFriendGroupId, setSelectedFriendGroupId] = React.useState<string | null>(null);
   const [selectedLobbyFriendGroupId, setSelectedLobbyFriendGroupId] = React.useState<string | null>(null);
@@ -731,6 +737,72 @@ export default function HomeScreen() {
 
   const pendingInboxCount = incomingFriendRequests.length + pendingLobbyInviteCount;
   const pendingInboxCountLabel = pendingInboxCount > 99 ? '99+' : String(pendingInboxCount);
+  const dashboardUpcomingEvents = React.useMemo<DashboardUpcomingEvent[]>(() => {
+    const now = Date.now();
+    const sevenDaysFromNow = new Date(now);
+    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+    const upcomingWindowEnd = sevenDaysFromNow.getTime();
+    const seenLobbyIds = new Set<string>();
+    const incomingEventEntries = incomingLobbies.reduce<
+      { lobby: LobbyRecord; status: DashboardUpcomingEvent['status'] }[]
+    >((accumulator, lobby) => {
+        const membership = getCurrentLobbyMembership(lobby.id);
+        if (!membership || membership.rsvp_status === 'declined') {
+          return accumulator;
+        }
+
+        if (membership.rsvp_status === 'accepted') {
+          accumulator.push({ lobby, status: 'accepted' });
+          return accumulator;
+        }
+
+        if (membership.rsvp_status === 'suggested_time') {
+          accumulator.push({ lobby, status: 'suggested_time' });
+          return accumulator;
+        }
+
+        accumulator.push({ lobby, status: 'pending' });
+        return accumulator;
+      }, []);
+
+    const nextEvents = [
+      ...hostedLobbies.map((lobby) => ({
+        lobby,
+        status: 'hosting' as const,
+      })),
+      ...incomingEventEntries,
+    ]
+      .filter(({ lobby }) => {
+        if (!lobby.scheduled_for) {
+          return false;
+        }
+
+        const scheduledAt = new Date(lobby.scheduled_for).getTime();
+        return !Number.isNaN(scheduledAt) && scheduledAt >= now && scheduledAt <= upcomingWindowEnd;
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left.lobby.scheduled_for ?? '').getTime();
+        const rightTime = new Date(right.lobby.scheduled_for ?? '').getTime();
+        return leftTime - rightTime;
+      })
+      .filter(({ lobby }) => {
+        if (seenLobbyIds.has(lobby.id)) {
+          return false;
+        }
+
+        seenLobbyIds.add(lobby.id);
+        return true;
+      });
+
+    return nextEvents.map(({ lobby, status }) => ({
+      id: lobby.id,
+      title: lobby.title || lobby.games?.title || 'Game night',
+      game_title: lobby.games?.title ?? null,
+      scheduled_for: lobby.scheduled_for!,
+      scheduled_until: lobby.scheduled_until,
+      status,
+    }));
+  }, [getCurrentLobbyMembership, hostedLobbies, incomingLobbies]);
 
   const prioritizeBusyBlock = React.useCallback(
     (left: BusyBlock, right: BusyBlock) => {
@@ -1952,8 +2024,14 @@ export default function HomeScreen() {
   const renderDashboard = () => (
     <DashboardSection
       libraryGames={libraryGames}
-      lobbiesCount={lobbies.length}
+      onboardingIncomplete={Boolean(profile && !profile.onboarding_complete)}
+      pendingFriendRequestCount={incomingFriendRequests.length}
+      pendingLobbyInviteCount={pendingLobbyInviteCount}
+      upcomingEvents={dashboardUpcomingEvents}
+      onCompleteSetup={() => setSection('profile')}
+      onCreateLobby={() => setSection('lobbies')}
       onManageFriends={() => setSection('friends')}
+      onOpenSchedule={() => setSection('schedule')}
       onStartGroupSpin={() => setSection('roulette')}
     />
   );
@@ -3449,6 +3527,7 @@ export default function HomeScreen() {
 
   const renderProfile = () => {
     const resolvedAvatarUrl = resolveAvatarUrl(profile);
+    const showOnboardingSetup = Boolean(profile && !profile.onboarding_complete);
 
     return (
       <View style={styles.sectionStack}>
@@ -3457,270 +3536,344 @@ export default function HomeScreen() {
           subtitle="Edit your profile, link Discord, update account security, and keep setup simple."
         />
         <View style={isDesktopWeb ? styles.desktopPanelGrid : styles.sectionStack}>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-        <Card.Content style={styles.profileHeader}>
-          {resolvedAvatarUrl ? (
-            <Avatar.Image size={68} source={{ uri: resolvedAvatarUrl }} style={styles.avatarLarge} />
-          ) : (
-            <Avatar.Text
-              size={68}
-              label={(profile?.display_name ?? profile?.username ?? 'MX').slice(0, 2).toUpperCase()}
-              style={styles.avatarLarge}
-            />
-          )}
-          <View style={styles.friendMeta}>
-            <Text variant="headlineSmall">
-              {profile?.display_name ?? profile?.username ?? 'Player'}
-            </Text>
-            <Text style={styles.friendNote}>
-              {profile?.username ? `@${profile.username}` : 'Set your username to finish onboarding'}
-            </Text>
-          </View>
-        </Card.Content>
-      </Card>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-        <Card.Content style={styles.profileSummary}>
-          <Text variant="titleMedium">Your friend code</Text>
-          <Text style={styles.friendNote}>
-            Share this only with people you want to hear from. You can regenerate it any time.
-          </Text>
-          <Surface style={styles.friendCodeSurface} elevation={0}>
-            <Text selectable style={styles.friendCodeValue} testID="friend-code-value">
-              {profile?.friend_code ?? 'Loading...'}
-            </Text>
-          </Surface>
-          <View style={styles.cardActions}>
-            <Button
-              mode="contained-tonal"
-              onPress={() => {
-                void handleCopyFriendCode();
-              }}
-              disabled={!profile?.friend_code}
-              testID="copy-friend-code-button">
-              Copy code
-            </Button>
-            <Button
-              mode="outlined"
-              onPress={() => setFriendCodeRegenerateConfirmVisible(true)}
-              loading={friendActionBusyId === 'regenerate-friend-code'}
-              disabled={friendActionBusyId !== null || friendCodeRegenerateCooldownSeconds > 0}
-              testID="regenerate-friend-code-button">
-              {friendCodeRegenerateCooldownSeconds > 0
-                ? `Regenerate in ${friendCodeRegenerateCooldownSeconds}s`
-                : 'Regenerate'}
-            </Button>
-          </View>
-          {friendError ? (
-            <HelperText type="error" visible>
-              {friendError}
-            </HelperText>
+          <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+            <Card.Content style={styles.profileHeader}>
+              {resolvedAvatarUrl ? (
+                <Avatar.Image size={68} source={{ uri: resolvedAvatarUrl }} style={styles.avatarLarge} />
+              ) : (
+                <Avatar.Text
+                  size={68}
+                  label={(profile?.display_name ?? profile?.username ?? 'MX').slice(0, 2).toUpperCase()}
+                  style={styles.avatarLarge}
+                />
+              )}
+              <View style={styles.friendMeta}>
+                <Text variant="headlineSmall">
+                  {profile?.display_name ?? profile?.username ?? 'Player'}
+                </Text>
+                <Text style={styles.friendNote}>
+                  {profile?.username ? `@${profile.username}` : 'Set your username to finish onboarding'}
+                </Text>
+              </View>
+            </Card.Content>
+          </Card>
+          {showOnboardingSetup ? (
+            <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]} testID="profile-onboarding-card">
+              <Card.Content style={styles.profileSummary}>
+                <SectionTitle
+                  title="Complete your profile"
+                  subtitle="Set your core app identity here before friends, lobbies, and scheduling start depending on it."
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Username"
+                  value={profileForm.username}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      username: value.replace(/\s+/g, '').toLowerCase(),
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-username-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Display name"
+                  value={profileForm.displayName}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      displayName: value,
+                    }))
+                  }
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-display-name-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Avatar URL (optional)"
+                  value={profileForm.avatarUrl}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      avatarUrl: value,
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-avatar-url-input"
+                />
+                {profileError ? (
+                  <HelperText type="error" visible>
+                    {profileError}
+                  </HelperText>
+                ) : null}
+                {profileMessage ? (
+                  <HelperText type="info" visible style={styles.successText}>
+                    {profileMessage}
+                  </HelperText>
+                ) : null}
+                <Button
+                  mode="contained"
+                  onPress={handleProfileSave}
+                  loading={profileBusy}
+                  disabled={profileBusy}
+                  testID="profile-save-button">
+                  Save profile
+                </Button>
+              </Card.Content>
+            </Card>
           ) : null}
-          {friendMessage ? (
-            <HelperText type="info" visible style={styles.successText}>
-              {friendMessage}
-            </HelperText>
+          <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+            <Card.Content style={styles.profileSummary}>
+              <Text variant="titleMedium">Your friend code</Text>
+              <Text style={styles.friendNote}>
+                Share this only with people you want to hear from. You can regenerate it any time.
+              </Text>
+              <Surface style={styles.friendCodeSurface} elevation={0}>
+                <Text selectable style={styles.friendCodeValue} testID="friend-code-value">
+                  {profile?.friend_code ?? 'Loading...'}
+                </Text>
+              </Surface>
+              <View style={styles.cardActions}>
+                <Button
+                  mode="contained-tonal"
+                  onPress={() => {
+                    void handleCopyFriendCode();
+                  }}
+                  disabled={!profile?.friend_code}
+                  testID="copy-friend-code-button">
+                  Copy code
+                </Button>
+                <Button
+                  mode="outlined"
+                  onPress={() => setFriendCodeRegenerateConfirmVisible(true)}
+                  loading={friendActionBusyId === 'regenerate-friend-code'}
+                  disabled={friendActionBusyId !== null || friendCodeRegenerateCooldownSeconds > 0}
+                  testID="regenerate-friend-code-button">
+                  {friendCodeRegenerateCooldownSeconds > 0
+                    ? `Regenerate in ${friendCodeRegenerateCooldownSeconds}s`
+                    : 'Regenerate'}
+                </Button>
+              </View>
+              {friendError ? (
+                <HelperText type="error" visible>
+                  {friendError}
+                </HelperText>
+              ) : null}
+              {friendMessage ? (
+                <HelperText type="info" visible style={styles.successText}>
+                  {friendMessage}
+                </HelperText>
+              ) : null}
+              {friendCodeRegenerateCooldownSeconds > 0 ? (
+                <HelperText type="info" visible>
+                  You can regenerate again in {friendCodeRegenerateCooldownSeconds}s.
+                </HelperText>
+              ) : null}
+            </Card.Content>
+          </Card>
+          <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+            <Card.Content style={styles.profileSummary}>
+              <Text variant="titleMedium">Discord</Text>
+              <Text style={styles.friendNote}>
+                Discord linking is optional. If you use it, the app only uses Discord for sign-in continuity and basic profile matching.
+              </Text>
+              <Chip icon="discord" style={styles.statusChip}>
+                {profile?.discord_user_id
+                  ? `Connected as ${profile.discord_username ?? 'Discord account'}`
+                  : 'Not connected'}
+              </Chip>
+              <Text style={styles.friendNote}>
+                {profile?.discord_user_id
+                  ? 'Discord is currently used for identity, avatar fallback, and account continuity. It does not sync servers or build a Discord-based friend graph.'
+                  : 'If you connect Discord, the app will use your Discord identity for sign-in continuity and avatar/profile matching. It will not sync servers or build a Discord-based friend graph.'}
+              </Text>
+              <Text style={styles.friendNote}>
+                You can disconnect Discord at any time from here.
+              </Text>
+              <Text style={styles.friendNote}>
+                Birthday: {profile?.birthday_month && profile?.birthday_day
+                  ? `${formatBirthdayLabel(profile.birthday_month, profile.birthday_day)} | ${profile.birthday_visibility === 'public' ? 'Public' : 'Private'}`
+                  : 'Not set'}
+              </Text>
+              <Text style={styles.friendNote}>
+                Busy status: {profile?.busy_visibility === 'private' ? 'Private' : 'Public'}
+              </Text>
+              <View style={styles.cardActions}>
+                {profile?.discord_user_id ? (
+                  <Button
+                    mode="outlined"
+                    onPress={handleDiscordDisconnect}
+                    loading={discordBusy}
+                    disabled={discordBusy}
+                    testID="discord-disconnect-button">
+                    Disconnect Discord
+                  </Button>
+                ) : (
+                  <Button
+                    mode="contained"
+                    onPress={handleDiscordConnect}
+                    loading={discordBusy}
+                    disabled={discordBusy}
+                    testID="discord-connect-button">
+                    Connect Discord
+                  </Button>
+                )}
+              </View>
+              {discordMessage ? (
+                <HelperText type="info" visible style={styles.successText}>
+                  {discordMessage}
+                </HelperText>
+              ) : null}
+            </Card.Content>
+          </Card>
+          {!showOnboardingSetup ? (
+            <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+              <Card.Content style={styles.profileSummary}>
+                <Text variant="titleMedium">Profile details</Text>
+                <Text style={styles.friendNote}>
+                  Keep your name and username current so invites and lobbies stay recognizable.
+                </Text>
+                <TextInput
+                  mode="outlined"
+                  label="Username"
+                  value={profileForm.username}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      username: value.replace(/\s+/g, '').toLowerCase(),
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-edit-username-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Display name"
+                  value={profileForm.displayName}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      displayName: value,
+                    }))
+                  }
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-edit-display-name-input"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Avatar URL (optional)"
+                  value={profileForm.avatarUrl}
+                  onChangeText={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      avatarUrl: value,
+                    }))
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                  testID="profile-edit-avatar-url-input"
+                />
+                <DatePickerInput
+                  locale="en"
+                  label="Birthday (optional)"
+                  value={profileForm.birthday}
+                  onChange={(nextDate) => {
+                    setProfileForm((current) => ({
+                      ...current,
+                      birthday: nextDate
+                        ? createBirthdayDate(nextDate.getMonth() + 1, nextDate.getDate())
+                        : undefined,
+                    }));
+                  }}
+                  inputMode="start"
+                  mode="outlined"
+                  withModal
+                  style={styles.input}
+                  testID="profile-birthday-picker-input"
+                />
+                <Text style={styles.friendNote}>
+                  Month and day only. The picker uses a full date, but we ignore the year for birthday gaming.
+                </Text>
+                <SegmentedButtons
+                  value={profileForm.birthdayVisibility}
+                  onValueChange={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      birthdayVisibility: value as 'private' | 'public',
+                    }))
+                  }
+                  style={styles.segmented}
+                  buttons={[
+                    { value: 'private', label: 'Private' },
+                    { value: 'public', label: 'Public' },
+                  ]}
+                />
+                <Text style={styles.friendNote}>
+                  Public birthdays can show up on friend cards and community suggestions.
+                </Text>
+                <SegmentedButtons
+                  value={profileForm.busyVisibility}
+                  onValueChange={(value) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      busyVisibility: value as 'private' | 'public',
+                    }))
+                  }
+                  style={styles.segmented}
+                  buttons={[
+                    { value: 'private', label: 'Busy private' },
+                    { value: 'public', label: 'Busy public' },
+                  ]}
+                />
+                <Text style={styles.friendNote}>
+                  Public busy status lets friends see which game is blocking your time. Private keeps it to a simple busy warning.
+                </Text>
+                {profileForm.birthday ? (
+                  <Button
+                    mode="text"
+                    onPress={() =>
+                      setProfileForm((current) => ({
+                        ...current,
+                        birthday: undefined,
+                        birthdayVisibility: 'private',
+                      }))
+                    }
+                    testID="profile-birthday-clear-button">
+                    Clear birthday
+                  </Button>
+                ) : null}
+                {profileError ? (
+                  <HelperText type="error" visible>
+                    {profileError}
+                  </HelperText>
+                ) : null}
+                {profileMessage ? (
+                  <HelperText type="info" visible style={styles.successText}>
+                    {profileMessage}
+                  </HelperText>
+                ) : null}
+                <Button
+                  mode="contained"
+                  onPress={handleProfileSave}
+                  loading={profileBusy}
+                  disabled={profileBusy}
+                  testID="profile-edit-save-button">
+                  Save profile
+                </Button>
+              </Card.Content>
+            </Card>
           ) : null}
-          {friendCodeRegenerateCooldownSeconds > 0 ? (
-            <HelperText type="info" visible>
-              You can regenerate again in {friendCodeRegenerateCooldownSeconds}s.
-            </HelperText>
-          ) : null}
-        </Card.Content>
-      </Card>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-        <Card.Content style={styles.profileSummary}>
-          <Text variant="titleMedium">Discord</Text>
-          <Text style={styles.friendNote}>
-            Discord linking is optional. If you use it, the app only uses Discord for sign-in continuity and basic profile matching.
-          </Text>
-          <Chip icon="discord" style={styles.statusChip}>
-            {profile?.discord_user_id
-              ? `Connected as ${profile.discord_username ?? 'Discord account'}`
-              : 'Not connected'}
-          </Chip>
-          <Text style={styles.friendNote}>
-            {profile?.discord_user_id
-              ? 'Discord is currently used for identity, avatar fallback, and account continuity. It does not sync servers or build a Discord-based friend graph.'
-              : 'If you connect Discord, the app will use your Discord identity for sign-in continuity and avatar/profile matching. It will not sync servers or build a Discord-based friend graph.'}
-          </Text>
-          <Text style={styles.friendNote}>
-            You can disconnect Discord at any time from here.
-          </Text>
-          <Text style={styles.friendNote}>
-            Birthday: {profile?.birthday_month && profile?.birthday_day
-              ? `${formatBirthdayLabel(profile.birthday_month, profile.birthday_day)} | ${profile.birthday_visibility === 'public' ? 'Public' : 'Private'}`
-              : 'Not set'}
-          </Text>
-          <Text style={styles.friendNote}>
-            Busy status: {profile?.busy_visibility === 'private' ? 'Private' : 'Public'}
-          </Text>
-          <View style={styles.cardActions}>
-            {profile?.discord_user_id ? (
-              <Button
-                mode="outlined"
-                onPress={handleDiscordDisconnect}
-                loading={discordBusy}
-                disabled={discordBusy}
-                testID="discord-disconnect-button">
-                Disconnect Discord
-              </Button>
-            ) : (
-              <Button
-                mode="contained"
-                onPress={handleDiscordConnect}
-                loading={discordBusy}
-                disabled={discordBusy}
-                testID="discord-connect-button">
-                Connect Discord
-              </Button>
-            )}
-          </View>
-          {discordMessage ? (
-            <HelperText type="info" visible style={styles.successText}>
-              {discordMessage}
-            </HelperText>
-          ) : null}
-        </Card.Content>
-      </Card>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-        <Card.Content style={styles.profileSummary}>
-          <Text variant="titleMedium">Profile details</Text>
-          <Text style={styles.friendNote}>
-            Keep your name and username current so invites and lobbies stay recognizable.
-          </Text>
-          <TextInput
-            mode="outlined"
-            label="Username"
-            value={profileForm.username}
-            onChangeText={(value) =>
-              setProfileForm((current) => ({
-                ...current,
-                username: value.replace(/\s+/g, '').toLowerCase(),
-              }))
-            }
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.input}
-            testID="profile-edit-username-input"
-          />
-          <TextInput
-            mode="outlined"
-            label="Display name"
-            value={profileForm.displayName}
-            onChangeText={(value) =>
-              setProfileForm((current) => ({
-                ...current,
-                displayName: value,
-              }))
-            }
-            autoCorrect={false}
-            style={styles.input}
-            testID="profile-edit-display-name-input"
-          />
-          <TextInput
-            mode="outlined"
-            label="Avatar URL (optional)"
-            value={profileForm.avatarUrl}
-            onChangeText={(value) =>
-              setProfileForm((current) => ({
-                ...current,
-                avatarUrl: value,
-              }))
-            }
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.input}
-            testID="profile-edit-avatar-url-input"
-          />
-          <DatePickerInput
-            locale="en"
-            label="Birthday (optional)"
-            value={profileForm.birthday}
-            onChange={(nextDate) => {
-              setProfileForm((current) => ({
-                ...current,
-                birthday: nextDate
-                  ? createBirthdayDate(nextDate.getMonth() + 1, nextDate.getDate())
-                  : undefined,
-              }));
-            }}
-            inputMode="start"
-            mode="outlined"
-            withModal
-            style={styles.input}
-            testID="profile-birthday-picker-input"
-          />
-          <Text style={styles.friendNote}>
-            Month and day only. The picker uses a full date, but we ignore the year for birthday gaming.
-          </Text>
-          <SegmentedButtons
-            value={profileForm.birthdayVisibility}
-            onValueChange={(value) =>
-              setProfileForm((current) => ({
-                ...current,
-                birthdayVisibility: value as 'private' | 'public',
-              }))
-            }
-            style={styles.segmented}
-            buttons={[
-              { value: 'private', label: 'Private' },
-              { value: 'public', label: 'Public' },
-            ]}
-          />
-          <Text style={styles.friendNote}>
-            Public birthdays can show up on friend cards and community suggestions.
-          </Text>
-          <SegmentedButtons
-            value={profileForm.busyVisibility}
-            onValueChange={(value) =>
-              setProfileForm((current) => ({
-                ...current,
-                busyVisibility: value as 'private' | 'public',
-              }))
-            }
-            style={styles.segmented}
-            buttons={[
-              { value: 'private', label: 'Busy private' },
-              { value: 'public', label: 'Busy public' },
-            ]}
-          />
-          <Text style={styles.friendNote}>
-            Public busy status lets friends see which game is blocking your time. Private keeps it to a simple busy warning.
-          </Text>
-          {profileForm.birthday ? (
-            <Button
-              mode="text"
-              onPress={() =>
-                setProfileForm((current) => ({
-                  ...current,
-                  birthday: undefined,
-                  birthdayVisibility: 'private',
-                }))
-              }
-              testID="profile-birthday-clear-button">
-              Clear birthday
-            </Button>
-          ) : null}
-          {profileError ? (
-            <HelperText type="error" visible>
-              {profileError}
-            </HelperText>
-          ) : null}
-          {profileMessage ? (
-            <HelperText type="info" visible style={styles.successText}>
-              {profileMessage}
-            </HelperText>
-          ) : null}
-          <Button
-            mode="contained"
-            onPress={handleProfileSave}
-            loading={profileBusy}
-            disabled={profileBusy}
-            testID="profile-edit-save-button">
-            Save profile
-          </Button>
-        </Card.Content>
-      </Card>
       <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
         <Card.Content style={styles.profileSummary}>
           <Text variant="titleMedium">Account & security</Text>
@@ -4186,9 +4339,13 @@ export default function HomeScreen() {
     profile: renderProfile(),
   }[section];
 
+  const desktopSections = React.useMemo(
+    () => sections.filter((item) => item.value !== 'profile'),
+    [],
+  );
   const desktopSectionButtons = React.useMemo(
     () =>
-      sections.map((item) =>
+      desktopSections.map((item) =>
         item.value === 'inbox'
           ? {
               ...item,
@@ -4197,8 +4354,21 @@ export default function HomeScreen() {
             }
           : item,
       ),
-    [pendingInboxCount, pendingInboxCountLabel],
+    [desktopSections, pendingInboxCount, pendingInboxCountLabel],
   );
+  const currentSectionLabel =
+    sections.find((item) => item.value === section)?.label ?? 'Navigate';
+  const accountDisplayLabel = profileLoading
+    ? 'Loading profile...'
+    : profile?.display_name ?? profile?.username ?? session?.user.email ?? 'Signed in user';
+  const accountHandleLabel = profile?.username
+    ? `@${profile.username}`
+    : session?.user.email ?? 'Signed in user';
+  const accountAvatarUrl = resolveAvatarUrl(profile);
+  const accountAvatarLabel = (profile?.display_name ?? profile?.username ?? session?.user.email ?? 'GS')
+    .slice(0, 2)
+    .toUpperCase();
+  const desktopProfileActive = section === 'profile';
 
   const sectionNavigation = isDesktopWeb ? (
     <SegmentedButtons
@@ -4209,34 +4379,84 @@ export default function HomeScreen() {
       buttons={desktopSectionButtons}
     />
   ) : (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.mobileSectionNavScroller}
-      contentContainerStyle={styles.mobileSectionNavRow}>
-      {sections.map((item) => {
-        const showInboxBadge = item.value === 'inbox' && pendingInboxCount > 0;
-
-        return (
-          <View key={item.value} style={styles.mobileSectionNavButtonWrap}>
-            <Button
-              mode={section === item.value ? 'contained-tonal' : 'outlined'}
-              compact
-              onPress={() => setSection(item.value)}
-              style={styles.mobileSectionNavButton}
-              contentStyle={styles.mobileSectionNavButtonContent}
-              testID={`section-nav-${item.value}`}>
-              {item.label}
-            </Button>
-            {showInboxBadge ? (
+    <Surface style={styles.mobileSectionNavShell} elevation={1}>
+      <View style={styles.mobileSectionNavSummary}>
+        <Text style={styles.mobileSectionNavEyebrow}>Navigate</Text>
+        <Text variant="titleMedium" style={styles.mobileSectionNavCurrent}>
+          {currentSectionLabel}
+        </Text>
+      </View>
+      <Menu
+        visible={mobileSectionMenuVisible}
+        onDismiss={() => setMobileSectionMenuVisible(false)}
+        anchorPosition="bottom"
+        contentStyle={styles.mobileSectionMenuContent}
+        anchor={
+          <View style={styles.mobileSectionNavButtonWrap}>
+            <IconButton
+              icon="menu"
+              mode="contained-tonal"
+              size={22}
+              onPress={() => setMobileSectionMenuVisible(true)}
+              style={styles.mobileSectionNavMenuButton}
+              iconColor="#F5F7FF"
+              testID="section-nav-menu-button"
+            />
+            {pendingInboxCount > 0 ? (
               <Badge style={styles.mobileSectionNavBadge} size={20} testID="section-nav-badge-inbox">
                 {pendingInboxCountLabel}
               </Badge>
             ) : null}
           </View>
-        );
-      })}
-    </ScrollView>
+        }>
+        <View style={styles.mobileSectionMenuList} testID="section-nav-menu-content">
+          <Surface style={styles.mobileSectionMenuAccount} elevation={0}>
+            <Text style={styles.mobileSectionMenuAccountEyebrow}>Account</Text>
+            <Text variant="titleSmall" style={styles.mobileSectionMenuAccountName}>
+              {accountDisplayLabel}
+            </Text>
+            <Button
+              mode="text"
+              compact
+              onPress={() => {
+                setMobileSectionMenuVisible(false);
+                void handleLogout();
+              }}
+              style={styles.mobileSectionMenuAccountLogout}
+              contentStyle={styles.mobileSectionMenuButtonContent}
+              labelStyle={styles.mobileSectionMenuButtonLabel}
+              testID="logout-button">
+              Log out
+            </Button>
+          </Surface>
+          <Divider style={styles.mobileSectionMenuDivider} />
+          {sections.map((item) => {
+            const itemLabel =
+              item.value === 'inbox' && pendingInboxCount > 0
+                ? `${item.label} (${pendingInboxCountLabel})`
+                : item.label;
+
+            return (
+              <Button
+                key={item.value}
+                mode={section === item.value ? 'contained-tonal' : 'text'}
+                icon={section === item.value ? 'check' : undefined}
+                compact
+                onPress={() => {
+                  setSection(item.value);
+                  setMobileSectionMenuVisible(false);
+                }}
+                style={styles.mobileSectionMenuButton}
+                contentStyle={styles.mobileSectionMenuButtonContent}
+                labelStyle={styles.mobileSectionMenuButtonLabel}
+                testID={`section-nav-${item.value}`}>
+                {itemLabel}
+              </Button>
+            );
+          })}
+        </View>
+      </Menu>
+    </Surface>
   );
 
   if (authLoading) {
@@ -4349,114 +4569,112 @@ export default function HomeScreen() {
     <View style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.contentShell}>
-          <Text style={styles.eyebrow}>Friend Management App</Text>
-          <Text variant="headlineLarge" style={styles.pageTitle}>
-            Social gaming handoff prototype
-          </Text>
-          <Text style={styles.pageSubtitle}>
-            Mobile-first placeholder experience for onboarding, invites, roulette, lobbies, schedule,
-            and profile work.
-          </Text>
-
-          <View style={styles.headerRow}>
-            <Chip icon="shield-account" testID="profile-chip">
-              {profileLoading
-                ? 'Loading profile...'
-                : profile?.display_name ?? profile?.username ?? session.user.email ?? 'Signed in user'}
-            </Chip>
-            <Button mode="text" onPress={handleLogout} disabled={authBusy} testID="logout-button">
-              Log out
-            </Button>
-          </View>
-
-          {profile ? (
-            <Card style={styles.panel} testID="profile-summary-card">
-              <Card.Content style={styles.profileSummary}>
-                <Text variant="titleMedium">
-                  Welcome back, {profile.display_name ?? profile.username ?? 'Player'}
+          {isDesktopWeb ? (
+            <View style={styles.pageHeaderBar}>
+              <View style={styles.pageHeaderCopy}>
+                <Text style={styles.eyebrow}>Friend Management App</Text>
+                <Text variant="headlineLarge" style={styles.pageTitle}>
+                  Social gaming handoff prototype
                 </Text>
-                <Text style={styles.friendNote}>
-                  Username: {profile.username ?? 'Not set yet'}
+                <Text style={styles.pageSubtitle}>
+                  Mobile-first placeholder experience for onboarding, invites, roulette, lobbies,
+                  schedule, and profile work.
                 </Text>
-                <Text style={styles.friendNote}>
-                  Onboarding: {profile.onboarding_complete ? 'Complete' : 'In progress'}
-                </Text>
-              </Card.Content>
-            </Card>
-          ) : null}
-
-          {profile && !profile.onboarding_complete ? (
-            <Card style={styles.panel}>
-              <Card.Content style={styles.profileSummary}>
-                <SectionTitle
-                  title="Complete your profile"
-                  subtitle="Set stable app profile data before friends, lobbies, and scheduling start depending on it."
-                />
-                <TextInput
-                  mode="outlined"
-                  label="Username"
-                  value={profileForm.username}
-                  onChangeText={(value) =>
-                    setProfileForm((current) => ({
-                      ...current,
-                      username: value.replace(/\s+/g, '').toLowerCase(),
-                    }))
-                  }
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={styles.input}
-                  testID="profile-username-input"
-                />
-                <TextInput
-                  mode="outlined"
-                  label="Display name"
-                  value={profileForm.displayName}
-                  onChangeText={(value) =>
-                    setProfileForm((current) => ({
-                      ...current,
-                      displayName: value,
-                    }))
-                  }
-                  autoCorrect={false}
-                  style={styles.input}
-                  testID="profile-display-name-input"
-                />
-                <TextInput
-                  mode="outlined"
-                  label="Avatar URL (optional)"
-                  value={profileForm.avatarUrl}
-                  onChangeText={(value) =>
-                    setProfileForm((current) => ({
-                      ...current,
-                      avatarUrl: value,
-                    }))
-                  }
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={styles.input}
-                  testID="profile-avatar-url-input"
-                />
-                {profileError ? (
-                  <HelperText type="error" visible>
-                    {profileError}
-                  </HelperText>
-                ) : null}
-                {profileMessage ? (
-                  <HelperText type="info" visible style={styles.successText}>
-                    {profileMessage}
-                  </HelperText>
-                ) : null}
-                <Button
-                  mode="contained"
-                  onPress={handleProfileSave}
-                  loading={profileBusy}
-                  disabled={profileBusy}
-                  testID="profile-save-button">
-                  Save profile
-                </Button>
-              </Card.Content>
-            </Card>
-          ) : null}
+              </View>
+              <Menu
+                visible={accountMenuVisible}
+                onDismiss={() => setAccountMenuVisible(false)}
+                anchorPosition="bottom"
+                contentStyle={styles.accountMenuContent}
+                anchor={
+                  <Pressable
+                    onPress={() => setAccountMenuVisible(true)}
+                    onHoverIn={() => setDesktopAccountHovered(true)}
+                    onHoverOut={() => setDesktopAccountHovered(false)}
+                    style={({ pressed }) => [
+                      styles.accountAvatarTrigger,
+                      desktopProfileActive ? styles.accountAvatarTriggerActive : null,
+                      desktopAccountHovered || pressed ? styles.accountAvatarTriggerHovered : null,
+                      Platform.OS === 'web'
+                        ? ({
+                            cursor: 'pointer',
+                            transitionProperty: 'transform, background-color, border-color',
+                            transitionDuration: '160ms',
+                            transitionTimingFunction: 'ease-out',
+                          } as any)
+                        : null,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open account menu"
+                    testID="profile-chip">
+                    <View style={styles.accountAvatarFrame}>
+                      {accountAvatarUrl ? (
+                        <Avatar.Image size={54} source={{ uri: accountAvatarUrl }} style={styles.accountAvatarImage} />
+                      ) : (
+                        <Avatar.Text
+                          size={54}
+                          label={accountAvatarLabel}
+                          style={styles.accountAvatarImage}
+                          labelStyle={styles.accountAvatarFallbackLabel}
+                        />
+                      )}
+                    </View>
+                  </Pressable>
+                }>
+                <View style={styles.accountMenuList}>
+                  <View style={styles.accountMenuIdentity}>
+                    <Text variant="titleSmall" style={styles.accountMenuIdentityName} testID="account-menu-identity-name">
+                      {accountDisplayLabel}
+                    </Text>
+                    <Text style={styles.accountMenuIdentityHandle} testID="account-menu-identity-handle">
+                      {accountHandleLabel}
+                    </Text>
+                  </View>
+                  <Divider style={styles.accountMenuDivider} />
+                  <Button
+                    mode="text"
+                    compact
+                    icon="account-cog-outline"
+                    onPress={() => {
+                      setSection('profile');
+                      setAccountMenuVisible(false);
+                    }}
+                    style={styles.accountMenuAction}
+                    contentStyle={styles.accountMenuActionContent}
+                    labelStyle={styles.accountMenuActionLabel}
+                    testID="account-menu-profile-button">
+                    Profile
+                  </Button>
+                  <Button
+                    mode="text"
+                    compact
+                    icon="logout"
+                    onPress={() => {
+                      setAccountMenuVisible(false);
+                      void handleLogout();
+                    }}
+                    disabled={authBusy}
+                    style={styles.accountMenuAction}
+                    contentStyle={styles.accountMenuActionContent}
+                    labelStyle={styles.accountMenuActionLabel}
+                    testID="logout-button">
+                    Log out
+                  </Button>
+                </View>
+              </Menu>
+            </View>
+          ) : (
+            <View style={styles.pageHeaderCopy}>
+              <Text style={styles.eyebrow}>Friend Management App</Text>
+              <Text variant="headlineLarge" style={styles.pageTitle}>
+                Social gaming handoff prototype
+              </Text>
+              <Text style={styles.pageSubtitle}>
+                Mobile-first placeholder experience for onboarding, invites, roulette, lobbies,
+                schedule, and profile work.
+              </Text>
+            </View>
+          )}
 
           {sectionNavigation}
 
@@ -4605,6 +4823,7 @@ export default function HomeScreen() {
         </Dialog>
         <Dialog
           visible={friendCodeRegenerateConfirmVisible}
+          style={[styles.compactDialog, compactDialogWidth > 0 ? { width: compactDialogWidth } : null]}
           onDismiss={() => {
             if (friendActionBusyId !== null) {
               return;
@@ -4639,6 +4858,7 @@ export default function HomeScreen() {
         </Dialog>
         <Dialog
           visible={Boolean(gamePendingRemoval)}
+          style={[styles.compactDialog, compactDialogWidth > 0 ? { width: compactDialogWidth } : null]}
           onDismiss={() => {
             if (gameActionBusyId !== null) {
               return;

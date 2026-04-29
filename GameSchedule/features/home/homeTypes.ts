@@ -202,3 +202,14 @@ export type FriendRequestRecord = {
   status: 'pending' | 'accepted' | 'declined' | 'canceled';
   created_at: string;
 };
+
+export type DashboardUpcomingEventStatus = 'hosting' | 'accepted' | 'pending' | 'suggested_time';
+
+export type DashboardUpcomingEvent = {
+  id: string;
+  title: string;
+  game_title: string | null;
+  scheduled_for: string;
+  scheduled_until: string | null;
+  status: DashboardUpcomingEventStatus;
+};

@@ -1190,6 +1190,15 @@ describe('lobbies flow', () => {
   const novaUserId = makeUserId(novaEmail);
   const pixelUserId = makeUserId(pixelEmail);
 
+  const expectSignedInShell = () => {
+    cy.get('body', { timeout: 15000 }).should(($body) => {
+      const hasDesktopAccountButton = $body.find('[data-testid="profile-chip"]').length > 0;
+      const hasMobileNavButton = $body.find('[data-testid="section-nav-menu-button"]').length > 0;
+
+      expect(hasDesktopAccountButton || hasMobileNavButton).to.equal(true);
+    });
+  };
+
   const signUpHost = () => {
     const hostAccount = ensureAccount(hostEmail, hostPassword, {
       displayName: 'Host Player',
@@ -1200,28 +1209,31 @@ describe('lobbies flow', () => {
     }
     cy.visit('/');
     cy.signupUi(hostEmail, hostPassword);
-    cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
+    expectSignedInShell();
   };
 
   const logInAs = (email: string, password: string) => {
     cy.visit('/');
     cy.loginUi(email, password);
-    cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
+    expectSignedInShell();
   };
 
   const clickSectionNav = (section: string) => {
-    cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
-      $button[0].scrollIntoView({
-        behavior: 'instant',
-        block: 'nearest',
-        inline: 'center',
-      });
+    cy.get('body').then(($body) => {
+      if (
+        $body.find('[data-testid="section-nav-menu-button"]').length > 0 &&
+        $body.find(`[data-testid="section-nav-${section}"]`).length === 0
+      ) {
+        cy.get('[data-testid="section-nav-menu-button"]').click({ force: true });
+        cy.get('[data-testid="section-nav-menu-content"]').should('be.visible');
+      }
     });
 
     cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });
   };
 
   const logout = () => {
+    cy.get('[data-testid="profile-chip"]').click();
     cy.get('[data-testid="logout-button"]').click();
     cy.get('[data-testid="auth-email-input"]').should('exist');
   };

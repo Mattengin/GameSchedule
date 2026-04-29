@@ -134,15 +134,15 @@ describe('authenticated session', () => {
     cy.signupUi(email, password);
 
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
+    cy.get('[data-testid="profile-chip"]').click();
     cy.get('[data-testid="logout-button"]').click();
     cy.get('[data-testid="auth-submit-button"]', { timeout: 15000 }).should('be.visible');
 
     cy.loginUi(email, password);
 
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
-    cy.get('[data-testid="profile-summary-card"]', { timeout: 15000 }).should('be.visible');
     cy.contains(/social gaming handoff prototype/i).should('be.visible');
-    cy.contains(/welcome back/i).should('be.visible');
+    cy.contains(/^Home$/).should('be.visible');
   });
 
   it('logs out back to the auth screen', () => {
@@ -150,6 +150,7 @@ describe('authenticated session', () => {
     cy.signupUi(email, password);
 
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
+    cy.get('[data-testid="profile-chip"]').click();
     cy.get('[data-testid="logout-button"]', { timeout: 15000 }).click();
     cy.get('[data-testid="auth-submit-button"]', { timeout: 15000 }).should('be.visible');
     cy.contains(/^sign in$/i).should('be.visible');
@@ -162,7 +163,7 @@ describe('authenticated session', () => {
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
     cy.reload();
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
-    cy.get('[data-testid="profile-summary-card"]').should('be.visible');
+    cy.contains(/social gaming handoff prototype/i).should('be.visible');
   });
 
   it('creates a profile on first sign up', () => {
@@ -173,11 +174,12 @@ describe('authenticated session', () => {
     cy.signupUi(uniqueEmail, signupPassword);
 
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
-    cy.get('[data-testid="profile-summary-card"]', { timeout: 15000 }).within(() => {
-      cy.contains(/welcome back/i).should('be.visible');
-      cy.contains(/username:/i).should('be.visible');
-      cy.contains(/onboarding: in progress/i).should('be.visible');
-    });
+    cy.get('[data-testid="profile-chip"]').click();
+    cy.get('[data-testid="account-menu-identity-handle"]').should(
+      'contain.text',
+      `@${uniqueEmail.split('@')[0].toLowerCase()}`,
+    );
+    cy.get('[data-testid="home-onboarding-notice"]', { timeout: 15000 }).should('be.visible');
   });
 });
 

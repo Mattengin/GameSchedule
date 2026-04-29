@@ -232,13 +232,22 @@ const assertNoHorizontalOverflow = () => {
 };
 
 const clickSectionNav = (section: string) => {
-  cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
-    $button[0].scrollIntoView({
-      behavior: 'instant',
-      block: 'nearest',
-      inline: 'center',
+  cy.get('body', { timeout: 15000 })
+    .should(($body) => {
+      const hasDirectButton = $body.find(`[data-testid="section-nav-${section}"]`).length > 0;
+      const hasMenuButton = $body.find('[data-testid="section-nav-menu-button"]').length > 0;
+
+      expect(hasDirectButton || hasMenuButton).to.equal(true);
+    })
+    .then(($body) => {
+    if (
+      $body.find('[data-testid="section-nav-menu-button"]').length > 0 &&
+      $body.find(`[data-testid="section-nav-${section}"]`).length === 0
+    ) {
+      cy.get('[data-testid="section-nav-menu-button"]').click({ force: true });
+      cy.get('[data-testid="section-nav-menu-content"]').should('be.visible');
+    }
     });
-  });
 
   cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });
 };
@@ -705,7 +714,8 @@ describe('game social persistence', () => {
       });
 
     cy.contains(/game added to favorites/i).should('exist');
-    cy.contains('Profile').click();
+    cy.get('[data-testid="profile-chip"]').click();
+    cy.get('[data-testid="account-menu-profile-button"]').click();
     cy.contains('Favorite games').scrollIntoView().should('exist');
     cy.contains('Helix Arena').should('be.visible');
   });
@@ -829,7 +839,8 @@ describe('game social persistence', () => {
     cy.contains(/helix arena removed from your library/i).should('be.visible');
     cy.get('[data-testid="game-library-card-helix-arena"]').should('not.exist');
 
-    cy.contains('Profile').click();
+    cy.get('[data-testid="profile-chip"]').click();
+    cy.get('[data-testid="account-menu-profile-button"]').click();
     cy.contains('Favorite games').scrollIntoView().should('exist');
     cy.contains('Helix Arena').should('not.exist');
 
@@ -977,6 +988,7 @@ describe('game social persistence', () => {
         expect(body.p_game_id).to.equal('igdb-1234');
       });
 
+    cy.get('[data-testid="profile-chip"]').click();
     cy.get('[data-testid="logout-button"]').click();
     cy.loginUi(secondEmail, secondPassword);
     cy.contains('Games').click();

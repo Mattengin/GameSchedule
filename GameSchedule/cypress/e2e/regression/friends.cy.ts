@@ -193,12 +193,14 @@ const assertNoHorizontalOverflow = () => {
 };
 
 const clickSectionNav = (section: string) => {
-  cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
-    $button[0].scrollIntoView({
-      behavior: 'instant',
-      block: 'nearest',
-      inline: 'center',
-    });
+  cy.get('body').then(($body) => {
+    if (
+      $body.find('[data-testid="section-nav-menu-button"]').length > 0 &&
+      $body.find(`[data-testid="section-nav-${section}"]`).length === 0
+    ) {
+      cy.get('[data-testid="section-nav-menu-button"]').click({ force: true });
+      cy.get('[data-testid="section-nav-menu-content"]').should('be.visible');
+    }
   });
 
   cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });

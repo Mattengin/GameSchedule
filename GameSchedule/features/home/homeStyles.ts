@@ -153,6 +153,17 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
   },
+  pageHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  pageHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 10,
+  },
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -160,32 +171,170 @@ export const styles = StyleSheet.create({
     gap: 10,
     justifyContent: 'space-between',
   },
+  accountAvatarTrigger: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#171D33',
+    borderColor: '#2C3560',
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 2,
+    padding: 4,
+  },
+  accountAvatarTriggerActive: {
+    backgroundColor: '#2B3151',
+    borderColor: '#7C5CFF',
+  },
+  accountAvatarTriggerHovered: {
+    transform: [{ scale: 1.06 }],
+  },
+  accountAvatarFrame: {
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  accountAvatarImage: {
+    backgroundColor: '#6F63A8',
+  },
+  accountAvatarFallbackLabel: {
+    color: '#F5F7FF',
+    fontWeight: '700',
+  },
+  accountMenuContent: {
+    backgroundColor: '#141A2D',
+    borderColor: '#2C3560',
+    borderRadius: 18,
+    borderWidth: 1,
+    minWidth: 220,
+    paddingVertical: 8,
+  },
+  accountMenuList: {
+    gap: 4,
+  },
+  accountMenuIdentity: {
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingTop: 6,
+    paddingBottom: 8,
+  },
+  accountMenuIdentityName: {
+    color: '#F5F7FF',
+    fontWeight: '700',
+  },
+  accountMenuIdentityHandle: {
+    color: '#95A0C8',
+    fontSize: 13,
+  },
+  accountMenuDivider: {
+    backgroundColor: '#2C3560',
+    marginHorizontal: 8,
+    marginBottom: 4,
+  },
+  accountMenuAction: {
+    alignSelf: 'stretch',
+    borderRadius: 12,
+    marginHorizontal: 8,
+  },
+  accountMenuActionContent: {
+    justifyContent: 'flex-start',
+    minHeight: 40,
+  },
+  accountMenuActionLabel: {
+    color: '#F5F7FF',
+    fontWeight: '600',
+  },
   segmented: {
     marginTop: 4,
   },
-  mobileSectionNavScroller: {
+  mobileSectionNavShell: {
     marginTop: 4,
-  },
-  mobileSectionNavRow: {
+    backgroundColor: '#141A2D',
+    borderColor: '#2C3560',
+    borderRadius: 22,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingRight: 12,
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  mobileSectionNavSummary: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  mobileSectionNavEyebrow: {
+    color: '#95A0C8',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  mobileSectionNavCurrent: {
+    color: '#F5F7FF',
+    fontWeight: '700',
   },
   mobileSectionNavButtonWrap: {
     position: 'relative',
   },
-  mobileSectionNavButton: {
-    borderRadius: 999,
-  },
-  mobileSectionNavButtonContent: {
-    minHeight: 36,
-    paddingHorizontal: 4,
+  mobileSectionNavMenuButton: {
+    margin: 0,
   },
   mobileSectionNavBadge: {
     position: 'absolute',
-    top: -6,
-    right: -4,
+    top: -2,
+    right: -2,
     backgroundColor: '#FF6B81',
+  },
+  mobileSectionMenuContent: {
+    backgroundColor: '#141A2D',
+    borderColor: '#2C3560',
+    borderRadius: 18,
+    borderWidth: 1,
+    minWidth: 220,
+    paddingVertical: 8,
+  },
+  mobileSectionMenuList: {
+    gap: 4,
+  },
+  mobileSectionMenuAccount: {
+    backgroundColor: '#1A2037',
+    borderRadius: 14,
+    gap: 6,
+    marginHorizontal: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  mobileSectionMenuAccountEyebrow: {
+    color: '#95A0C8',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  mobileSectionMenuAccountName: {
+    color: '#F5F7FF',
+    fontWeight: '700',
+  },
+  mobileSectionMenuAccountLogout: {
+    alignSelf: 'flex-start',
+    marginLeft: -8,
+  },
+  mobileSectionMenuDivider: {
+    backgroundColor: '#2C3560',
+    marginHorizontal: 8,
+    marginVertical: 4,
+  },
+  mobileSectionMenuButton: {
+    alignSelf: 'stretch',
+    borderRadius: 12,
+  },
+  mobileSectionMenuButtonContent: {
+    justifyContent: 'flex-start',
+    minHeight: 40,
+  },
+  mobileSectionMenuButtonLabel: {
+    color: '#F5F7FF',
+    textAlign: 'left',
   },
   heroCard: {
     backgroundColor: '#161B31',
@@ -213,6 +362,92 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  dashboardAgendaCard: {
+    maxWidth: undefined,
+    alignSelf: 'stretch',
+  },
+  dashboardAgendaHeaderRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+    justifyContent: 'space-between',
+  },
+  dashboardAgendaHeaderCopy: {
+    flex: 1,
+    gap: 10,
+    minWidth: isWeb ? 320 : 0,
+  },
+  dashboardAgendaGroups: {
+    gap: 14,
+    marginTop: 6,
+    width: '100%',
+  },
+  dashboardAgendaDayGroup: {
+    gap: 8,
+  },
+  dashboardAgendaDayLabel: {
+    color: '#DDE4FF',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  dashboardAgendaDayItems: {
+    gap: 10,
+  },
+  dashboardAgendaEventCard: {
+    backgroundColor: '#11172B',
+    borderColor: '#28335F',
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 8,
+    padding: 14,
+  },
+  dashboardAgendaEventHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'space-between',
+  },
+  dashboardAgendaEventMeta: {
+    flex: 1,
+    gap: 4,
+    minWidth: 0,
+  },
+  dashboardAgendaEventTime: {
+    color: '#D8DDF4',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dashboardAgendaEmptyCard: {
+    alignSelf: 'stretch',
+    backgroundColor: '#11172B',
+    borderColor: '#28335F',
+    borderRadius: 22,
+    borderWidth: 1,
+    marginTop: 6,
+  },
+  dashboardHostingChip: {
+    backgroundColor: '#241A46',
+    borderColor: '#7C5CFF',
+    borderWidth: 1,
+  },
+  dashboardHostingChipText: {
+    color: '#E5DEFF',
+    fontWeight: '700',
+  },
+  dashboardAttentionList: {
+    gap: 12,
+    marginTop: 8,
+  },
+  dashboardAttentionRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
   },
   statRow: {
     flexDirection: 'row',
@@ -432,6 +667,10 @@ export const styles = StyleSheet.create({
     alignSelf: 'center',
     width: isWeb ? 680 : undefined,
     maxWidth: isWeb ? 680 : undefined,
+  },
+  compactDialog: {
+    alignSelf: 'center',
+    maxWidth: isWeb ? 520 : undefined,
   },
   friendGroupsInputRow: {
     alignItems: 'flex-end',

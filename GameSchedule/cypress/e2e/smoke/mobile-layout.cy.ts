@@ -42,6 +42,50 @@ type MockProfileGameRow = {
   };
 };
 
+type MockLobbyRow = {
+  id: string;
+  title: string;
+  scheduled_for: string | null;
+  scheduled_until: string | null;
+  meetup_details: string | null;
+  discord_guild_id: string | null;
+  discord_guild_name: string | null;
+  discord_guild_icon_url: string | null;
+  is_private: boolean;
+  status: 'scheduled' | 'open' | 'closed';
+  game_id: string;
+  host_profile_id: string;
+  games: MockProfileGameRow['games'] | null;
+};
+
+type MockLobbyMemberRow = {
+  lobby_id: string;
+  profile_id: string;
+  role: 'host' | 'member';
+  rsvp_status: 'accepted' | 'pending' | 'declined' | 'suggested_time';
+  response_comment: string | null;
+  suggested_start_at: string | null;
+  suggested_end_at: string | null;
+  responded_at: string | null;
+  invited_at: string;
+  created_at: string;
+};
+
+type MockVisibleProfile = {
+  id: string;
+  username: string | null;
+  avatar_url: string | null;
+  display_name: string | null;
+  birthday_label: string | null;
+  is_discord_connected: boolean;
+};
+
+type MobileLayoutMockConfig = {
+  lobbies?: MockLobbyRow[];
+  lobbyMembers?: MockLobbyMemberRow[];
+  visibleProfiles?: MockVisibleProfile[];
+};
+
 const authStore = new Map<string, MockAccount>();
 const friendCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -135,18 +179,28 @@ const assertNoHorizontalOverflow = () => {
 };
 
 const clickSectionNav = (section: string) => {
-  cy.get(`[data-testid="section-nav-${section}"]`).then(($button) => {
-    $button[0].scrollIntoView({
-      behavior: 'instant',
-      block: 'nearest',
-      inline: 'center',
-    });
+  cy.get('body').then(($body) => {
+    if (
+      $body.find('[data-testid="section-nav-menu-button"]').length > 0 &&
+      $body.find(`[data-testid="section-nav-${section}"]`).length === 0
+    ) {
+      cy.get('[data-testid="section-nav-menu-button"]').click({ force: true });
+      cy.get('[data-testid="section-nav-menu-content"]').should('be.visible');
+    }
   });
 
   cy.get(`[data-testid="section-nav-${section}"]`).click({ force: true });
 };
 
-const registerMobileLayoutMocks = (account: MockAccount, profileGames: MockProfileGameRow[]) => {
+const registerMobileLayoutMocks = (
+  account: MockAccount,
+  profileGames: MockProfileGameRow[],
+  config: MobileLayoutMockConfig = {},
+) => {
+  const lobbies = config.lobbies ?? [];
+  const lobbyMembers = config.lobbyMembers ?? [];
+  const visibleProfiles = config.visibleProfiles ?? [];
+
   cy.intercept('POST', '**/auth/v1/token?grant_type=password', (req) => {
     authStore.set(account.userId, account);
 
@@ -245,8 +299,18 @@ const registerMobileLayoutMocks = (account: MockAccount, profileGames: MockProfi
 
   cy.intercept('GET', '**/rest/v1/lobbies*', {
     statusCode: 200,
-    body: [],
+    body: lobbies,
   }).as('lobbiesRequest');
+
+  cy.intercept('GET', '**/rest/v1/lobby_members*', {
+    statusCode: 200,
+    body: lobbyMembers,
+  }).as('lobbyMembersRequest');
+
+  cy.intercept('GET', '**/rest/v1/lobby_member_response_history*', {
+    statusCode: 200,
+    body: [],
+  }).as('lobbyHistoryRequest');
 
   cy.intercept('POST', '**/rest/v1/rpc/get_profile_busy_blocks', {
     statusCode: 200,
@@ -255,7 +319,7 @@ const registerMobileLayoutMocks = (account: MockAccount, profileGames: MockProfi
 
   cy.intercept('POST', '**/rest/v1/rpc/get_visible_profiles', {
     statusCode: 200,
-    body: [],
+    body: visibleProfiles,
   }).as('visibleProfilesRpc');
 
 };
@@ -357,12 +421,10 @@ describe('mobile layout smoke', () => {
     },
   ];
 
-  beforeEach(() => {
+  it('keeps core authenticated sections within a latest iPhone-sized viewport', () => {
     authStore.clear();
     registerMobileLayoutMocks(account, profileGames);
-  });
 
-  it('keeps core authenticated sections within a latest iPhone-sized viewport', () => {
     // Cypress presets stop at older iPhones, so use explicit CSS pixels for the latest released iPhone 16e.
     cy.viewport(390, 844);
 
@@ -373,6 +435,10 @@ describe('mobile layout smoke', () => {
     cy.wait('@profileGamesRequest');
 
     cy.contains(/play together, faster/i).should('be.visible');
+    cy.contains(/nothing scheduled yet/i).should('be.visible');
+    cy.contains(/tonight's fastest route/i).should('not.exist');
+    cy.contains(/^featured games$/i).should('not.exist');
+    cy.contains(/roulette is library-first now/i).should('not.exist');
     assertNoHorizontalOverflow();
 
     clickSectionNav('games');
@@ -406,19 +472,165 @@ describe('mobile layout smoke', () => {
     assertNoHorizontalOverflow();
   });
 
-  it('keeps Home reachable without auto-redirecting into Friends', () => {
+  it('shows real upcoming events and opens Schedule from the dashboard', () => {
+    authStore.clear();
+
+    const now = new Date();
+    const plusDays = (days: number, hour: number, minute: number) => {
+      const nextDate = new Date(now);
+      nextDate.setDate(nextDate.getDate() + days);
+      nextDate.setHours(hour, minute, 0, 0);
+      return nextDate.toISOString();
+    };
+
+    const hostedStartAt = plusDays(1, 19, 0);
+    const hostedEndAt = plusDays(1, 21, 0);
+    const acceptedStartAt = plusDays(2, 20, 30);
+    const acceptedEndAt = plusDays(2, 22, 0);
+    const pendingStartAt = plusDays(4, 18, 45);
+    const pendingEndAt = plusDays(4, 20, 15);
+    const remoteHostId = 'friend-host-01';
+    const pendingHostId = 'friend-host-02';
+
+    registerMobileLayoutMocks(account, profileGames, {
+      lobbies: [
+        {
+          id: 'hosted-lobby',
+          title: 'Helix Arena Ranked',
+          scheduled_for: hostedStartAt,
+          scheduled_until: hostedEndAt,
+          meetup_details: 'Discord voice',
+          discord_guild_id: null,
+          discord_guild_name: null,
+          discord_guild_icon_url: null,
+          is_private: true,
+          status: 'scheduled',
+          game_id: 'helix-arena',
+          host_profile_id: account.userId,
+          games: profileGames[0].games,
+        },
+        {
+          id: 'accepted-lobby',
+          title: 'Deep Raid Night',
+          scheduled_for: acceptedStartAt,
+          scheduled_until: acceptedEndAt,
+          meetup_details: null,
+          discord_guild_id: null,
+          discord_guild_name: null,
+          discord_guild_icon_url: null,
+          is_private: true,
+          status: 'scheduled',
+          game_id: 'deep-raid',
+          host_profile_id: remoteHostId,
+          games: profileGames[1].games,
+        },
+        {
+          id: 'pending-lobby',
+          title: 'Wild Rally Warmup',
+          scheduled_for: pendingStartAt,
+          scheduled_until: pendingEndAt,
+          meetup_details: null,
+          discord_guild_id: null,
+          discord_guild_name: null,
+          discord_guild_icon_url: null,
+          is_private: true,
+          status: 'scheduled',
+          game_id: 'wild-rally-online',
+          host_profile_id: pendingHostId,
+          games: profileGames[2].games,
+        },
+        {
+          id: 'unscheduled-lobby',
+          title: 'Unscheduled Draft',
+          scheduled_for: null,
+          scheduled_until: null,
+          meetup_details: null,
+          discord_guild_id: null,
+          discord_guild_name: null,
+          discord_guild_icon_url: null,
+          is_private: true,
+          status: 'open',
+          game_id: 'castle-circuit',
+          host_profile_id: pendingHostId,
+          games: profileGames[3].games,
+        },
+      ],
+      lobbyMembers: [
+        {
+          lobby_id: 'accepted-lobby',
+          profile_id: account.userId,
+          role: 'member',
+          rsvp_status: 'accepted',
+          response_comment: null,
+          suggested_start_at: null,
+          suggested_end_at: null,
+          responded_at: acceptedStartAt,
+          invited_at: acceptedStartAt,
+          created_at: acceptedStartAt,
+        },
+        {
+          lobby_id: 'pending-lobby',
+          profile_id: account.userId,
+          role: 'member',
+          rsvp_status: 'pending',
+          response_comment: null,
+          suggested_start_at: null,
+          suggested_end_at: null,
+          responded_at: null,
+          invited_at: pendingStartAt,
+          created_at: pendingStartAt,
+        },
+      ],
+      visibleProfiles: [
+        {
+          id: account.userId,
+          username: account.profile.username,
+          avatar_url: null,
+          display_name: account.profile.display_name,
+          birthday_label: null,
+          is_discord_connected: false,
+        },
+        {
+          id: remoteHostId,
+          username: 'raidlead',
+          avatar_url: null,
+          display_name: 'Raid Lead',
+          birthday_label: null,
+          is_discord_connected: false,
+        },
+        {
+          id: pendingHostId,
+          username: 'rallyhost',
+          avatar_url: null,
+          display_name: 'Rally Host',
+          birthday_label: null,
+          is_discord_connected: false,
+        },
+      ],
+    });
+
     cy.viewport(390, 844);
 
     cy.visit('/');
     cy.loginUi(accountEmail, accountPassword);
     cy.wait('@signinRequest');
     cy.wait('@profilesRequest');
+    cy.wait('@lobbiesRequest');
+    cy.wait('@lobbyMembersRequest');
+    cy.wait('@visibleProfilesRpc');
 
     cy.contains(/play together, faster/i).scrollIntoView().should('be.visible');
-    clickSectionNav('friends');
-    cy.contains(/^Add by friend code$/).scrollIntoView().should('be.visible');
-    clickSectionNav('dashboard');
-    cy.contains(/play together, faster/i).scrollIntoView().should('be.visible');
+    cy.get('[data-testid="dashboard-upcoming-events"]').should('be.visible');
+    cy.get('[data-testid="dashboard-event-hosted-lobby"]').should('contain.text', 'Hosting');
+    cy.get('[data-testid="dashboard-event-accepted-lobby"]').should('contain.text', 'Accepted');
+    cy.get('[data-testid="dashboard-event-pending-lobby"]').should('contain.text', 'Pending invite');
+    cy.contains('Helix Arena Ranked').should('be.visible');
+    cy.contains('Deep Raid Night').should('be.visible');
+    cy.contains('Wild Rally Warmup').should('be.visible');
+    cy.contains('Unscheduled Draft').should('not.exist');
+
+    cy.get('[data-testid="dashboard-open-schedule-button"]').click();
+    cy.contains(/^Weekly availability$/).scrollIntoView().should('be.visible');
     assertNoHorizontalOverflow();
   });
 });

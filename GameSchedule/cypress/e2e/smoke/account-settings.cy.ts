@@ -106,11 +106,6 @@ const getQueryValue = (url: string, key: string) => {
   return match ? decodeURIComponent(match[1]) : '';
 };
 
-const replaceTextInputValue = (selector: string, _previousValue: string, nextValue: string) => {
-  const eraseKeys = Array.from({ length: 80 }, () => '{backspace}').join('');
-  cy.get(selector).click().type(`{end}${eraseKeys}${nextValue}`);
-};
-
 const registerMockAccountSettings = (account: MockAccount) => {
   cy.intercept('POST', '**/auth/v1/signup', (req) => {
     authStore.set(account.userId, account);
@@ -327,16 +322,17 @@ describe('account settings', () => {
   const signInAndOpenProfile = () => {
     cy.visit('/');
     cy.signupUi(account.email, account.password);
-    cy.contains(/^Profile$/).click();
+    cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).click();
+    cy.get('[data-testid="account-menu-profile-button"]', { timeout: 15000 }).click();
     cy.contains(/profile & settings/i).should('be.visible');
   };
 
   it('saves edited profile details and sends the expected profile payload', () => {
     signInAndOpenProfile();
 
-    replaceTextInputValue('[data-testid="profile-edit-username-input"]', account.profile.username, 'proplayer');
-    replaceTextInputValue('[data-testid="profile-edit-display-name-input"]', account.profile.display_name, 'Pro Player');
-    replaceTextInputValue('[data-testid="profile-edit-avatar-url-input"]', account.profile.avatar_url ?? '', 'https://example.com/avatar.png');
+    cy.get('[data-testid="profile-edit-username-input"]').clear().type('proplayer');
+    cy.get('[data-testid="profile-edit-display-name-input"]').clear().type('Pro Player');
+    cy.get('[data-testid="profile-edit-avatar-url-input"]').clear().type('https://example.com/avatar.png');
     cy.get('[data-testid="profile-edit-save-button"]').click();
 
     cy.wait('@profileUpdateRequest')
@@ -353,7 +349,8 @@ describe('account settings', () => {
       });
 
     cy.contains(/profile saved/i).should('be.visible');
-    cy.get('[data-testid="profile-chip"]').should('contain', 'Pro Player');
+    cy.get('[data-testid="profile-chip"]').click();
+    cy.get('[data-testid="account-menu-identity-name"]').should('contain', 'Pro Player');
     cy.get('[data-testid="profile-edit-username-input"]').should('have.value', 'proplayer');
   });
 

@@ -17,7 +17,6 @@ import {
   Divider,
   HelperText,
   IconButton,
-  ProgressBar,
   Portal,
   Searchbar,
   Surface,
@@ -25,8 +24,24 @@ import {
 } from 'react-native-paper';
 import { inboxHistoryPageSize } from './homeConstants';
 import { styles } from './homeStyles';
-import type { AcceptedFriend, FriendGroupRecord, GameRecord, IgdbSearchResult, PublicProfileCard } from './homeTypes';
-import { SectionTitle, StatCard, formatReleaseDateLabel } from './homeUtils';
+import type {
+  AcceptedFriend,
+  DashboardUpcomingEvent,
+  DashboardUpcomingEventStatus,
+  FriendGroupRecord,
+  GameRecord,
+  IgdbSearchResult,
+  PublicProfileCard,
+} from './homeTypes';
+import {
+  SectionTitle,
+  StatCard,
+  formatCalendarDate,
+  formatEventTime,
+  formatReleaseDateLabel,
+  getLobbyEndDate,
+  hasExplicitLobbyEnd,
+} from './homeUtils';
 
 type NotificationItem = {
   id: string;
@@ -37,150 +52,265 @@ type NotificationItem = {
 
 type DashboardSectionProps = {
   libraryGames: GameRecord[];
-  lobbiesCount: number;
+  onboardingIncomplete: boolean;
+  pendingFriendRequestCount: number;
+  pendingLobbyInviteCount: number;
+  upcomingEvents: DashboardUpcomingEvent[];
+  onCompleteSetup: () => void;
+  onCreateLobby: () => void;
   onManageFriends: () => void;
+  onOpenSchedule: () => void;
   onStartGroupSpin: () => void;
 };
 
 export function DashboardSection({
   libraryGames,
-  lobbiesCount,
+  onboardingIncomplete,
+  pendingFriendRequestCount,
+  pendingLobbyInviteCount,
+  upcomingEvents,
+  onCompleteSetup,
+  onCreateLobby,
   onManageFriends,
+  onOpenSchedule,
   onStartGroupSpin,
 }: DashboardSectionProps) {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
+  const needsAttentionCount = pendingFriendRequestCount + pendingLobbyInviteCount;
+  const groupedUpcomingEvents = React.useMemo(() => {
+    const groupedItems = upcomingEvents.reduce<
+      {
+        dayKey: string;
+        dayLabel: string;
+        items: DashboardUpcomingEvent[];
+      }[]
+    >((accumulator, event) => {
+      const eventDate = new Date(event.scheduled_for);
+      if (Number.isNaN(eventDate.getTime())) {
+        return accumulator;
+      }
 
-  const heroCard = (
-    <Surface style={[styles.heroCard, isDesktopWeb ? styles.desktopHeroPane : null]} elevation={2}>
-      <Chip icon="motion-play" style={styles.liveChip}>
-        Live prototype
-      </Chip>
-      <Text variant="displaySmall" style={styles.heroTitle}>
-        Play together, faster.
-      </Text>
-      <Text style={styles.heroCopy}>
-        Placeholder data for the social gaming flow: invites, roulette, lobby setup, and
-        availability sync.
-      </Text>
-      <View style={styles.heroActions}>
-        <Button mode="contained" onPress={onStartGroupSpin}>
-          Start group spin
-        </Button>
-        <Button mode="outlined" onPress={onManageFriends}>
-          Manage friends
+      const dayKey = eventDate.toISOString().slice(0, 10);
+      const existingGroup = accumulator.find((group) => group.dayKey === dayKey);
+      if (existingGroup) {
+        existingGroup.items.push(event);
+        return accumulator;
+      }
+
+      accumulator.push({
+        dayKey,
+        dayLabel: formatCalendarDate(eventDate),
+        items: [event],
+      });
+      return accumulator;
+    }, []);
+
+    return groupedItems;
+  }, [upcomingEvents]);
+
+  const getUpcomingEventStatusMeta = React.useCallback(
+    (status: DashboardUpcomingEventStatus) => {
+      if (status === 'hosting') {
+        return {
+          chipStyle: styles.dashboardHostingChip,
+          textStyle: styles.dashboardHostingChipText,
+          label: 'Hosting',
+        };
+      }
+
+      if (status === 'accepted') {
+        return {
+          chipStyle: styles.inviteAcceptedChip,
+          textStyle: styles.inviteAcceptedText,
+          label: 'Accepted',
+        };
+      }
+
+      if (status === 'suggested_time') {
+        return {
+          chipStyle: styles.inviteSuggestedChip,
+          textStyle: styles.inviteSuggestedText,
+          label: 'Suggested time',
+        };
+      }
+
+      return {
+        chipStyle: styles.invitePendingChip,
+        textStyle: styles.invitePendingText,
+        label: 'Pending invite',
+      };
+    },
+    [],
+  );
+
+  const agendaCard = (
+    <Surface style={[styles.heroCard, styles.dashboardAgendaCard]} elevation={2}>
+      <View style={styles.dashboardAgendaHeaderRow}>
+        <View style={styles.dashboardAgendaHeaderCopy}>
+          <Chip icon="calendar-clock" style={styles.liveChip}>
+            Next 7 days
+          </Chip>
+          <Text variant="displaySmall" style={styles.heroTitle}>
+            Play together, faster.
+          </Text>
+          <Text style={styles.heroCopy}>
+            Real scheduled lobbies from the week ahead, including invites waiting on you.
+          </Text>
+        </View>
+        <Button mode="outlined" onPress={onOpenSchedule} testID="dashboard-open-schedule-button">
+          Open schedule
         </Button>
       </View>
+      {groupedUpcomingEvents.length > 0 ? (
+        <View style={styles.dashboardAgendaGroups} testID="dashboard-upcoming-events">
+          {groupedUpcomingEvents.map((group) => (
+            <View key={group.dayKey} style={styles.dashboardAgendaDayGroup}>
+              <Text style={styles.dashboardAgendaDayLabel}>{group.dayLabel}</Text>
+              <View style={styles.dashboardAgendaDayItems}>
+                {group.items.map((event) => {
+                  const startAt = new Date(event.scheduled_for);
+                  const endAt = getLobbyEndDate({
+                    scheduled_for: event.scheduled_for,
+                    scheduled_until: event.scheduled_until,
+                  });
+                  const statusMeta = getUpcomingEventStatusMeta(event.status);
+                  const hasExplicitEnd = hasExplicitLobbyEnd({ scheduled_until: event.scheduled_until });
+                  const timeLabel = hasExplicitEnd
+                    ? `${formatEventTime(startAt)} - ${formatEventTime(endAt)}`
+                    : `${formatEventTime(startAt)} start · Flexible end`;
+                  const detailLabel =
+                    event.game_title && event.game_title !== event.title ? event.game_title : 'Scheduled lobby';
+
+                  return (
+                    <Surface
+                      key={event.id}
+                      style={styles.dashboardAgendaEventCard}
+                      elevation={0}
+                      testID={`dashboard-event-${event.id}`}>
+                      <View style={styles.dashboardAgendaEventHeader}>
+                        <View style={styles.dashboardAgendaEventMeta}>
+                          <Text variant="titleMedium">{event.title}</Text>
+                          <Text style={styles.friendNote}>{detailLabel}</Text>
+                        </View>
+                        <Chip compact style={statusMeta.chipStyle} textStyle={statusMeta.textStyle}>
+                          {statusMeta.label}
+                        </Chip>
+                      </View>
+                      <Text style={styles.dashboardAgendaEventTime}>{timeLabel}</Text>
+                    </Surface>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Card style={styles.dashboardAgendaEmptyCard} testID="dashboard-empty-upcoming-events">
+          <Card.Content>
+            <SectionTitle
+              title="Nothing scheduled yet"
+              subtitle="If the week is open, start with a fresh lobby or spin a game to get tonight moving."
+            />
+            <View style={styles.cardActions}>
+              <Button mode="contained" onPress={onCreateLobby}>
+                Create lobby
+              </Button>
+              <Button mode="outlined" onPress={onStartGroupSpin}>
+                Spin game
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+      )}
     </Surface>
   );
 
   const statsRow = (
-    <View style={[styles.statRow, isDesktopWeb ? styles.desktopStatsStack : null]}>
-      <StatCard label="Friends online" value="12" accent="#7C5CFF" />
-      <StatCard label="Open lobbies" value={String(lobbiesCount)} accent="#33D1FF" />
+    <View style={styles.statRow}>
+      <StatCard label="Upcoming events" value={String(upcomingEvents.length)} accent="#7C5CFF" />
+      <StatCard label="Needs attention" value={String(needsAttentionCount)} accent="#33D1FF" />
       <StatCard label="Library games" value={String(libraryGames.length)} accent="#7DFFB3" />
     </View>
   );
 
-  const setupWizardCard = (
+  const quickActionsCard = (
     <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
       <Card.Content>
         <SectionTitle
-          title="Setup wizard"
-          subtitle="Mirror the onboarding handoff before auth and API work land."
+          title="Start tonight"
+          subtitle="Jump straight into the next useful action instead of hunting through tabs."
         />
-        <Text style={styles.listText}>1. Create username and avatar</Text>
-        <Text style={styles.listText}>2. Connect Discord or Twitch later</Text>
-        <Text style={styles.listText}>3. Build your game library</Text>
-        <Text style={styles.listText}>4. Set weekly availability</Text>
-        <ProgressBar progress={0.75} color="#7C5CFF" style={styles.progress} />
-      </Card.Content>
-    </Card>
-  );
-
-  const quickRouteCard = (
-    <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-      <Card.Content>
-        <SectionTitle
-          title="Tonight's fastest route"
-          subtitle="One-tap path from roulette to live lobby."
-        />
-        <View style={styles.quickPath}>
-          <Chip icon="dice-multiple">Spin</Chip>
-          <Chip icon="account-multiple">Invite squad</Chip>
-          <Chip icon="calendar-clock">Confirm time</Chip>
-          <Chip icon="bell-ring">Send reminder</Chip>
+        <View style={styles.heroActions}>
+          <Button mode="contained" onPress={onStartGroupSpin} testID="dashboard-spin-game-button">
+            Spin game
+          </Button>
+          <Button mode="outlined" onPress={onCreateLobby} testID="dashboard-create-lobby-button">
+            Create lobby
+          </Button>
+          <Button mode="outlined" onPress={onManageFriends} testID="dashboard-manage-friends-button">
+            Manage friends
+          </Button>
         </View>
       </Card.Content>
     </Card>
   );
 
-  const featuredGamesCard = (
+  const attentionCard = (
     <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
       <Card.Content>
         <SectionTitle
-          title="Featured games"
-          subtitle="Pulled from the games you already chose to keep in your library."
+          title="Needs attention"
+          subtitle={
+            needsAttentionCount > 0
+              ? 'Pending friend requests and lobby invites stay here until you answer them.'
+              : "You're caught up right now. New requests and invites will surface here first."
+          }
         />
-        <View style={styles.quickPath}>
-          {libraryGames
-            .filter((game) => game.is_featured)
-            .slice(0, 3)
-            .map((game) => (
-              <Chip key={game.id}>{game.title}</Chip>
-            ))}
-          {libraryGames.length === 0 ? (
-            <Text style={styles.friendNote}>Add games to library to start building your personal list.</Text>
-          ) : null}
+        <View style={styles.dashboardAttentionList}>
+          <View style={styles.dashboardAttentionRow}>
+            <Text variant="titleMedium">Friend requests</Text>
+            <Chip compact>{pendingFriendRequestCount}</Chip>
+          </View>
+          <View style={styles.dashboardAttentionRow}>
+            <Text variant="titleMedium">Lobby invites</Text>
+            <Chip compact>{pendingLobbyInviteCount}</Chip>
+          </View>
         </View>
       </Card.Content>
     </Card>
   );
 
-  const rouletteReadyCard = (
-    <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-      <Card.Content>
+  const onboardingNotice = onboardingIncomplete ? (
+    <Card style={styles.panel} testID="home-onboarding-notice">
+      <Card.Content style={styles.profileSummary}>
         <SectionTitle
-          title="Roulette is library-first now"
-          subtitle="Spin your whole library by default, then narrow it down only when tonight needs a smaller shortlist."
+          title="Finish setup in Profile"
+          subtitle="Add your core account details there before friends, lobbies, and scheduling start depending on them."
         />
-        <View style={styles.quickPath}>
-          {libraryGames.length > 0 ? (
-            libraryGames.slice(0, 4).map((game) => <Chip key={game.id}>{game.title}</Chip>)
-          ) : (
-            <Text style={styles.friendNote}>Add games to your library to unlock roulette picks right away.</Text>
-          )}
+        <View style={styles.cardActions}>
+          <Button mode="contained-tonal" onPress={onCompleteSetup} testID="home-complete-setup-button">
+            Complete setup
+          </Button>
         </View>
       </Card.Content>
     </Card>
-  );
+  ) : null;
 
   return (
     <View style={styles.sectionStack}>
-      {isDesktopWeb ? (
-        <View style={styles.desktopHeroStatsRow}>
-          {heroCard}
-          <View style={styles.desktopStatsPane}>{statsRow}</View>
-        </View>
-      ) : (
-        <>
-          {heroCard}
-          {statsRow}
-        </>
-      )}
+      {onboardingNotice}
+      {agendaCard}
+      {statsRow}
       {isDesktopWeb ? (
         <View style={styles.desktopPanelGrid}>
-          {setupWizardCard}
-          {quickRouteCard}
-          {featuredGamesCard}
-          {rouletteReadyCard}
+          {quickActionsCard}
+          {attentionCard}
         </View>
       ) : (
         <>
-          {setupWizardCard}
-          {quickRouteCard}
-          {featuredGamesCard}
-          {rouletteReadyCard}
+          {quickActionsCard}
+          {attentionCard}
         </>
       )}
     </View>
