@@ -5,7 +5,6 @@ export type SectionKey =
   | 'roulette'
   | 'lobbies'
   | 'schedule'
-  | 'inbox'
   | 'profile';
 
 export type Profile = {

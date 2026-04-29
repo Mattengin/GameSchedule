@@ -454,24 +454,36 @@ export const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 12,
   },
-  statCard: {
-    minWidth: 100,
+  homeActionCardWrap: {
     flexGrow: 1,
     flexBasis: isWeb ? 220 : undefined,
     maxWidth: isWeb ? 320 : undefined,
+    minWidth: 100,
+  },
+  homeActionCard: {
+    minWidth: 100,
     backgroundColor: '#14192D',
     borderRadius: 22,
     borderWidth: 1,
-    padding: 16,
   },
-  statValue: {
+  homeActionCardActive: {
+    backgroundColor: '#18213A',
+  },
+  homeActionCardContent: {
+    paddingVertical: 16,
+  },
+  homeActionValue: {
     color: '#F4F6FF',
     fontSize: 24,
     fontWeight: '800',
   },
-  statLabel: {
+  homeActionLabel: {
     color: '#95A0C8',
     marginTop: 4,
+  },
+  focusedActionPanel: {
+    borderColor: '#33D1FF',
+    borderWidth: 1,
   },
   panel: {
     backgroundColor: '#151A2D',

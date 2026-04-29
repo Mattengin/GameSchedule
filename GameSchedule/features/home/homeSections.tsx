@@ -14,7 +14,6 @@ import {
   Card,
   Chip,
   Dialog,
-  Divider,
   HelperText,
   IconButton,
   Portal,
@@ -22,7 +21,6 @@ import {
   Surface,
   Text,
 } from 'react-native-paper';
-import { inboxHistoryPageSize } from './homeConstants';
 import { styles } from './homeStyles';
 import type {
   AcceptedFriend,
@@ -35,7 +33,6 @@ import type {
 } from './homeTypes';
 import {
   SectionTitle,
-  StatCard,
   formatCalendarDate,
   formatEventTime,
   formatReleaseDateLabel,
@@ -43,15 +40,7 @@ import {
   hasExplicitLobbyEnd,
 } from './homeUtils';
 
-type NotificationItem = {
-  id: string;
-  age: string;
-  label: string;
-  message: string;
-};
-
 type DashboardSectionProps = {
-  libraryGames: GameRecord[];
   onboardingIncomplete: boolean;
   pendingFriendRequestCount: number;
   pendingLobbyInviteCount: number;
@@ -59,13 +48,96 @@ type DashboardSectionProps = {
   onCompleteSetup: () => void;
   onCreateLobby: () => void;
   onManageFriends: () => void;
-  onOpenLobbies: () => void;
+  onOpenFriendRequests: () => void;
+  onOpenLobbyInvites: () => void;
   onOpenSchedule: () => void;
   onStartGroupSpin: () => void;
 };
 
+function HomeActionCard({
+  accent,
+  label,
+  pulse,
+  reducedMotionEnabled,
+  testID,
+  value,
+  onPress,
+}: {
+  accent: string;
+  label: string;
+  pulse?: boolean;
+  reducedMotionEnabled: boolean;
+  testID: string;
+  value: string;
+  onPress: () => void;
+}) {
+  const animationValue = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    animationValue.stopAnimation();
+
+    if (!pulse || reducedMotionEnabled) {
+      animationValue.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(animationValue, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(animationValue, {
+          toValue: 0,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    loop.start();
+
+    return () => {
+      loop.stop();
+    };
+  }, [animationValue, pulse, reducedMotionEnabled]);
+
+  const animatedScale = animationValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.018],
+  });
+  const animatedOpacity = animationValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.9],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        styles.homeActionCardWrap,
+        pulse ? { transform: [{ scale: animatedScale }], opacity: animatedOpacity } : null,
+      ]}>
+      <Card
+        style={[
+          styles.homeActionCard,
+          { borderColor: accent },
+          pulse ? styles.homeActionCardActive : null,
+        ]}
+        onPress={onPress}
+        testID={testID}>
+        <Card.Content style={styles.homeActionCardContent}>
+          <Text style={styles.homeActionValue}>{value}</Text>
+          <Text style={styles.homeActionLabel}>{label}</Text>
+        </Card.Content>
+      </Card>
+    </Animated.View>
+  );
+}
+
 export function DashboardSection({
-  libraryGames,
   onboardingIncomplete,
   pendingFriendRequestCount,
   pendingLobbyInviteCount,
@@ -73,13 +145,38 @@ export function DashboardSection({
   onCompleteSetup,
   onCreateLobby,
   onManageFriends,
-  onOpenLobbies,
+  onOpenFriendRequests,
+  onOpenLobbyInvites,
   onOpenSchedule,
   onStartGroupSpin,
 }: DashboardSectionProps) {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
-  const needsAttentionCount = pendingFriendRequestCount + pendingLobbyInviteCount;
+  const [reducedMotionEnabled, setReducedMotionEnabled] = React.useState(false);
+
+  React.useEffect(() => {
+    let isActive = true;
+
+    const loadReducedMotionPreference = async () => {
+      try {
+        const nextValue = await AccessibilityInfo.isReduceMotionEnabled();
+        if (isActive) {
+          setReducedMotionEnabled(Boolean(nextValue));
+        }
+      } catch {
+        if (isActive) {
+          setReducedMotionEnabled(false);
+        }
+      }
+    };
+
+    void loadReducedMotionPreference();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
   const groupedUpcomingEvents = React.useMemo(() => {
     const groupedItems = upcomingEvents.reduce<
       {
@@ -228,11 +325,34 @@ export function DashboardSection({
     </Surface>
   );
 
-  const statsRow = (
+  const actionRow = (
     <View style={styles.statRow}>
-      <StatCard label="Upcoming events" value={String(upcomingEvents.length)} accent="#7C5CFF" />
-      <StatCard label="Needs attention" value={String(needsAttentionCount)} accent="#33D1FF" />
-      <StatCard label="Library games" value={String(libraryGames.length)} accent="#7DFFB3" />
+      <HomeActionCard
+        accent="#7C5CFF"
+        label="Upcoming events"
+        value={String(upcomingEvents.length)}
+        reducedMotionEnabled={reducedMotionEnabled}
+        onPress={onOpenSchedule}
+        testID="dashboard-card-upcoming-events"
+      />
+      <HomeActionCard
+        accent="#33D1FF"
+        label="Lobby invites"
+        value={String(pendingLobbyInviteCount)}
+        pulse={pendingLobbyInviteCount > 0}
+        reducedMotionEnabled={reducedMotionEnabled}
+        onPress={onOpenLobbyInvites}
+        testID="dashboard-card-lobby-invites"
+      />
+      <HomeActionCard
+        accent="#7DFFB3"
+        label="Friend requests"
+        value={String(pendingFriendRequestCount)}
+        pulse={pendingFriendRequestCount > 0}
+        reducedMotionEnabled={reducedMotionEnabled}
+        onPress={onOpenFriendRequests}
+        testID="dashboard-card-friend-requests"
+      />
     </View>
   );
 
@@ -258,48 +378,6 @@ export function DashboardSection({
     </Card>
   );
 
-  const attentionCard = (
-    <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-      <Card.Content>
-        <SectionTitle
-          title="Needs attention"
-          subtitle={
-            needsAttentionCount > 0
-              ? 'Pending friend requests stay compact here, and lobby invite decisions route into Lobbies.'
-              : "You're caught up right now. New requests and invites will surface here first."
-          }
-        />
-        <View style={styles.dashboardAttentionList}>
-          <View style={styles.dashboardAttentionRow}>
-            <Text variant="titleMedium">Friend requests</Text>
-            <Chip compact>{pendingFriendRequestCount}</Chip>
-          </View>
-          <View style={styles.dashboardAttentionRow}>
-            <Text variant="titleMedium">Lobby invites</Text>
-            <Chip compact>{pendingLobbyInviteCount}</Chip>
-          </View>
-        </View>
-        {needsAttentionCount > 0 ? (
-          <View style={styles.cardActions}>
-            {pendingLobbyInviteCount > 0 ? (
-              <Button
-                mode="contained-tonal"
-                onPress={onOpenLobbies}
-                testID="dashboard-open-lobbies-button">
-                Open lobbies
-              </Button>
-            ) : null}
-            {pendingFriendRequestCount > 0 ? (
-              <Button mode="outlined" onPress={onManageFriends} testID="dashboard-open-friends-button">
-                Open friends
-              </Button>
-            ) : null}
-          </View>
-        ) : null}
-      </Card.Content>
-    </Card>
-  );
-
   const onboardingNotice = onboardingIncomplete ? (
     <Card style={styles.panel} testID="home-onboarding-notice">
       <Card.Content style={styles.profileSummary}>
@@ -320,18 +398,8 @@ export function DashboardSection({
     <View style={styles.sectionStack}>
       {onboardingNotice}
       {agendaCard}
-      {statsRow}
-      {isDesktopWeb ? (
-        <View style={styles.desktopPanelGrid}>
-          {quickActionsCard}
-          {attentionCard}
-        </View>
-      ) : (
-        <>
-          {quickActionsCard}
-          {attentionCard}
-        </>
-      )}
+      {actionRow}
+      {quickActionsCard}
     </View>
   );
 }
@@ -1251,151 +1319,3 @@ export function RouletteSection({
   );
 }
 
-type InboxSectionProps = {
-  notifications: NotificationItem[];
-  pendingFriendRequestCount?: number;
-  pendingLobbyInviteCount?: number;
-  readNotificationIds?: string[];
-  onMarkNotificationsRead?: (notificationIds: string[]) => void;
-  onOpenFriends?: () => void;
-};
-
-export function InboxSection({
-  notifications,
-  pendingFriendRequestCount = 0,
-  pendingLobbyInviteCount = 0,
-  readNotificationIds = [],
-  onMarkNotificationsRead,
-  onOpenFriends,
-}: InboxSectionProps) {
-  const [visibleNotificationCount, setVisibleNotificationCount] = React.useState(inboxHistoryPageSize);
-  const readNotificationIdSet = React.useMemo(() => new Set(readNotificationIds), [readNotificationIds]);
-  const orderedNotifications = React.useMemo(() => {
-    const unreadNotifications = notifications.filter((item) => !readNotificationIdSet.has(item.id));
-    const readNotifications = notifications.filter((item) => readNotificationIdSet.has(item.id));
-    return [...unreadNotifications, ...readNotifications];
-  }, [notifications, readNotificationIdSet]);
-  const visibleNotifications = React.useMemo(
-    () => orderedNotifications.slice(0, visibleNotificationCount),
-    [orderedNotifications, visibleNotificationCount],
-  );
-  const hasMoreNotifications = orderedNotifications.length > visibleNotificationCount;
-  const visibleUnreadNotificationIdsRef = React.useRef<string[]>([]);
-
-  React.useEffect(() => {
-    setVisibleNotificationCount(inboxHistoryPageSize);
-  }, [notifications.length]);
-
-  React.useEffect(() => {
-    visibleUnreadNotificationIdsRef.current = visibleNotifications
-      .filter((item) => !readNotificationIdSet.has(item.id))
-      .map((item) => item.id);
-  }, [readNotificationIdSet, visibleNotifications]);
-
-  React.useEffect(() => {
-    return () => {
-      const visibleUnreadNotificationIds = visibleUnreadNotificationIdsRef.current;
-      if (visibleUnreadNotificationIds.length > 0) {
-        onMarkNotificationsRead?.(visibleUnreadNotificationIds);
-      }
-    };
-  }, [onMarkNotificationsRead]);
-
-  return (
-    <>
-      <SectionTitle
-        title="Notifications"
-        subtitle="Invites, reminders, and quick attention checks in one place."
-      />
-      <Text style={styles.friendNote}>
-        Pending items stay visible until you respond. Recent history is capped to the newest {inboxHistoryPageSize}{' '}
-        items by default.
-      </Text>
-      {pendingFriendRequestCount > 0 ? (
-        <Card style={styles.panel} onPress={onOpenFriends} testID="pending-friend-request-notification">
-          <Card.Content>
-            <View style={styles.notificationHeader}>
-              <Chip compact icon="account-arrow-right">
-                Friend requests
-              </Chip>
-              <Text style={styles.friendNote}>Pending</Text>
-            </View>
-            <Text variant="bodyLarge">
-              {pendingFriendRequestCount} friend request{pendingFriendRequestCount === 1 ? '' : 's'}{' '}
-              {pendingFriendRequestCount === 1 ? 'is' : 'are'} waiting on you.
-            </Text>
-            <View style={styles.cardActions}>
-              <Button mode="contained-tonal" onPress={onOpenFriends} testID="open-friends-from-inbox-button">
-                Open Friends
-              </Button>
-            </View>
-          </Card.Content>
-        </Card>
-      ) : null}
-      {pendingLobbyInviteCount > 0 ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <View style={styles.notificationHeader}>
-              <Chip compact icon="bell-badge-outline">
-                Needs attention
-              </Chip>
-              <Text style={styles.friendNote}>Right now</Text>
-            </View>
-            <Text variant="bodyLarge">
-              {pendingLobbyInviteCount} lobby invite{pendingLobbyInviteCount === 1 ? '' : 's'}{' '}
-              {pendingLobbyInviteCount === 1 ? 'is' : 'are'} waiting on you.
-            </Text>
-          </Card.Content>
-        </Card>
-      ) : null}
-      {visibleNotifications.map((item) => (
-        <Card key={item.id} style={styles.panel}>
-          <Card.Content>
-            <View style={styles.notificationHeader}>
-              <View style={styles.notificationMetaRow}>
-                <Chip compact>{item.label}</Chip>
-                <Chip compact style={styles.notificationStatusChip}>
-                  {readNotificationIdSet.has(item.id) ? 'Read' : 'Unread'}
-                </Chip>
-              </View>
-              <Text style={styles.friendNote}>{item.age}</Text>
-            </View>
-            <Text variant="bodyLarge">{item.message}</Text>
-          </Card.Content>
-        </Card>
-      ))}
-      {hasMoreNotifications ? (
-        <Card style={styles.panel}>
-          <Card.Content>
-            <Text style={styles.friendNote}>
-              Showing the newest {visibleNotificationCount} updates. Load more if you need older history.
-            </Text>
-            <View style={styles.cardActions}>
-              <Button
-                mode="outlined"
-                onPress={() => {
-                  const visibleUnreadNotificationIds = visibleUnreadNotificationIdsRef.current;
-                  if (visibleUnreadNotificationIds.length > 0) {
-                    onMarkNotificationsRead?.(visibleUnreadNotificationIds);
-                  }
-
-                  setVisibleNotificationCount((current) => current + inboxHistoryPageSize);
-                }}
-                testID="inbox-load-more-button">
-                Load {inboxHistoryPageSize} more
-              </Button>
-            </View>
-          </Card.Content>
-        </Card>
-      ) : null}
-      <Card style={styles.panel}>
-        <Card.Content>
-          <Text variant="titleMedium">Lobby chat preview</Text>
-          <Divider style={styles.divider} />
-          <Text style={styles.listText}>NovaHex: Running ten minutes late.</Text>
-          <Text style={styles.listText}>You: No problem, spinning a backup game now.</Text>
-        </Card.Content>
-      </Card>
-    </>
-  );
-}

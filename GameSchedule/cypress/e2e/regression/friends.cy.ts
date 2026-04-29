@@ -632,7 +632,8 @@ describe('friends', () => {
   it('shows the signed-in user friend code and lets them regenerate it', () => {
     signInAndOpenFriends();
 
-    cy.contains('Profile').click();
+    cy.get('[data-testid="profile-chip"]').click();
+    cy.get('[data-testid="account-menu-profile-button"]').click();
     cy.contains(/^Your friend code$/).should('be.visible');
     cy.get('[data-testid="friend-code-value"]').should('contain', currentUser.profile.friend_code);
     cy.get('[data-testid="regenerate-friend-code-button"]').click();
@@ -776,7 +777,7 @@ describe('friends', () => {
     cy.contains('@novahex').should('be.visible');
   });
 
-  it('shows an inbox badge when there are pending incoming requests', () => {
+  it('surfaces pending incoming requests through Home and opens Friends pending view', () => {
     friendRequestsStore.push({
       id: 'request-incoming-badge-1',
       requester_profile_id: otherUser.userId,
@@ -789,18 +790,14 @@ describe('friends', () => {
     cy.visit('/');
     cy.signupUi(currentUser.email, currentUser.password);
 
-    cy.get('[data-testid="section-nav-badge-inbox"]').should('contain', '1');
-    clickSectionNav('inbox');
-    cy.contains(/1 friend request is waiting on you/i).should('be.visible');
-    cy.contains(/recent history is capped to the newest 25 items by default/i).should('be.visible');
-    cy.contains(/^Unread$/).should('be.visible');
-    cy.get('[data-testid="open-friends-from-inbox-button"]').click();
+    cy.get('[data-testid="section-nav-badge-home"]').should('contain', '1');
+    cy.get('[data-testid="dashboard-card-friend-requests"]').scrollIntoView().click();
     cy.contains('Pending requests').should('be.visible');
     cy.get('[data-testid="accept-friend-request-request-incoming-badge-1"]').click();
     cy.wait('@acceptFriendRequestRpc');
-    clickSectionNav('inbox');
-    cy.get('[data-testid="pending-friend-request-notification"]').should('not.exist');
-    cy.contains(/^Read$/).should('be.visible');
+    clickSectionNav('dashboard');
+    cy.get('[data-testid="section-nav-badge-home"]').should('not.exist');
+    cy.get('[data-testid="dashboard-card-friend-requests"]').should('contain.text', '0');
   });
 
   it('lets users create private groups, assign a friend to multiple groups, and filter by one group', () => {
@@ -881,7 +878,8 @@ describe('friends', () => {
     cy.visit('/');
     cy.signupUi(currentUser.email, currentUser.password);
 
-    clickSectionNav('friends');
+    cy.get('[data-testid="section-nav-menu-button"]').click();
+    cy.get('[data-testid="section-nav-friends"]').click();
     cy.contains(/share codes on purpose/i).should('be.visible');
     const typedCode = otherUser.profile.friend_code.toLowerCase().replace(/-/g, '');
     cy.get('[data-testid="friend-code-input"]').type(typedCode);

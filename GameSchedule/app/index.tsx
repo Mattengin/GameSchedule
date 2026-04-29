@@ -27,14 +27,13 @@ import {
   availabilityDays,
   demoLabel,
   discordLinkIntentStorageKey,
-  notifications,
   profileSelectFields,
   sections,
 } from '../features/home/homeConstants';
 import { useAvailabilityState } from '../features/home/homeAvailabilityHooks';
 import { useGamesState } from '../features/home/homeGameHooks';
 import { useLobbyState } from '../features/home/homeLobbyHooks';
-import { DashboardSection, GamesSection, InboxSection, RouletteSection } from '../features/home/homeSections';
+import { DashboardSection, GamesSection, RouletteSection } from '../features/home/homeSections';
 import { LobbyGameCarousel } from '../features/home/LobbyGameCarousel';
 import { useSocialState } from '../features/home/homeSocialHooks';
 import { styles } from '../features/home/homeStyles';
@@ -158,6 +157,7 @@ export default function HomeScreen() {
   const [lobbyAddGameDialogVisible, setLobbyAddGameDialogVisible] = React.useState(false);
   const [recurringSeriesEditVisible, setRecurringSeriesEditVisible] = React.useState(false);
   const [editingRecurringLobbyId, setEditingRecurringLobbyId] = React.useState<string | null>(null);
+  const [highlightIncomingInvites, setHighlightIncomingInvites] = React.useState(false);
   const [recurringSeriesEditForm, setRecurringSeriesEditForm] = React.useState({
     title: '',
     gameId: '',
@@ -171,8 +171,6 @@ export default function HomeScreen() {
     meetupDetails: '',
     visibility: 'private' as 'private' | 'public',
   });
-  const [readNotificationIds, setReadNotificationIds] = React.useState<string[]>([]);
-  const inboxReadStorageKey = session?.user?.id ? `gameschedule-inbox-read:${session.user.id}` : null;
 
   const {
     favoriteGameIds,
@@ -545,57 +543,10 @@ export default function HomeScreen() {
   }, [session]);
 
   React.useEffect(() => {
-    if (Platform.OS !== 'web') {
-      if (!session?.user) {
-        setReadNotificationIds([]);
-      }
-      return;
+    if (section !== 'lobbies') {
+      setHighlightIncomingInvites(false);
     }
-
-    const storage = globalThis.window?.localStorage;
-    if (!storage || !inboxReadStorageKey) {
-      setReadNotificationIds([]);
-      return;
-    }
-
-    const savedValue = storage.getItem(inboxReadStorageKey);
-    if (!savedValue) {
-      setReadNotificationIds([]);
-      return;
-    }
-
-    try {
-      const parsedValue = JSON.parse(savedValue);
-      if (Array.isArray(parsedValue)) {
-        setReadNotificationIds(parsedValue.filter((value): value is string => typeof value === 'string'));
-      } else {
-        setReadNotificationIds([]);
-      }
-    } catch {
-      setReadNotificationIds([]);
-    }
-  }, [inboxReadStorageKey, session]);
-
-  React.useEffect(() => {
-    if (Platform.OS !== 'web') {
-      return;
-    }
-
-    const storage = globalThis.window?.localStorage;
-    if (!storage || !inboxReadStorageKey) {
-      return;
-    }
-
-    storage.setItem(inboxReadStorageKey, JSON.stringify(readNotificationIds));
-  }, [inboxReadStorageKey, readNotificationIds]);
-
-  const markNotificationsRead = React.useCallback((notificationIds: string[]) => {
-    if (notificationIds.length === 0) {
-      return;
-    }
-
-    setReadNotificationIds((current) => Array.from(new Set([...current, ...notificationIds])));
-  }, []);
+  }, [section]);
 
   const sortedFriendGroups = React.useMemo(
     () =>
@@ -758,8 +709,11 @@ export default function HomeScreen() {
     [getCurrentLobbyMembership, incomingLobbies],
   );
 
-  const pendingInboxCount = incomingFriendRequests.length + pendingLobbyInviteCount;
-  const pendingInboxCountLabel = pendingInboxCount > 99 ? '99+' : String(pendingInboxCount);
+  const pendingHomeCount = incomingFriendRequests.length + pendingLobbyInviteCount;
+  const pendingHomeCountLabel = pendingHomeCount > 99 ? '99+' : String(pendingHomeCount);
+  const pendingFriendRequestCountLabel =
+    incomingFriendRequests.length > 99 ? '99+' : String(incomingFriendRequests.length);
+  const pendingLobbyInviteCountLabel = pendingLobbyInviteCount > 99 ? '99+' : String(pendingLobbyInviteCount);
   const actionableIncomingLobbies = React.useMemo(
     () =>
       incomingLobbies.filter((lobby) => {
@@ -2314,7 +2268,6 @@ export default function HomeScreen() {
 
   const renderDashboard = () => (
     <DashboardSection
-      libraryGames={libraryGames}
       onboardingIncomplete={Boolean(profile && !profile.onboarding_complete)}
       pendingFriendRequestCount={incomingFriendRequests.length}
       pendingLobbyInviteCount={pendingLobbyInviteCount}
@@ -2322,7 +2275,14 @@ export default function HomeScreen() {
       onCompleteSetup={() => setSection('profile')}
       onCreateLobby={() => setSection('lobbies')}
       onManageFriends={() => setSection('friends')}
-      onOpenLobbies={() => setSection('lobbies')}
+      onOpenFriendRequests={() => {
+        setFriendFilter('pending');
+        setSection('friends');
+      }}
+      onOpenLobbyInvites={() => {
+        setHighlightIncomingInvites(true);
+        setSection('lobbies');
+      }}
       onOpenSchedule={() => setSection('schedule')}
       onStartGroupSpin={() => setSection('roulette')}
     />
@@ -3346,7 +3306,11 @@ export default function HomeScreen() {
         </Card.Content>
       </Card>
       <Card
-        style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}
+        style={[
+          styles.panel,
+          isDesktopWeb ? styles.desktopPanelTile : null,
+          highlightIncomingInvites ? styles.focusedActionPanel : null,
+        ]}
         testID="lobbies-incoming-invites-card">
         <Card.Content>
           <Text variant="titleMedium">Incoming invites</Text>
@@ -3563,9 +3527,6 @@ export default function HomeScreen() {
                         Reschedule
                       </Button>
                     )}
-                    <Button mode="text" onPress={() => setSection('inbox')}>
-                      Send reminder
-                    </Button>
                   </View>
                   {hostedMembers.length === 0 ? (
                     <Text style={styles.friendNote}>No invitees on this lobby yet.</Text>
@@ -3926,20 +3887,6 @@ export default function HomeScreen() {
         </Card.Content>
       </Card>
     </>
-  );
-
-  const renderInbox = () => (
-    <InboxSection
-      notifications={notifications}
-      pendingFriendRequestCount={incomingFriendRequests.length}
-      pendingLobbyInviteCount={pendingLobbyInviteCount}
-      readNotificationIds={readNotificationIds}
-      onMarkNotificationsRead={markNotificationsRead}
-      onOpenFriends={() => {
-        setFriendFilter('pending');
-        setSection('friends');
-      }}
-    />
   );
 
   const renderProfile = () => {
@@ -4752,7 +4699,6 @@ export default function HomeScreen() {
     roulette: renderRoulette(),
     lobbies: renderLobbies(),
     schedule: renderSchedule(),
-    inbox: renderInbox(),
     profile: renderProfile(),
   }[section];
 
@@ -4760,18 +4706,38 @@ export default function HomeScreen() {
     () => sections.filter((item) => item.value !== 'profile'),
     [],
   );
+  const getSectionNavLabel = React.useCallback(
+    (value: SectionKey, defaultLabel: string) => {
+      if (value === 'dashboard' && pendingHomeCount > 0) {
+        return `${defaultLabel} (${pendingHomeCountLabel})`;
+      }
+
+      if (value === 'friends' && incomingFriendRequests.length > 0) {
+        return `${defaultLabel} (${pendingFriendRequestCountLabel})`;
+      }
+
+      if (value === 'lobbies' && pendingLobbyInviteCount > 0) {
+        return `${defaultLabel} (${pendingLobbyInviteCountLabel})`;
+      }
+
+      return defaultLabel;
+    },
+    [
+      incomingFriendRequests.length,
+      pendingFriendRequestCountLabel,
+      pendingHomeCount,
+      pendingHomeCountLabel,
+      pendingLobbyInviteCount,
+      pendingLobbyInviteCountLabel,
+    ],
+  );
   const desktopSectionButtons = React.useMemo(
     () =>
-      desktopSections.map((item) =>
-        item.value === 'inbox'
-          ? {
-              ...item,
-              icon: pendingInboxCount > 0 ? 'bell-badge-outline' : undefined,
-              label: pendingInboxCount > 0 ? `Inbox (${pendingInboxCountLabel})` : item.label,
-            }
-          : item,
-      ),
-    [desktopSections, pendingInboxCount, pendingInboxCountLabel],
+      desktopSections.map((item) => ({
+        ...item,
+        label: getSectionNavLabel(item.value, item.label),
+      })),
+    [desktopSections, getSectionNavLabel],
   );
   const currentSectionLabel =
     sections.find((item) => item.value === section)?.label ?? 'Navigate';
@@ -4819,9 +4785,9 @@ export default function HomeScreen() {
               iconColor="#F5F7FF"
               testID="section-nav-menu-button"
             />
-            {pendingInboxCount > 0 ? (
-              <Badge style={styles.mobileSectionNavBadge} size={20} testID="section-nav-badge-inbox">
-                {pendingInboxCountLabel}
+            {pendingHomeCount > 0 ? (
+              <Badge style={styles.mobileSectionNavBadge} size={20} testID="section-nav-badge-home">
+                {pendingHomeCountLabel}
               </Badge>
             ) : null}
           </View>
@@ -4848,11 +4814,6 @@ export default function HomeScreen() {
           </Surface>
           <Divider style={styles.mobileSectionMenuDivider} />
           {sections.map((item) => {
-            const itemLabel =
-              item.value === 'inbox' && pendingInboxCount > 0
-                ? `${item.label} (${pendingInboxCountLabel})`
-                : item.label;
-
             return (
               <Button
                 key={item.value}
@@ -4867,7 +4828,7 @@ export default function HomeScreen() {
                 contentStyle={styles.mobileSectionMenuButtonContent}
                 labelStyle={styles.mobileSectionMenuButtonLabel}
                 testID={`section-nav-${item.value}`}>
-                {itemLabel}
+                {getSectionNavLabel(item.value, item.label)}
               </Button>
             );
           })}

@@ -628,7 +628,7 @@ describe('mobile layout smoke', () => {
     cy.get('[data-testid="dashboard-event-pending-lobby"]').should('not.exist');
     cy.contains('Wild Rally Warmup').should('not.exist');
     cy.contains('Unscheduled Draft').should('not.exist');
-    cy.get('[data-testid="dashboard-open-lobbies-button"]').click();
+    cy.get('[data-testid="dashboard-card-lobby-invites"]').scrollIntoView().click();
     cy.contains(/^Create event$/).scrollIntoView().should('be.visible');
     cy.contains(/^Incoming invites$/).scrollIntoView().should('be.visible');
     cy.contains('Wild Rally Warmup').scrollIntoView().should('be.visible');

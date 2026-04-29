@@ -389,23 +389,6 @@ export const formatBusyBlockNote = (block: BusyBlock) => {
     : 'Already booked at this time';
 };
 
-export function StatCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: string;
-}) {
-  return (
-    <Surface style={[styles.statCard, { borderColor: accent }]} elevation={1}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </Surface>
-  );
-}
-
 export function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <View style={styles.sectionHeader}>
