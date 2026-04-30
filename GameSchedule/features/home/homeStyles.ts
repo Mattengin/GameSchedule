@@ -244,6 +244,55 @@ export const styles = StyleSheet.create({
   segmented: {
     marginTop: 4,
   },
+  desktopSectionNavShell: {
+    marginTop: 4,
+    backgroundColor: '#141A2D',
+    borderColor: '#2C3560',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    overflow: 'hidden',
+  },
+  desktopSectionNavPressable: {
+    flex: 1,
+    minWidth: 0,
+  },
+  desktopSectionNavPressablePressed: {
+    opacity: 0.92,
+  },
+  desktopSectionNavButton: {
+    minHeight: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  desktopSectionNavButtonWithDivider: {
+    borderRightColor: '#2C3560',
+    borderRightWidth: 1,
+  },
+  desktopSectionNavButtonActive: {
+    backgroundColor: '#4C4559',
+  },
+  desktopSectionNavButtonContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  desktopSectionNavButtonLabel: {
+    color: '#F5F7FF',
+    fontWeight: '600',
+  },
+  desktopSectionNavButtonLabelActive: {
+    fontWeight: '700',
+  },
+  desktopSectionNavButtonBadge: {
+    backgroundColor: '#FF6B81',
+  },
+  desktopSectionNavButtonBadgeActive: {
+    backgroundColor: '#F58CA0',
+  },
   mobileSectionNavShell: {
     marginTop: 4,
     backgroundColor: '#141A2D',
@@ -327,14 +376,44 @@ export const styles = StyleSheet.create({
   mobileSectionMenuButton: {
     alignSelf: 'stretch',
     borderRadius: 12,
+    marginHorizontal: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  mobileSectionMenuButtonActive: {
+    backgroundColor: '#4C4559',
+  },
+  mobileSectionMenuButtonPressed: {
+    opacity: 0.92,
   },
   mobileSectionMenuButtonContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
     justifyContent: 'flex-start',
-    minHeight: 40,
+    minHeight: 24,
+  },
+  mobileSectionMenuButtonLabelRow: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+    minWidth: 0,
   },
   mobileSectionMenuButtonLabel: {
     color: '#F5F7FF',
+    flexShrink: 1,
+    fontSize: 16,
+    fontWeight: '600',
     textAlign: 'left',
+  },
+  mobileSectionMenuButtonBadge: {
+    backgroundColor: '#FF6B81',
+  },
+  mobileSectionMenuButtonCheck: {
+    color: '#F5F7FF',
+    fontSize: 18,
+    fontWeight: '700',
   },
   heroCard: {
     backgroundColor: '#161B31',

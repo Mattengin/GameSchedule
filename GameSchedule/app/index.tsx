@@ -4702,25 +4702,22 @@ export default function HomeScreen() {
     profile: renderProfile(),
   }[section];
 
-  const desktopSections = React.useMemo(
-    () => sections.filter((item) => item.value !== 'profile'),
-    [],
-  );
-  const getSectionNavLabel = React.useCallback(
-    (value: SectionKey, defaultLabel: string) => {
+  const desktopSections = React.useMemo(() => sections.filter((item) => item.value !== 'profile'), []);
+  const getSectionNavBadgeLabel = React.useCallback(
+    (value: SectionKey) => {
       if (value === 'dashboard' && pendingHomeCount > 0) {
-        return `${defaultLabel} (${pendingHomeCountLabel})`;
+        return pendingHomeCountLabel;
       }
 
       if (value === 'friends' && incomingFriendRequests.length > 0) {
-        return `${defaultLabel} (${pendingFriendRequestCountLabel})`;
+        return pendingFriendRequestCountLabel;
       }
 
       if (value === 'lobbies' && pendingLobbyInviteCount > 0) {
-        return `${defaultLabel} (${pendingLobbyInviteCountLabel})`;
+        return pendingLobbyInviteCountLabel;
       }
 
-      return defaultLabel;
+      return null;
     },
     [
       incomingFriendRequests.length,
@@ -4730,14 +4727,6 @@ export default function HomeScreen() {
       pendingLobbyInviteCount,
       pendingLobbyInviteCountLabel,
     ],
-  );
-  const desktopSectionButtons = React.useMemo(
-    () =>
-      desktopSections.map((item) => ({
-        ...item,
-        label: getSectionNavLabel(item.value, item.label),
-      })),
-    [desktopSections, getSectionNavLabel],
   );
   const currentSectionLabel =
     sections.find((item) => item.value === section)?.label ?? 'Navigate';
@@ -4754,13 +4743,53 @@ export default function HomeScreen() {
   const desktopProfileActive = section === 'profile';
 
   const sectionNavigation = isDesktopWeb ? (
-    <SegmentedButtons
-      value={section}
-      onValueChange={(value) => setSection(value as SectionKey)}
-      density="small"
-      style={styles.segmented}
-      buttons={desktopSectionButtons}
-    />
+    <Surface style={styles.desktopSectionNavShell} elevation={0}>
+      {desktopSections.map((item, index) => {
+        const isActive = section === item.value;
+        const badgeLabel = getSectionNavBadgeLabel(item.value);
+        const isLast = index === desktopSections.length - 1;
+
+        return (
+          <Pressable
+            key={item.value}
+            accessibilityRole="button"
+            accessibilityState={{ selected: isActive }}
+            onPress={() => setSection(item.value)}
+            style={({ pressed }) => [
+              styles.desktopSectionNavPressable,
+              pressed ? styles.desktopSectionNavPressablePressed : null,
+            ]}
+            testID={`section-nav-${item.value}`}>
+            <View
+              style={[
+                styles.desktopSectionNavButton,
+                !isLast ? styles.desktopSectionNavButtonWithDivider : null,
+                isActive ? styles.desktopSectionNavButtonActive : null,
+              ]}>
+              <View style={styles.desktopSectionNavButtonContent}>
+                <Text
+                  style={[
+                    styles.desktopSectionNavButtonLabel,
+                    isActive ? styles.desktopSectionNavButtonLabelActive : null,
+                  ]}>
+                  {item.label}
+                </Text>
+                {badgeLabel ? (
+                  <Badge
+                    style={[
+                      styles.desktopSectionNavButtonBadge,
+                      isActive ? styles.desktopSectionNavButtonBadgeActive : null,
+                    ]}
+                    size={20}>
+                    {badgeLabel}
+                  </Badge>
+                ) : null}
+              </View>
+            </View>
+          </Pressable>
+        );
+      })}
+    </Surface>
   ) : (
     <Surface style={styles.mobileSectionNavShell} elevation={1}>
       <View style={styles.mobileSectionNavSummary}>
@@ -4814,22 +4843,34 @@ export default function HomeScreen() {
           </Surface>
           <Divider style={styles.mobileSectionMenuDivider} />
           {sections.map((item) => {
+            const isActive = section === item.value;
+            const badgeLabel = getSectionNavBadgeLabel(item.value);
+
             return (
-              <Button
+              <Pressable
                 key={item.value}
-                mode={section === item.value ? 'contained-tonal' : 'text'}
-                icon={section === item.value ? 'check' : undefined}
-                compact
                 onPress={() => {
                   setSection(item.value);
                   setMobileSectionMenuVisible(false);
                 }}
-                style={styles.mobileSectionMenuButton}
-                contentStyle={styles.mobileSectionMenuButtonContent}
-                labelStyle={styles.mobileSectionMenuButtonLabel}
+                style={({ pressed }) => [
+                  styles.mobileSectionMenuButton,
+                  isActive ? styles.mobileSectionMenuButtonActive : null,
+                  pressed ? styles.mobileSectionMenuButtonPressed : null,
+                ]}
                 testID={`section-nav-${item.value}`}>
-                {getSectionNavLabel(item.value, item.label)}
-              </Button>
+                <View style={styles.mobileSectionMenuButtonContent}>
+                  <View style={styles.mobileSectionMenuButtonLabelRow}>
+                    <Text style={styles.mobileSectionMenuButtonLabel}>{item.label}</Text>
+                    {badgeLabel ? (
+                      <Badge style={styles.mobileSectionMenuButtonBadge} size={20}>
+                        {badgeLabel}
+                      </Badge>
+                    ) : null}
+                  </View>
+                  {isActive ? <Text style={styles.mobileSectionMenuButtonCheck}>✓</Text> : null}
+                </View>
+              </Pressable>
             );
           })}
         </View>
