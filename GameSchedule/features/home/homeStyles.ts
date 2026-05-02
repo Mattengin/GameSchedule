@@ -751,6 +751,22 @@ export const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  friendCardActions: {
+    alignItems: 'flex-end',
+    gap: 4,
+    justifyContent: 'center',
+  },
+  friendInlineActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginLeft: -8,
+    marginTop: 6,
+  },
+  friendInlineActionButton: {
+    margin: 0,
+  },
   friendStatus: {
     color: '#7DFFB3',
     fontSize: 13,

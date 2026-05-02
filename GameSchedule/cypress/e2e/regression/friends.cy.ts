@@ -503,6 +503,40 @@ const registerMockFriends = (currentUser: MockAccount) => {
     });
   }).as('friendsUpdate');
 
+  cy.intercept('DELETE', '**/rest/v1/friends*', (req) => {
+    const decodedUrl = decodeURIComponent(req.url);
+    const matchedFriendIds = Array.from(
+      decodedUrl.matchAll(/friend_profile_id\.eq\.([^,)&]+)/g),
+      (match) => match[1],
+    );
+    const otherProfileId = matchedFriendIds.find((id) => id !== currentUser.userId) ?? '';
+
+    for (let index = friendshipsStore.length - 1; index >= 0; index -= 1) {
+      const row = friendshipsStore[index];
+      if (
+        (row.profile_id === currentUser.userId && row.friend_profile_id === otherProfileId) ||
+        (row.profile_id === otherProfileId && row.friend_profile_id === currentUser.userId)
+      ) {
+        friendshipsStore.splice(index, 1);
+      }
+    }
+
+    for (let index = friendGroupMembersStore.length - 1; index >= 0; index -= 1) {
+      const row = friendGroupMembersStore[index];
+      if (
+        row.profile_id === currentUser.userId &&
+        row.friend_profile_id === otherProfileId
+      ) {
+        friendGroupMembersStore.splice(index, 1);
+      }
+    }
+
+    req.reply({
+      statusCode: 204,
+      body: {},
+    });
+  }).as('friendsDelete');
+
   cy.intercept('GET', '**/rest/v1/friend_requests*', (req) => {
     const decodedUrl = decodeURIComponent(req.url);
     const relatedToUser = friendRequestsStore.filter(
@@ -871,6 +905,67 @@ describe('friends', () => {
     cy.wait('@friendGroupsDelete');
     cy.get(`[data-testid="delete-friend-group-${streamersGroupId}"]`).should('not.exist');
     cy.get(`[data-testid="friend-group-filter-${streamersGroupId}"]`).should('not.exist');
+  });
+
+  it('removes an accepted friend, clears tied group memberships, and updates shared friend surfaces', () => {
+    const groupId = 'group-league-night';
+    const now = new Date().toISOString();
+
+    friendshipsStore.push(
+      {
+        profile_id: currentUser.userId,
+        friend_profile_id: otherUser.userId,
+        is_favorite: false,
+      },
+      {
+        profile_id: otherUser.userId,
+        friend_profile_id: currentUser.userId,
+        is_favorite: false,
+      },
+    );
+    friendGroupsStore.push({
+      id: groupId,
+      profile_id: currentUser.userId,
+      name: 'League Night',
+      created_at: now,
+    });
+    friendGroupMembersStore.push({
+      group_id: groupId,
+      profile_id: currentUser.userId,
+      friend_profile_id: otherUser.userId,
+      created_at: now,
+    });
+
+    signInAndOpenFriends();
+
+    cy.contains('Nova Hex').should('be.visible');
+    cy.contains('League Night').should('be.visible');
+
+    cy.get(`[data-testid="remove-friend-button-${otherUser.userId}"]`).click();
+    cy.get('[data-testid="remove-friend-dialog"]').should('be.visible');
+    cy.contains(/will be removed for both of you/i).should('be.visible');
+    cy.contains(/does not block them or prevent either of you from sending a new friend request later/i).should(
+      'be.visible',
+    );
+    cy.get('[data-testid="cancel-remove-friend-button"]').click();
+    cy.contains('Nova Hex').should('be.visible');
+
+    cy.get(`[data-testid="remove-friend-button-${otherUser.userId}"]`).click();
+    cy.get('[data-testid="confirm-remove-friend-button"]').click();
+    cy.wait('@friendsDelete');
+
+    cy.contains(/removed nova hex from your friends/i).should('be.visible');
+    cy.get(`[data-testid="remove-friend-button-${otherUser.userId}"]`).should('not.exist');
+    cy.contains(/^No friends yet\.$/).should('be.visible');
+
+    cy.contains(/^Groups$/).click();
+    cy.get(`[data-testid="friend-group-filter-${groupId}"]`).click();
+    cy.contains(/no friends in this group yet/i).should('be.visible');
+
+    cy.contains(/^Roulette$/).click();
+    cy.contains(/add accepted friends first if you want roulette to randomize tonight's invite list too/i).should(
+      'be.visible',
+    );
   });
 
   it('supports the friend-code add flow on a latest iPhone-sized viewport', () => {

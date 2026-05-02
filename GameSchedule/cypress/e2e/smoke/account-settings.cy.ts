@@ -27,6 +27,13 @@ const authStore = new Map<string, MockAccount>();
 const profileUpdateBodies: Record<string, unknown>[] = [];
 const updateUserBodies: Record<string, unknown>[] = [];
 const friendCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const makeDiscordStyleUsername = (seed: string) =>
+  seed
+    .toLowerCase()
+    .replace(/[^a-z0-9._]+/g, '_')
+    .replace(/\.{2,}/g, '.')
+    .slice(0, 20)
+    .padEnd(2, 'x');
 
 const makeUserId = (email: string) => `user-${email.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 const makeFriendCode = (seed: string) => {
@@ -43,7 +50,7 @@ const makeFriendCode = (seed: string) => {
 
 const makeAccount = (email: string, password: string): MockAccount => {
   const userId = makeUserId(email);
-  const username = email.split('@')[0].toLowerCase();
+  const username = makeDiscordStyleUsername(email.split('@')[0]);
   const now = new Date().toISOString();
 
   return {
@@ -301,8 +308,8 @@ describe('account settings', () => {
     updateUserBodies.length = 0;
     account.profile = {
       ...account.profile,
-      username: account.email.split('@')[0].toLowerCase(),
-      friend_code: makeFriendCode(account.email.split('@')[0].toLowerCase()),
+      username: makeDiscordStyleUsername(account.email.split('@')[0]),
+      friend_code: makeFriendCode(makeDiscordStyleUsername(account.email.split('@')[0])),
       display_name: 'Test Pilot',
       avatar_url: null,
       onboarding_complete: true,
@@ -325,12 +332,16 @@ describe('account settings', () => {
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).click();
     cy.get('[data-testid="account-menu-profile-button"]', { timeout: 15000 }).click();
     cy.contains(/profile & settings/i).should('be.visible');
+    cy.contains(/^Preferences$/).should('not.exist');
+    cy.contains(/notifications ready for mobile and discord/i).should('not.exist');
+    cy.contains(/anonymous decline and do-not-invite lists pending backend/i).should('not.exist');
   };
 
   it('saves edited profile details and sends the expected profile payload', () => {
     signInAndOpenProfile();
 
-    cy.get('[data-testid="profile-edit-username-input"]').clear().type('proplayer');
+    cy.contains(/use 2-32 lowercase letters, numbers, periods, or underscores/i).should('be.visible');
+    cy.get('[data-testid="profile-edit-username-input"]').clear().type('pro.player_2');
     cy.get('[data-testid="profile-edit-display-name-input"]').clear().type('Pro Player');
     cy.get('[data-testid="profile-edit-avatar-url-input"]').clear().type('https://example.com/avatar.png');
     cy.get('[data-testid="profile-edit-save-button"]').click();
@@ -338,7 +349,7 @@ describe('account settings', () => {
     cy.wait('@profileUpdateRequest')
       .its('request.body')
       .should((body) => {
-        expect(body.username).to.equal('proplayer');
+        expect(body.username).to.equal('pro.player_2');
         expect(body.display_name).to.equal('Pro Player');
         expect(body.avatar_url).to.equal('https://example.com/avatar.png');
         expect(body.birthday_month).to.equal(null);
@@ -351,7 +362,62 @@ describe('account settings', () => {
     cy.contains(/profile saved/i).should('be.visible');
     cy.get('[data-testid="profile-chip"]').click();
     cy.get('[data-testid="account-menu-identity-name"]').should('contain', 'Pro Player');
-    cy.get('[data-testid="profile-edit-username-input"]').should('have.value', 'proplayer');
+    cy.get('[data-testid="profile-edit-username-input"]').should('have.value', 'pro.player_2');
+  });
+
+  it('rejects usernames with non-Discord characters before saving profile changes', () => {
+    account.profile.username = 'bad-name';
+    account.profile.friend_code = makeFriendCode(account.profile.username);
+    signInAndOpenProfile();
+
+    cy.get('[data-testid="profile-edit-username-input"]').should('have.value', 'bad-name');
+    cy.get('[data-testid="profile-edit-save-button"]').click();
+
+    cy.contains(/usernames must be 2-32 lowercase letters, numbers, periods, or underscores/i).should(
+      'be.visible',
+    );
+    cy.wrap(null).then(() => {
+      expect(profileUpdateBodies).to.have.length(0);
+    });
+  });
+
+  it('rejects usernames with consecutive periods before saving profile changes', () => {
+    account.profile.username = 'bad..name';
+    account.profile.friend_code = makeFriendCode(account.profile.username);
+    signInAndOpenProfile();
+
+    cy.get('[data-testid="profile-edit-username-input"]').should('have.value', 'bad..name');
+    cy.get('[data-testid="profile-edit-save-button"]').click();
+    cy.contains(/cannot contain consecutive periods/i).should('be.visible');
+    cy.wrap(null).then(() => {
+      expect(profileUpdateBodies).to.have.length(0);
+    });
+  });
+
+  it('validates display name length before saving profile changes', () => {
+    signInAndOpenProfile();
+
+    cy.get('[data-testid="profile-edit-display-name-input"]').clear().type('A'.repeat(33), {
+      delay: 0,
+    });
+    cy.get('[data-testid="profile-edit-save-button"]').click();
+
+    cy.contains(/display names can be up to 32 characters long/i).should('be.visible');
+    cy.wrap(null).then(() => {
+      expect(profileUpdateBodies).to.have.length(0);
+    });
+  });
+
+  it('rejects unsafe avatar urls before saving profile changes', () => {
+    signInAndOpenProfile();
+
+    cy.get('[data-testid="profile-edit-avatar-url-input"]').clear().type('javascript:alert(1)');
+    cy.get('[data-testid="profile-edit-save-button"]').click();
+
+    cy.contains(/use a valid https avatar url/i).should('be.visible');
+    cy.wrap(null).then(() => {
+      expect(profileUpdateBodies).to.have.length(0);
+    });
   });
 
   it('updates email through the auth API without exposing passwords', () => {

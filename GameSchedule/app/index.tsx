@@ -95,6 +95,22 @@ import { supabase } from '../services/supabaseClient';
 
 registerTranslation('en', en);
 
+const discordUsernameRuleHint = 'Use 2-32 lowercase letters, numbers, periods, or underscores.';
+const discordUsernamePattern = /^(?!.*\.\.)[a-z0-9._]{2,32}$/;
+
+function isValidDiscordStyleUsername(value: string) {
+  return discordUsernamePattern.test(value);
+}
+
+function isValidProfileAvatarUrl(value: string) {
+  try {
+    const parsedUrl = new URL(value);
+    return parsedUrl.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
@@ -148,6 +164,7 @@ export default function HomeScreen() {
   const [newFriendGroupName, setNewFriendGroupName] = React.useState('');
   const [editingFriendGroupId, setEditingFriendGroupId] = React.useState<string | null>(null);
   const [editingFriendGroupName, setEditingFriendGroupName] = React.useState('');
+  const [pendingFriendRemoval, setPendingFriendRemoval] = React.useState<AcceptedFriend | null>(null);
   const [friendCodeRegenerateConfirmVisible, setFriendCodeRegenerateConfirmVisible] =
     React.useState(false);
   const [friendCodeRegenerateCooldownUntil, setFriendCodeRegenerateCooldownUntil] = React.useState<number | null>(
@@ -2162,6 +2179,63 @@ export default function HomeScreen() {
     setFriendActionBusyId(null);
   };
 
+  const handleCloseFriendRemovalDialog = React.useCallback(() => {
+    if (friendActionBusyId?.startsWith('remove-friend:')) {
+      return;
+    }
+
+    setPendingFriendRemoval(null);
+  }, [friendActionBusyId]);
+
+  const handleConfirmRemoveFriend = React.useCallback(async () => {
+    if (!session?.user || !pendingFriendRemoval) {
+      return;
+    }
+
+    const friendToRemove = pendingFriendRemoval;
+    const friendLabel = friendToRemove.display_name ?? friendToRemove.username ?? 'Player';
+
+    setFriendActionBusyId(`remove-friend:${friendToRemove.id}`);
+    setFriendError('');
+    setFriendMessage('');
+
+    const { error } = await supabase
+      .from('friends')
+      .delete()
+      .or(
+        `and(profile_id.eq.${session.user.id},friend_profile_id.eq.${friendToRemove.id}),and(profile_id.eq.${friendToRemove.id},friend_profile_id.eq.${session.user.id})`,
+      );
+
+    if (error) {
+      setFriendError(error.message);
+      setFriendActionBusyId(null);
+      return;
+    }
+
+    setFriendships((current) =>
+      current.filter((friendship) => friendship.friend_profile_id !== friendToRemove.id),
+    );
+    setFriendGroupMemberships((current) =>
+      current.filter((membership) => membership.friend_profile_id !== friendToRemove.id),
+    );
+    if (selectedFriendForGroupAssignmentId === friendToRemove.id) {
+      setFriendGroupAssignmentVisible(false);
+      setSelectedFriendForGroupAssignmentId(null);
+    }
+    setPendingFriendRemoval(null);
+    setFriendMessage(`Removed ${friendLabel} from your friends.`);
+    setFriendActionBusyId(null);
+  }, [
+    pendingFriendRemoval,
+    selectedFriendForGroupAssignmentId,
+    session,
+    setFriendActionBusyId,
+    setFriendError,
+    setFriendGroupMemberships,
+    setFriendMessage,
+    setFriendships,
+  ]);
+
   const handleCreateFriendGroup = React.useCallback(async () => {
     if (!session?.user) {
       return;
@@ -2583,17 +2657,33 @@ export default function HomeScreen() {
                   ))}
                 </View>
               ) : null}
+              <View style={styles.friendInlineActions}>
+                <Button
+                  mode="text"
+                  compact
+                  onPress={() => {
+                    setSelectedFriendForGroupAssignmentId(friend.id);
+                    setFriendGroupAssignmentVisible(true);
+                  }}
+                  style={styles.friendInlineActionButton}
+                  disabled={friendActionBusyId !== null}
+                  testID={`friend-groups-button-${friend.id}`}>
+                  Groups
+                </Button>
+                <Button
+                  mode="text"
+                  compact
+                  textColor="#FF9B9B"
+                  onPress={() => {
+                    setPendingFriendRemoval(friend);
+                  }}
+                  style={styles.friendInlineActionButton}
+                  disabled={friendActionBusyId !== null}
+                  testID={`remove-friend-button-${friend.id}`}>
+                  Remove friend
+                </Button>
+              </View>
             </View>
-            <Button
-              mode="text"
-              onPress={() => {
-                setSelectedFriendForGroupAssignmentId(friend.id);
-                setFriendGroupAssignmentVisible(true);
-              }}
-              disabled={friendActionBusyId !== null}
-              testID={`friend-groups-button-${friend.id}`}>
-              Groups
-            </Button>
           </Card.Content>
         </Card>
       );
@@ -4156,6 +4246,7 @@ export default function HomeScreen() {
                   style={styles.input}
                   testID="profile-username-input"
                 />
+                <Text style={styles.friendNote}>{discordUsernameRuleHint}</Text>
                 <TextInput
                   mode="outlined"
                   label="Display name"
@@ -4332,6 +4423,7 @@ export default function HomeScreen() {
                   style={styles.input}
                   testID="profile-edit-username-input"
                 />
+                <Text style={styles.friendNote}>{discordUsernameRuleHint}</Text>
                 <TextInput
                   mode="outlined"
                   label="Display name"
@@ -4361,6 +4453,11 @@ export default function HomeScreen() {
                   style={styles.input}
                   testID="profile-edit-avatar-url-input"
                 />
+                {profileError ? (
+                  <HelperText type="error" visible>
+                    {profileError}
+                  </HelperText>
+                ) : null}
                 <DatePickerInput
                   locale="en"
                   label="Birthday (optional)"
@@ -4429,11 +4526,6 @@ export default function HomeScreen() {
                     testID="profile-birthday-clear-button">
                     Clear birthday
                   </Button>
-                ) : null}
-                {profileError ? (
-                  <HelperText type="error" visible>
-                    {profileError}
-                  </HelperText>
                 ) : null}
                 {profileMessage ? (
                   <HelperText type="info" visible style={styles.successText}>
@@ -4529,9 +4621,9 @@ export default function HomeScreen() {
           </Button>
         </Card.Content>
       </Card>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-        <Card.Content>
-          <Text variant="titleMedium">Favorite games</Text>
+	      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+	        <Card.Content>
+	          <Text variant="titleMedium">Favorite games</Text>
           <View style={styles.quickPath}>
             {libraryGames
               .filter((game) => favoriteGameIds.includes(game.id))
@@ -4539,21 +4631,13 @@ export default function HomeScreen() {
               .map((game) => <Chip key={game.id}>{game.title}</Chip>)}
             {favoriteGameIds.length === 0 ? (
               <Text style={styles.friendNote}>No favorites saved yet.</Text>
-            ) : null}
-          </View>
-        </Card.Content>
-      </Card>
-      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
-        <Card.Content>
-          <Text variant="titleMedium">Preferences</Text>
-          <Text style={styles.listText}>Dark dashboard theme enabled</Text>
-          <Text style={styles.listText}>Notifications ready for mobile and Discord</Text>
-          <Text style={styles.listText}>Anonymous decline and do-not-invite lists pending backend</Text>
-        </Card.Content>
-      </Card>
-      </View>
-      </View>
-    );
+	            ) : null}
+	          </View>
+	        </Card.Content>
+	      </Card>
+	      </View>
+	      </View>
+	    );
   };
 
   const handleAuth = async () => {
@@ -4663,6 +4747,26 @@ export default function HomeScreen() {
 
     if (!username || !displayName) {
       setProfileError('Username and display name are required.');
+      setProfileMessage('');
+      return;
+    }
+
+    if (!isValidDiscordStyleUsername(username)) {
+      setProfileError(
+        'Usernames must be 2-32 lowercase letters, numbers, periods, or underscores, and cannot contain consecutive periods.',
+      );
+      setProfileMessage('');
+      return;
+    }
+
+    if (displayName.length > 32) {
+      setProfileError('Display names can be up to 32 characters long.');
+      setProfileMessage('');
+      return;
+    }
+
+    if (avatarUrl && !isValidProfileAvatarUrl(avatarUrl)) {
+      setProfileError('Use a valid https avatar URL.');
       setProfileMessage('');
       return;
     }
@@ -5751,6 +5855,42 @@ export default function HomeScreen() {
               disabled={lobbyBusy}
               testID="confirm-cancel-lobby-button">
               Cancel lobby
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+        <Dialog
+          visible={Boolean(pendingFriendRemoval)}
+          style={[styles.compactDialog, compactDialogWidth > 0 ? { width: compactDialogWidth } : null]}
+          onDismiss={handleCloseFriendRemovalDialog}
+          testID="remove-friend-dialog">
+          <Dialog.Title>Remove friend?</Dialog.Title>
+          <Dialog.Content>
+            <View style={styles.sectionStack}>
+              <Text style={styles.friendNote}>
+                {pendingFriendRemoval
+                  ? `${pendingFriendRemoval.display_name ?? pendingFriendRemoval.username ?? 'This friend'} will be removed for both of you. Any private group assignments tied to this friendship will disappear too.`
+                  : 'This friendship will be removed for both of you.'}
+              </Text>
+              <Text style={styles.friendNote}>
+                This does not block them or prevent either of you from sending a new friend request later.
+              </Text>
+            </View>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              onPress={handleCloseFriendRemovalDialog}
+              disabled={friendActionBusyId !== null}
+              testID="cancel-remove-friend-button">
+              Keep friend
+            </Button>
+            <Button
+              onPress={() => {
+                void handleConfirmRemoveFriend();
+              }}
+              loading={Boolean(friendActionBusyId?.startsWith('remove-friend:'))}
+              disabled={friendActionBusyId !== null}
+              testID="confirm-remove-friend-button">
+              Remove friend
             </Button>
           </Dialog.Actions>
         </Dialog>
