@@ -102,6 +102,7 @@ export default function HomeScreen() {
   const recurringEditDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
   const compactDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 520 : 420);
   const friendCodeRegenerateCooldownMs = 15_000;
+  const canceledLobbyVisibleWindowMs = 7 * 24 * 60 * 60 * 1000;
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [session, setSession] = React.useState<Session | null>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
@@ -154,6 +155,8 @@ export default function HomeScreen() {
   );
   const [friendCodeRegenerateCooldownSeconds, setFriendCodeRegenerateCooldownSeconds] = React.useState(0);
   const [gamePendingRemoval, setGamePendingRemoval] = React.useState<GameRecord | null>(null);
+  const [lobbyPendingCancellation, setLobbyPendingCancellation] = React.useState<LobbyRecord | null>(null);
+  const [lobbyCancellationReason, setLobbyCancellationReason] = React.useState('');
   const [lobbyAddGameDialogVisible, setLobbyAddGameDialogVisible] = React.useState(false);
   const [recurringSeriesEditVisible, setRecurringSeriesEditVisible] = React.useState(false);
   const [editingRecurringLobbyId, setEditingRecurringLobbyId] = React.useState<string | null>(null);
@@ -699,12 +702,31 @@ export default function HomeScreen() {
     (lobbyId: string) => lobbyMembers.find((member) => member.lobby_id === lobbyId && member.profile_id === session?.user?.id) ?? null,
     [lobbyMembers, session],
   );
+  const isVisibleCanceledOneOffLobby = React.useCallback(
+    (lobby: Pick<LobbyRecord, 'status' | 'lobby_series_id' | 'closed_at'>) => {
+      if (lobby.status !== 'closed' || lobby.lobby_series_id) {
+        return false;
+      }
+
+      if (!lobby.closed_at) {
+        return false;
+      }
+
+      const closedAt = new Date(lobby.closed_at).getTime();
+      if (Number.isNaN(closedAt)) {
+        return false;
+      }
+
+      return Date.now() - closedAt <= canceledLobbyVisibleWindowMs;
+    },
+    [canceledLobbyVisibleWindowMs],
+  );
 
   const pendingLobbyInviteCount = React.useMemo(
     () =>
       incomingLobbies.filter((lobby) => {
         const membership = getCurrentLobbyMembership(lobby.id);
-        return membership?.rsvp_status === 'pending';
+        return lobby.status !== 'closed' && membership?.rsvp_status === 'pending';
       }).length,
     [getCurrentLobbyMembership, incomingLobbies],
   );
@@ -718,15 +740,38 @@ export default function HomeScreen() {
     () =>
       incomingLobbies.filter((lobby) => {
         const membership = getCurrentLobbyMembership(lobby.id);
-        return Boolean(membership && membership.rsvp_status !== 'accepted');
+        return lobby.status !== 'closed' && Boolean(membership && membership.rsvp_status !== 'accepted');
       }),
     [getCurrentLobbyMembership, incomingLobbies],
   );
-  const committedScheduleLobbies = React.useMemo(
+  const visibleCanceledOneOffLobbies = React.useMemo(
     () =>
       lobbies
+        .filter((lobby) => isVisibleCanceledOneOffLobby(lobby))
+        .sort((left, right) => {
+          const leftTime = new Date(left.closed_at ?? '').getTime();
+          const rightTime = new Date(right.closed_at ?? '').getTime();
+          return rightTime - leftTime;
+        }),
+    [isVisibleCanceledOneOffLobby, lobbies],
+  );
+  const activeHostedLobbies = React.useMemo(
+    () => hostedLobbies.filter((lobby) => lobby.status !== 'closed'),
+    [hostedLobbies],
+  );
+  const committedScheduleLobbies = React.useMemo(
+    () => {
+      const scheduleEntries = lobbies
         .filter((lobby) => {
           if (!lobby.scheduled_for) {
+            return false;
+          }
+
+          if (isVisibleCanceledOneOffLobby(lobby)) {
+            return true;
+          }
+
+          if (lobby.status === 'closed') {
             return false;
           }
 
@@ -741,8 +786,11 @@ export default function HomeScreen() {
           const leftTime = new Date(left.scheduled_for ?? '').getTime();
           const rightTime = new Date(right.scheduled_for ?? '').getTime();
           return leftTime - rightTime;
-        }),
-    [getCurrentLobbyMembership, lobbies, session],
+        });
+
+      return scheduleEntries;
+    },
+    [getCurrentLobbyMembership, isVisibleCanceledOneOffLobby, lobbies, session],
   );
   const dashboardUpcomingEvents = React.useMemo<DashboardUpcomingEvent[]>(() => {
     const now = Date.now();
@@ -753,6 +801,10 @@ export default function HomeScreen() {
     const incomingEventEntries = incomingLobbies.reduce<
       { lobby: LobbyRecord; status: DashboardUpcomingEvent['status'] }[]
     >((accumulator, lobby) => {
+        if (lobby.status === 'closed') {
+          return accumulator;
+        }
+
         const membership = getCurrentLobbyMembership(lobby.id);
         if (!membership || membership.rsvp_status !== 'accepted') {
           return accumulator;
@@ -763,11 +815,15 @@ export default function HomeScreen() {
       }, []);
 
     const nextEvents = [
-      ...hostedLobbies.map((lobby) => ({
+      ...activeHostedLobbies.map((lobby) => ({
         lobby,
         status: 'hosting' as const,
       })),
       ...incomingEventEntries,
+      ...visibleCanceledOneOffLobbies.map((lobby) => ({
+        lobby,
+        status: 'canceled' as const,
+      })),
     ]
       .filter(({ lobby }) => {
         if (!lobby.scheduled_for) {
@@ -797,9 +853,14 @@ export default function HomeScreen() {
       game_title: lobby.games?.title ?? null,
       scheduled_for: lobby.scheduled_for!,
       scheduled_until: lobby.scheduled_until,
+      closed_reason: lobby.closed_reason,
       status,
     }));
-  }, [getCurrentLobbyMembership, hostedLobbies, incomingLobbies]);
+  }, [activeHostedLobbies, getCurrentLobbyMembership, incomingLobbies, visibleCanceledOneOffLobbies]);
+  const dashboardUpcomingEventCount = React.useMemo(
+    () => dashboardUpcomingEvents.filter((event) => event.status !== 'canceled').length,
+    [dashboardUpcomingEvents],
+  );
 
   const prioritizeBusyBlock = React.useCallback(
     (left: BusyBlock, right: BusyBlock) => {
@@ -1045,6 +1106,12 @@ export default function HomeScreen() {
         : lobby.discord_guild_name
           ? `Meet in Discord: ${lobby.discord_guild_name}`
           : null,
+    [],
+  );
+
+  const getCanceledLobbyReasonLabel = React.useCallback(
+    (lobby: Pick<LobbyRecord, 'closed_reason'>) =>
+      lobby.closed_reason?.trim() ? `Host note: ${lobby.closed_reason.trim()}` : 'Host canceled this lobby.',
     [],
   );
 
@@ -1552,6 +1619,12 @@ export default function HomeScreen() {
   };
 
   const startLobbyReschedule = (lobby: LobbyRecord) => {
+    if (lobby.status === 'closed') {
+      setLobbiesError('Canceled lobbies can’t be rescheduled.');
+      setLobbyMessage('');
+      return;
+    }
+
     const startDate = lobby.scheduled_for ? new Date(lobby.scheduled_for) : createDefaultLobbyStartDate();
     const safeStartDate = Number.isNaN(startDate.getTime()) ? createDefaultLobbyStartDate() : startDate;
     const endDate = getLobbyEndDate({
@@ -1572,6 +1645,12 @@ export default function HomeScreen() {
 
   const handleSaveLobbyTime = async (lobby: LobbyRecord) => {
     if (!session?.user) {
+      return;
+    }
+
+    if (lobby.status === 'closed') {
+      setLobbiesError('Canceled lobbies can’t be rescheduled.');
+      setLobbyMessage('');
       return;
     }
 
@@ -1604,6 +1683,62 @@ export default function HomeScreen() {
     setLobbyMessage('Lobby time updated.');
     setLobbyBusy(false);
   };
+
+  const handleOpenLobbyCancellationDialog = React.useCallback((lobby: LobbyRecord) => {
+    setLobbyPendingCancellation(lobby);
+    setLobbyCancellationReason('');
+    setLobbiesError('');
+    setLobbyMessage('');
+  }, [setLobbiesError, setLobbyMessage]);
+
+  const handleCloseLobbyCancellationDialog = React.useCallback(() => {
+    if (lobbyBusy) {
+      return;
+    }
+
+    setLobbyPendingCancellation(null);
+    setLobbyCancellationReason('');
+  }, [lobbyBusy]);
+
+  const handleConfirmLobbyCancellation = React.useCallback(async () => {
+    if (!session?.user || !lobbyPendingCancellation) {
+      return;
+    }
+
+    setLobbyBusy(true);
+    setLobbiesError('');
+    setLobbyMessage('');
+
+    const { error } = await supabase.rpc('cancel_lobby', {
+      p_lobby_id: lobbyPendingCancellation.id,
+      p_reason: lobbyCancellationReason.trim() || null,
+    });
+
+    if (error) {
+      setLobbiesError(error.message);
+      setLobbyBusy(false);
+      return;
+    }
+
+    await loadLobbies();
+    if (editingLobbyId === lobbyPendingCancellation.id) {
+      setEditingLobbyId(null);
+    }
+    setLobbyPendingCancellation(null);
+    setLobbyCancellationReason('');
+    setLobbyMessage('Lobby canceled.');
+    setLobbyBusy(false);
+  }, [
+    editingLobbyId,
+    loadLobbies,
+    lobbyCancellationReason,
+    lobbyPendingCancellation,
+    session,
+    setEditingLobbyId,
+    setLobbiesError,
+    setLobbyBusy,
+    setLobbyMessage,
+  ]);
 
   const closeRecurringSeriesEdit = React.useCallback(() => {
     setRecurringSeriesEditVisible(false);
@@ -2271,6 +2406,7 @@ export default function HomeScreen() {
       onboardingIncomplete={Boolean(profile && !profile.onboarding_complete)}
       pendingFriendRequestCount={incomingFriendRequests.length}
       pendingLobbyInviteCount={pendingLobbyInviteCount}
+      upcomingEventCount={dashboardUpcomingEventCount}
       upcomingEvents={dashboardUpcomingEvents}
       onCompleteSetup={() => setSection('profile')}
       onCreateLobby={() => setSection('lobbies')}
@@ -3480,11 +3616,11 @@ export default function HomeScreen() {
             Review invite status, read comments, and apply suggested times without leaving the lobby workflow.
           </Text>
           {lobbiesLoading ? <Text style={styles.friendNote}>Loading hosted lobby details...</Text> : null}
-          {!lobbiesLoading && hostedLobbies.length === 0 ? (
+          {!lobbiesLoading && activeHostedLobbies.length === 0 ? (
             <Text style={styles.friendNote}>Create your first hosted session from a game or roulette pick.</Text>
           ) : null}
           {!lobbiesLoading &&
-            hostedLobbies.map((lobby) => {
+            activeHostedLobbies.map((lobby) => {
               const recurringSeries = getLobbySeries(lobby);
               const recurrenceLabel = lobby.recurring_frequency
                 ? formatLobbyRecurrenceLabel(lobby.recurring_frequency)
@@ -3523,9 +3659,17 @@ export default function HomeScreen() {
                         </Button>
                       </>
                     ) : (
-                      <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
-                        Reschedule
-                      </Button>
+                      <>
+                        <Button mode="contained-tonal" onPress={() => startLobbyReschedule(lobby)}>
+                          Reschedule
+                        </Button>
+                        <Button
+                          mode="outlined"
+                          onPress={() => handleOpenLobbyCancellationDialog(lobby)}
+                          testID={`cancel-lobby-button-${lobby.id}`}>
+                          Cancel lobby
+                        </Button>
+                      </>
                     )}
                   </View>
                   {hostedMembers.length === 0 ? (
@@ -3607,6 +3751,58 @@ export default function HomeScreen() {
             })}
         </Card.Content>
       </Card>
+      {!lobbiesLoading && visibleCanceledOneOffLobbies.length > 0 ? (
+        <Card
+          style={[styles.panel, isDesktopWeb ? styles.desktopFullSpan : null]}
+          testID="lobbies-canceled-lobbies-card">
+          <Card.Content>
+            <Text variant="titleMedium">Recently canceled</Text>
+            <Text style={styles.friendNote}>
+              Canceled one-off lobbies stay visible for a week so everyone can see the change and the host note.
+            </Text>
+            {visibleCanceledOneOffLobbies.map((lobby) => {
+              const isHost = lobby.host_profile_id === session?.user?.id;
+              const currentMembership = getCurrentLobbyMembership(lobby.id);
+              const recurrenceLabel = lobby.recurring_frequency
+                ? formatLobbyRecurrenceLabel(lobby.recurring_frequency)
+                : null;
+
+              return (
+                <Surface
+                  key={`canceled-${lobby.id}`}
+                  style={[styles.inviteResponseCard, styles.canceledLobbyCard]}
+                  elevation={1}
+                  testID={`canceled-lobby-${lobby.id}`}>
+                  <View style={styles.inviteCardHeader}>
+                    <View style={styles.friendMeta}>
+                      <Text variant="titleMedium">{lobby.title}</Text>
+                      <Text style={styles.friendNote}>
+                        {lobby.games?.title ?? 'Game unavailable'} | {formatLobbyScheduleLabel(lobby)}
+                      </Text>
+                      <Text style={styles.friendNote}>
+                        {isHost ? 'Hosted by you' : `Host: ${getLobbyProfileLabel(lobby.host_profile_id)}`}
+                      </Text>
+                      {recurrenceLabel ? <Text style={styles.friendNote}>Repeats: {recurrenceLabel}</Text> : null}
+                      {getLobbyMeetupLabel(lobby) ? (
+                        <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
+                      ) : null}
+                      {!isHost && currentMembership ? (
+                        <Text style={styles.friendNote}>
+                          Your last response: {formatInviteStatusLabel(currentMembership.rsvp_status)}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Chip compact style={styles.dashboardCanceledChip} textStyle={styles.dashboardCanceledChipText}>
+                      Canceled
+                    </Chip>
+                  </View>
+                  <Text style={styles.canceledLobbyReason}>{getCanceledLobbyReasonLabel(lobby)}</Text>
+                </Surface>
+              );
+            })}
+          </Card.Content>
+        </Card>
+      ) : null}
       </View>
     </View>
   );
@@ -3621,15 +3817,16 @@ export default function HomeScreen() {
         <Card.Content>
           <Text variant="titleMedium">Committed events</Text>
           <Text style={styles.friendNote}>
-            Hosted and accepted lobbies count as booked time here. Pending invite decisions stay in Lobbies instead.
+            Hosted and accepted lobbies count as booked time here. Recent cancellations stay visible for a week so the schedule and Home stay in sync.
           </Text>
           {committedScheduleLobbies.length === 0 ? (
             <Text style={styles.friendNote}>No committed events yet. Create one from the Lobbies tab or accept an invite there first.</Text>
           ) : null}
           {committedScheduleLobbies.map((lobby) => {
             const isHost = lobby.host_profile_id === session?.user?.id;
+            const isCanceled = isVisibleCanceledOneOffLobby(lobby);
             const currentMembership = getCurrentLobbyMembership(lobby.id);
-            const isEditing = isHost && editingLobbyId === lobby.id;
+            const isEditing = isHost && !isCanceled && editingLobbyId === lobby.id;
             const membershipColors = currentMembership
               ? getLobbyStatusColors(currentMembership.rsvp_status, true)
               : null;
@@ -3638,7 +3835,11 @@ export default function HomeScreen() {
               : null;
 
             return (
-              <Surface key={`${lobby.id}-schedule`} style={styles.scheduleEventCard} elevation={1}>
+              <Surface
+                key={`${lobby.id}-schedule`}
+                style={[styles.scheduleEventCard, isCanceled ? styles.canceledLobbyCard : null]}
+                elevation={1}
+                testID={isCanceled ? `schedule-canceled-lobby-${lobby.id}` : `schedule-event-${lobby.id}`}>
                 <View style={styles.eventTimeHeader}>
                   <View style={styles.friendMeta}>
                     <Text variant="titleMedium">{lobby.title}</Text>
@@ -3649,18 +3850,25 @@ export default function HomeScreen() {
                     {getLobbyMeetupLabel(lobby) ? (
                       <Text style={styles.friendNote}>{getLobbyMeetupLabel(lobby)}</Text>
                     ) : null}
-                    {!isHost && currentMembership ? (
+                    {isCanceled ? (
+                      <Text style={styles.canceledLobbyReason}>{getCanceledLobbyReasonLabel(lobby)}</Text>
+                    ) : null}
+                    {!isCanceled && !isHost && currentMembership ? (
                       <Text style={styles.friendNote}>
                         Your current response: {formatInviteStatusLabel(currentMembership.rsvp_status)}
                       </Text>
                     ) : null}
-                    {!hasExplicitLobbyEnd(lobby) ? (
+                    {!isCanceled && !hasExplicitLobbyEnd(lobby) ? (
                       <Text style={styles.friendNote}>
                         Friends will see this as Maybe busy because the session has no set end time.
                       </Text>
                     ) : null}
                   </View>
-                  {isHost ? (
+                  {isCanceled ? (
+                    <Chip compact style={styles.dashboardCanceledChip} textStyle={styles.dashboardCanceledChipText}>
+                      Canceled
+                    </Chip>
+                  ) : isHost ? (
                     <Button
                       mode={isEditing ? 'text' : 'contained-tonal'}
                       compact
@@ -3741,7 +3949,7 @@ export default function HomeScreen() {
                     </Button>
                   </View>
                 ) : null}
-                {!isHost && currentMembership?.response_comment ? (
+                {!isCanceled && !isHost && currentMembership?.response_comment ? (
                   <Text style={styles.friendNote}>{currentMembership.response_comment}</Text>
                 ) : null}
               </Surface>
@@ -3765,15 +3973,20 @@ export default function HomeScreen() {
           <Text style={styles.friendNote}>
             Add recurring windows when friends are allowed to send game invites.
           </Text>
-          <SegmentedButtons
-            value={autoDeclineOutsideHours ? 'on' : 'off'}
-            onValueChange={(value) => setAutoDeclineOutsideHours(value === 'on')}
-            style={styles.segmented}
-            buttons={[
-              { value: 'off', label: 'Allow outside hours' },
-              { value: 'on', label: 'Auto-decline outside hours' },
-            ]}
-          />
+          <View style={styles.quickPath}>
+            <Chip
+              selected={!autoDeclineOutsideHours}
+              onPress={() => setAutoDeclineOutsideHours(false)}
+              testID="availability-auto-decline-off">
+              Allow outside hours
+            </Chip>
+            <Chip
+              selected={autoDeclineOutsideHours}
+              onPress={() => setAutoDeclineOutsideHours(true)}
+              testID="availability-auto-decline-on">
+              Auto-decline outside hours
+            </Chip>
+          </View>
           <View style={styles.dayPicker}>
             {availabilityDays.map((day) => (
               <Chip
@@ -5481,8 +5694,8 @@ export default function HomeScreen() {
               </View>
             </ScrollView>
           </Dialog.ScrollArea>
-          <Dialog.Actions>
-            <Button
+        <Dialog.Actions>
+          <Button
               onPress={closeRecurringSeriesEdit}
               disabled={lobbyBusy}
               testID="cancel-recurring-series-future-button">
@@ -5496,6 +5709,48 @@ export default function HomeScreen() {
               disabled={lobbyBusy}
               testID="save-recurring-series-future-button">
               Save all future
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+        <Dialog
+          visible={Boolean(lobbyPendingCancellation)}
+          style={[styles.compactDialog, compactDialogWidth > 0 ? { width: compactDialogWidth } : null]}
+          onDismiss={handleCloseLobbyCancellationDialog}
+          testID="cancel-lobby-dialog">
+          <Dialog.Title>Cancel lobby?</Dialog.Title>
+          <Dialog.Content>
+            <View style={styles.sectionStack}>
+              <Text style={styles.friendNote}>
+                {lobbyPendingCancellation
+                  ? `${lobbyPendingCancellation.title} will stop counting as an upcoming event right away, but it will stay visible for 7 days so invitees can see the cancellation.`
+                  : 'This lobby will stop counting as an upcoming event right away.'}
+              </Text>
+              <TextInput
+                mode="outlined"
+                label="Reason (optional)"
+                multiline
+                value={lobbyCancellationReason}
+                onChangeText={setLobbyCancellationReason}
+                style={styles.input}
+                testID="cancel-lobby-reason-input"
+              />
+            </View>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              onPress={handleCloseLobbyCancellationDialog}
+              disabled={lobbyBusy}
+              testID="cancel-cancel-lobby-button">
+              Keep lobby
+            </Button>
+            <Button
+              onPress={() => {
+                void handleConfirmLobbyCancellation();
+              }}
+              loading={lobbyBusy}
+              disabled={lobbyBusy}
+              testID="confirm-cancel-lobby-button">
+              Cancel lobby
             </Button>
           </Dialog.Actions>
         </Dialog>

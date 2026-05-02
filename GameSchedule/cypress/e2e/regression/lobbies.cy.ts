@@ -57,6 +57,8 @@ type MockLobby = {
   scheduled_for: string | null;
   scheduled_until: string | null;
   meetup_details: string | null;
+  closed_at: string | null;
+  closed_reason: string | null;
   lobby_series_id: string | null;
   series_occurrence_key: string | null;
   recurring_frequency: 'weekly' | 'biweekly' | null;
@@ -568,6 +570,8 @@ const buildLobby = (
     scheduled_for: scheduledFor,
     scheduled_until: scheduledUntil,
     meetup_details: meetupDetails,
+    closed_at: null,
+    closed_reason: null,
     lobby_series_id: recurringOptions?.lobbySeriesId ?? null,
     series_occurrence_key: recurringOptions?.seriesOccurrenceKey ?? null,
     recurring_frequency: recurringOptions?.recurringFrequency ?? null,
@@ -1479,6 +1483,45 @@ const registerMockLobbies = () => {
     });
   }).as('updateRecurringLobbySeriesFutureRpc');
 
+  cy.intercept('POST', '**/rest/v1/rpc/cancel_lobby', (req) => {
+    const currentAccount = getAccountById(currentSessionUserId ?? '');
+    const {
+      p_lobby_id: lobbyId,
+      p_reason: reason,
+    } = req.body as {
+      p_lobby_id: string;
+      p_reason?: string | null;
+    };
+
+    const lobbyIndex = lobbyStore.findIndex(
+      (lobby) =>
+        lobby.id === lobbyId &&
+        lobby.host_profile_id === currentAccount?.userId &&
+        lobby.lobby_series_id === null &&
+        lobby.status !== 'closed',
+    );
+
+    if (!currentAccount || lobbyIndex < 0) {
+      req.reply({
+        statusCode: 404,
+        body: { message: 'Lobby not found, already canceled, or not eligible for one-off cancellation' },
+      });
+      return;
+    }
+
+    lobbyStore[lobbyIndex] = {
+      ...lobbyStore[lobbyIndex],
+      status: 'closed',
+      closed_at: nextIsoTimestamp(),
+      closed_reason: reason?.trim() ? reason.trim() : null,
+    };
+
+    req.reply({
+      statusCode: 200,
+      body: lobbyStore[lobbyIndex],
+    });
+  }).as('cancelLobbyRpc');
+
   cy.intercept('POST', '**/rest/v1/rpc/respond_to_lobby_invite', (req) => {
     const {
       p_lobby_id: lobbyId,
@@ -1820,6 +1863,96 @@ describe('lobbies flow', () => {
     cy.contains(/private lobby/i).should('be.visible');
   });
 
+  it('cancels a one-off lobby with a reason and keeps Home, Lobbies, and Schedule in sync for host and invitee', () => {
+    signUpHost();
+
+    createLobbyWithInvitees([novaUserId]);
+    cy.wait('@createLobbyRpc');
+
+    cy.contains(/^Home$/).click({ force: true });
+    cy.get('[data-testid="dashboard-card-upcoming-events"]').should('contain.text', '1');
+    cy.contains('Helix Arena Lobby').should('be.visible');
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('[data-testid="cancel-lobby-button-lobby-1"]').click();
+    cy.get('[data-testid="cancel-lobby-reason-input"]').type('Can\'t make tonight after all.');
+    cy.get('[data-testid="confirm-cancel-lobby-button"]').click();
+
+    cy.wait('@cancelLobbyRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_lobby_id).to.equal('lobby-1');
+        expect(body.p_reason).to.equal('Can\'t make tonight after all.');
+      });
+
+    cy.contains(/lobby canceled/i).should('exist');
+
+    cy.contains(/^Home$/).click({ force: true });
+    cy.get('[data-testid="dashboard-card-upcoming-events"]').should('contain.text', '0');
+    cy.get('[data-testid="dashboard-event-lobby-1"]').within(() => {
+      cy.contains('Canceled').should('exist');
+      cy.contains('Host note: Can\'t make tonight after all.').should('exist');
+    });
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('[data-testid="lobbies-canceled-lobbies-card"]').within(() => {
+      cy.contains('Recently canceled').should('exist');
+      cy.contains('Helix Arena Lobby').should('exist');
+      cy.contains('Host note: Can\'t make tonight after all.').should('exist');
+    });
+    cy.get('[data-testid="lobbies-hosted-lobbies-card"]').should('not.contain.text', 'Helix Arena Lobby');
+
+    cy.contains(/^Schedule$/).click({ force: true });
+    cy.get('[data-testid="schedule-canceled-lobby-lobby-1"]').within(() => {
+      cy.contains('Canceled').should('exist');
+      cy.contains('Host note: Can\'t make tonight after all.').should('exist');
+    });
+
+    logout();
+    logInAs(novaEmail, friendPassword);
+
+    cy.contains(/^Home$/).click({ force: true });
+    cy.get('[data-testid="dashboard-card-upcoming-events"]').should('contain.text', '0');
+    cy.get('[data-testid="dashboard-event-lobby-1"]').should('contain.text', 'Host note: Can\'t make tonight after all.');
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    cy.get('[data-testid="lobbies-canceled-lobbies-card"]').within(() => {
+      cy.contains('Helix Arena Lobby').should('exist');
+      cy.contains('Host note: Can\'t make tonight after all.').should('exist');
+    });
+    cy.contains('Cancel lobby').should('not.exist');
+    cy.contains('Save accept').should('not.exist');
+
+    cy.contains(/^Schedule$/).click({ force: true });
+    cy.get('[data-testid="schedule-canceled-lobby-lobby-1"]').within(() => {
+      cy.contains('Canceled').should('exist');
+      cy.contains('Host note: Can\'t make tonight after all.').should('exist');
+    });
+  });
+
+  it('cancels a one-off lobby without a reason and shows the generic canceled copy', () => {
+    signUpHost();
+
+    createLobbyWithInvitees([]);
+    cy.wait('@createLobbyRpc');
+
+    cy.get('[data-testid="cancel-lobby-button-lobby-1"]').click();
+    cy.get('[data-testid="confirm-cancel-lobby-button"]').click();
+
+    cy.wait('@cancelLobbyRpc')
+      .its('request.body')
+      .should((body) => {
+        expect(body.p_lobby_id).to.equal('lobby-1');
+        expect(body.p_reason).to.equal(null);
+      });
+
+    cy.contains(/^Home$/).click({ force: true });
+    cy.get('[data-testid="dashboard-event-lobby-1"]').should('contain.text', 'Host canceled this lobby.');
+
+    cy.contains(/^Schedule$/).click({ force: true });
+    cy.get('[data-testid="schedule-canceled-lobby-lobby-1"]').should('contain.text', 'Host canceled this lobby.');
+  });
+
   it('creates a weekly recurring lobby with an end date and shows it across Home, Lobbies, and Schedule', () => {
     signUpHost();
 
@@ -1839,6 +1972,7 @@ describe('lobbies flow', () => {
 
     cy.contains(/recurring lobby created/i).should('exist');
     cy.contains('Repeats: Weekly').should('exist');
+    cy.contains('Cancel lobby').should('not.exist');
 
     cy.contains(/^Home$/).click({ force: true });
     cy.get('[data-testid="dashboard-upcoming-events"]').should('be.visible');

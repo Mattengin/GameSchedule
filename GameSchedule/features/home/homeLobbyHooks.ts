@@ -99,7 +99,7 @@ export function useLobbyState({
     const { data, error } = await supabase
       .from('lobbies')
       .select(
-        'id, title, scheduled_for, scheduled_until, meetup_details, lobby_series_id, series_occurrence_key, discord_guild_id, discord_guild_name, discord_guild_icon_url, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
+        'id, title, scheduled_for, scheduled_until, meetup_details, closed_at, closed_reason, lobby_series_id, series_occurrence_key, discord_guild_id, discord_guild_name, discord_guild_icon_url, is_private, status, game_id, host_profile_id, games(id, title, genre, platform, player_count)',
       )
       .order('created_at', { ascending: false });
 

@@ -6,6 +6,8 @@ create table if not exists public.lobbies (
   scheduled_for timestamptz,
   scheduled_until timestamptz,
   meetup_details text,
+  closed_at timestamptz,
+  closed_reason text,
   lobby_series_id uuid,
   series_occurrence_key timestamptz,
   discord_guild_id text,
@@ -21,6 +23,12 @@ add column if not exists scheduled_until timestamptz;
 
 alter table public.lobbies
 add column if not exists meetup_details text;
+
+alter table public.lobbies
+add column if not exists closed_at timestamptz;
+
+alter table public.lobbies
+add column if not exists closed_reason text;
 
 alter table public.lobbies
 add column if not exists lobby_series_id uuid;
@@ -1251,6 +1259,60 @@ begin
 end;
 $$;
 
+create or replace function public.cancel_lobby(
+  p_lobby_id uuid,
+  p_reason text default null
+)
+returns public.lobbies
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_lobby public.lobbies%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  update public.lobbies
+  set
+    status = 'closed',
+    closed_at = now(),
+    closed_reason = nullif(btrim(p_reason), '')
+  where id = p_lobby_id
+    and host_profile_id = auth.uid()
+    and lobby_series_id is null
+    and status <> 'closed'
+  returning *
+  into updated_lobby;
+
+  if not found then
+    if exists (
+      select 1
+      from public.lobbies
+      where id = p_lobby_id
+        and lobby_series_id is not null
+    ) then
+      raise exception 'Recurring lobbies must be canceled from their recurring controls';
+    end if;
+
+    if exists (
+      select 1
+      from public.lobbies
+      where id = p_lobby_id
+        and status = 'closed'
+    ) then
+      raise exception 'Lobby is already canceled';
+    end if;
+
+    raise exception 'Only the host can cancel this lobby';
+  end if;
+
+  return updated_lobby;
+end;
+$$;
+
 create or replace function public.respond_to_lobby_invite(
   p_lobby_id uuid,
   p_status text,
@@ -1457,6 +1519,25 @@ begin
 end;
 $$;
 
+create or replace function public.cleanup_closed_one_off_lobbies()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer := 0;
+begin
+  delete from public.lobbies
+  where lobby_series_id is null
+    and status = 'closed'
+    and coalesce(closed_at, scheduled_until, scheduled_for, created_at) < now() - interval '30 days';
+
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+
 create or replace function public.cleanup_expired_lobby_response_history()
 returns integer
 language plpgsql
@@ -1510,6 +1591,41 @@ begin
       'cleanup-lobby-response-history',
       '15 5 * * *',
       $cron$select public.cleanup_expired_lobby_response_history();$cron$
+    );
+  end if;
+end;
+$$;
+
+do $$
+declare
+  existing_job_id bigint;
+begin
+  begin
+    execute 'create extension if not exists pg_cron';
+  exception
+    when insufficient_privilege then
+      raise notice 'pg_cron could not be enabled automatically. Schedule cleanup_closed_one_off_lobbies manually.';
+      existing_job_id := null;
+    when feature_not_supported then
+      raise notice 'pg_cron is not available in this environment. Schedule cleanup_closed_one_off_lobbies manually.';
+      existing_job_id := null;
+  end;
+
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    select jobid
+    into existing_job_id
+    from cron.job
+    where jobname = 'cleanup-closed-one-off-lobbies'
+    limit 1;
+
+    if existing_job_id is not null then
+      perform cron.unschedule(existing_job_id);
+    end if;
+
+    perform cron.schedule(
+      'cleanup-closed-one-off-lobbies',
+      '0 5 * * *',
+      $cron$select public.cleanup_closed_one_off_lobbies();$cron$
     );
   end if;
 end;
@@ -1665,9 +1781,11 @@ revoke all on function public.update_recurring_lobby_series_future(uuid, text, t
 revoke all on function public.sync_recurring_lobbies() from public;
 revoke all on function public.get_profile_busy_blocks(uuid[], timestamptz, timestamptz) from public;
 revoke all on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text) from public;
+revoke all on function public.cancel_lobby(uuid, text) from public;
 revoke all on function public.respond_to_lobby_invite(uuid, text, text, timestamptz, timestamptz) from public;
 revoke all on function public.apply_lobby_time_suggestion(uuid, uuid) from public;
 revoke all on function public.cleanup_expired_lobby_response_history() from public;
+revoke all on function public.cleanup_closed_one_off_lobbies() from public;
 
 grant execute on function public.can_view_lobby(uuid) to authenticated;
 grant execute on function public.is_lobby_host(uuid) to authenticated;
@@ -1677,5 +1795,6 @@ grant execute on function public.create_recurring_lobby_series(text, text, times
 grant execute on function public.update_recurring_lobby_series_future(uuid, text, text, timestamptz, timestamptz, boolean, text, text, date, integer, text) to authenticated;
 grant execute on function public.get_profile_busy_blocks(uuid[], timestamptz, timestamptz) to authenticated;
 grant execute on function public.create_lobby_with_invites(text, text, timestamptz, timestamptz, boolean, uuid[], text) to authenticated;
+grant execute on function public.cancel_lobby(uuid, text) to authenticated;
 grant execute on function public.respond_to_lobby_invite(uuid, text, text, timestamptz, timestamptz) to authenticated;
 grant execute on function public.apply_lobby_time_suggestion(uuid, uuid) to authenticated;

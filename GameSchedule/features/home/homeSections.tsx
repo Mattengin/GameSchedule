@@ -44,6 +44,7 @@ type DashboardSectionProps = {
   onboardingIncomplete: boolean;
   pendingFriendRequestCount: number;
   pendingLobbyInviteCount: number;
+  upcomingEventCount: number;
   upcomingEvents: DashboardUpcomingEvent[];
   onCompleteSetup: () => void;
   onCreateLobby: () => void;
@@ -141,6 +142,7 @@ export function DashboardSection({
   onboardingIncomplete,
   pendingFriendRequestCount,
   pendingLobbyInviteCount,
+  upcomingEventCount,
   upcomingEvents,
   onCompleteSetup,
   onCreateLobby,
@@ -234,6 +236,14 @@ export function DashboardSection({
         };
       }
 
+      if (status === 'canceled') {
+        return {
+          chipStyle: styles.dashboardCanceledChip,
+          textStyle: styles.dashboardCanceledChipText,
+          label: 'Canceled',
+        };
+      }
+
       return {
         chipStyle: styles.invitePendingChip,
         textStyle: styles.invitePendingText,
@@ -254,7 +264,7 @@ export function DashboardSection({
             Play together, faster.
           </Text>
           <Text style={styles.heroCopy}>
-            Hosted and accepted game nights from the week ahead, grouped by day so tonight is easy to scan.
+            Hosted and accepted game nights stay easy to scan here, and recent cancellations stay visible long enough for everyone to notice the change.
           </Text>
         </View>
         <Button mode="outlined" onPress={onOpenSchedule} testID="dashboard-open-schedule-button">
@@ -297,6 +307,11 @@ export function DashboardSection({
                         </Chip>
                       </View>
                       <Text style={styles.dashboardAgendaEventTime}>{timeLabel}</Text>
+                      {event.status === 'canceled' ? (
+                        <Text style={styles.dashboardCanceledReason}>
+                          {event.closed_reason ? `Host note: ${event.closed_reason}` : 'Host canceled this lobby.'}
+                        </Text>
+                      ) : null}
                     </Surface>
                   );
                 })}
@@ -330,7 +345,7 @@ export function DashboardSection({
       <HomeActionCard
         accent="#7C5CFF"
         label="Upcoming events"
-        value={String(upcomingEvents.length)}
+        value={String(upcomingEventCount)}
         reducedMotionEnabled={reducedMotionEnabled}
         onPress={onOpenSchedule}
         testID="dashboard-card-upcoming-events"

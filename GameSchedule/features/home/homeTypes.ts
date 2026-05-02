@@ -95,6 +95,8 @@ export type LobbyRecord = {
   scheduled_for: string | null;
   scheduled_until: string | null;
   meetup_details: string | null;
+  closed_at: string | null;
+  closed_reason: string | null;
   lobby_series_id: string | null;
   series_occurrence_key: string | null;
   recurring_frequency: LobbySeriesFrequency | null;
@@ -235,7 +237,7 @@ export type FriendRequestRecord = {
   created_at: string;
 };
 
-export type DashboardUpcomingEventStatus = 'hosting' | 'accepted' | 'pending' | 'suggested_time';
+export type DashboardUpcomingEventStatus = 'hosting' | 'accepted' | 'pending' | 'suggested_time' | 'canceled';
 
 export type DashboardUpcomingEvent = {
   id: string;
@@ -243,5 +245,6 @@ export type DashboardUpcomingEvent = {
   game_title: string | null;
   scheduled_for: string;
   scheduled_until: string | null;
+  closed_reason: string | null;
   status: DashboardUpcomingEventStatus;
 };

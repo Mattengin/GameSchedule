@@ -518,6 +518,20 @@ export const styles = StyleSheet.create({
     color: '#E5DEFF',
     fontWeight: '700',
   },
+  dashboardCanceledChip: {
+    backgroundColor: '#35181E',
+    borderColor: '#B84A5A',
+    borderWidth: 1,
+  },
+  dashboardCanceledChipText: {
+    color: '#FFD8DE',
+    fontWeight: '700',
+  },
+  dashboardCanceledReason: {
+    color: '#FFD8DE',
+    fontSize: 13,
+    lineHeight: 18,
+  },
   dashboardAttentionList: {
     gap: 12,
     marginTop: 8,
@@ -532,6 +546,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+    justifyContent: 'center',
   },
   homeActionCardWrap: {
     flexGrow: 1,
@@ -549,16 +564,19 @@ export const styles = StyleSheet.create({
     backgroundColor: '#18213A',
   },
   homeActionCardContent: {
+    alignItems: 'center',
     paddingVertical: 16,
   },
   homeActionValue: {
     color: '#F4F6FF',
     fontSize: 24,
     fontWeight: '800',
+    textAlign: 'center',
   },
   homeActionLabel: {
     color: '#95A0C8',
     marginTop: 4,
+    textAlign: 'center',
   },
   focusedActionPanel: {
     borderColor: '#33D1FF',
@@ -1348,6 +1366,14 @@ export const styles = StyleSheet.create({
   invitePendingText: {
     color: '#DDE4FF',
     fontWeight: '700',
+  },
+  canceledLobbyCard: {
+    borderColor: '#B84A5A',
+  },
+  canceledLobbyReason: {
+    color: '#FFD8DE',
+    fontSize: 13,
+    lineHeight: 19,
   },
   inviteHistoryMutedChip: {
     backgroundColor: '#20263F',

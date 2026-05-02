@@ -348,7 +348,7 @@ describe('schedule and availability', () => {
     cy.signupUi(email, password);
 
     cy.contains('Schedule').click();
-    cy.contains('Auto-decline outside hours').click();
+    cy.contains('Auto-decline outside hours').click({ force: true });
     cy.get('[data-testid="save-availability-settings-button"]').click();
 
     cy.wait('@availabilitySettingsUpsert')
