@@ -129,6 +129,22 @@ describe('authenticated session', () => {
     authStore.clear();
   });
 
+  it('shows confirm password only in sign-up mode and still creates an account', () => {
+    const uniqueEmail = `cypress-confirm-${Date.now()}@example.com`;
+    const signupPassword = `Password123!${Date.now()}`;
+
+    cy.visit('/');
+    cy.get('[data-testid="auth-password-confirm-input"]').should('not.exist');
+    cy.contains(/^sign up$/i).click();
+    cy.get('[data-testid="auth-password-confirm-input"]').should('be.visible');
+    cy.get('[data-testid="auth-email-input"]').clear().type(uniqueEmail);
+    cy.get('[data-testid="auth-password-input"]').clear().type(signupPassword, { log: false });
+    cy.get('[data-testid="auth-password-confirm-input"]').clear().type(signupPassword, { log: false });
+    cy.get('[data-testid="auth-submit-button"]').click();
+
+    cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).should('be.visible');
+  });
+
   it('signs in and loads the profile-backed app shell', () => {
     cy.visit('/');
     cy.signupUi(email, password);

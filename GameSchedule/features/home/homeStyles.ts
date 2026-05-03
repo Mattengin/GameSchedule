@@ -43,6 +43,15 @@ export const styles = StyleSheet.create({
   loginButton: {
     marginTop: 6,
   },
+  trustLinkRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 2,
+  },
+  trustLinkButton: {
+    marginLeft: -8,
+  },
   screen: {
     flex: 1,
     backgroundColor: '#0B1020',
@@ -934,6 +943,19 @@ export const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
     marginTop: 14,
+  },
+  destructiveSection: {
+    gap: 10,
+    marginTop: 16,
+    paddingTop: 16,
+  },
+  destructiveButton: {
+    alignSelf: 'flex-start',
+  },
+  destructiveNote: {
+    color: '#FFB8C2',
+    fontSize: 13,
+    lineHeight: 18,
   },
   inputShell: {
     backgroundColor: '#171D35',

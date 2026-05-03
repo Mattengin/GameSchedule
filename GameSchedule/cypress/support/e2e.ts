@@ -20,6 +20,7 @@ Cypress.Commands.add('signupUi', (email: string, password: string) => {
   cy.contains(/^sign up$/i).click();
   cy.get('[data-testid="auth-email-input"]').clear().type(email);
   cy.get('[data-testid="auth-password-input"]').clear().type(password, { log: false });
+  cy.get('[data-testid="auth-password-confirm-input"]').clear().type(password, { log: false });
   cy.get('[data-testid="auth-submit-button"]').click();
 });
 

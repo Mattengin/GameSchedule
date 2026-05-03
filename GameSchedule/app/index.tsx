@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Linking, Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import {
   ActivityIndicator,
@@ -27,8 +27,13 @@ import {
   availabilityDays,
   demoLabel,
   discordLinkIntentStorageKey,
+  FRIEND_GROUP_NAME_MAX_LENGTH,
+  LOBBY_CANCELLATION_REASON_MAX_LENGTH,
+  LOBBY_MEETUP_DETAILS_MAX_LENGTH,
+  LOBBY_TITLE_MAX_LENGTH,
   profileSelectFields,
   sections,
+  SUPPORT_EMAIL,
 } from '../features/home/homeConstants';
 import { useAvailabilityState } from '../features/home/homeAvailabilityHooks';
 import { useGamesState } from '../features/home/homeGameHooks';
@@ -77,6 +82,7 @@ import {
   formatLobbyRecurrenceLabel,
   formatLobbyScheduleLabel,
   formatReleaseDateLabel,
+  getPrivacyPolicyUrl,
   getBusyFallbackEndDate,
   getBusyStatusLabel,
   getBirthdayDate,
@@ -84,6 +90,7 @@ import {
   getDiscordIdentityFromSession,
   hasExplicitLobbyEnd,
   getLobbyEndDate,
+  getSupportMailtoUrl,
   getWebBasePath,
   getWebRedirectUrl,
   parseDateInputValue,
@@ -111,6 +118,10 @@ function isValidProfileAvatarUrl(value: string) {
   }
 }
 
+function isTooLong(value: string, maxLength: number) {
+  return value.length > maxLength;
+}
+
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
@@ -127,6 +138,7 @@ export default function HomeScreen() {
   const [profileLoading, setProfileLoading] = React.useState(false);
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [authConfirmPassword, setAuthConfirmPassword] = React.useState('');
   const [authError, setAuthError] = React.useState('');
   const [authMessage, setAuthMessage] = React.useState('');
   const [profileForm, setProfileForm] = React.useState({
@@ -150,6 +162,9 @@ export default function HomeScreen() {
     nextPassword: '',
     confirmPassword: '',
   });
+  const [deleteAccountDialogVisible, setDeleteAccountDialogVisible] = React.useState(false);
+  const [deleteAccountConfirmation, setDeleteAccountConfirmation] = React.useState('');
+  const [deleteAccountError, setDeleteAccountError] = React.useState('');
   const [section, setSection] = React.useState<SectionKey>('dashboard');
   const [mobileSectionMenuVisible, setMobileSectionMenuVisible] = React.useState(false);
   const [accountMenuVisible, setAccountMenuVisible] = React.useState(false);
@@ -191,6 +206,22 @@ export default function HomeScreen() {
     meetupDetails: '',
     visibility: 'private' as 'private' | 'public',
   });
+  const privacyPolicyUrl = getPrivacyPolicyUrl();
+  const supportMailtoUrl = getSupportMailtoUrl();
+  const deleteAccountReady = deleteAccountConfirmation.trim().toUpperCase() === 'DELETE';
+  const authShowConfirmMismatch =
+    authMode === 'signup' && authConfirmPassword.length > 0 && password !== authConfirmPassword;
+  const authSubmitDisabled =
+    authBusy ||
+    (authMode === 'signup' &&
+      (!email.trim() || !password || !authConfirmPassword || password !== authConfirmPassword));
+
+  const handleAuthModeChange = React.useCallback((nextMode: 'signin' | 'signup') => {
+    setAuthMode(nextMode);
+    setAuthConfirmPassword('');
+    setAuthError('');
+    setAuthMessage('');
+  }, []);
 
   const {
     favoriteGameIds,
@@ -330,9 +361,9 @@ export default function HomeScreen() {
 
   React.useEffect(() => {
     if (!allowSignup && authMode === 'signup') {
-      setAuthMode('signin');
+      handleAuthModeChange('signin');
     }
-  }, [authMode]);
+  }, [authMode, handleAuthModeChange]);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web') {
@@ -1395,8 +1426,21 @@ export default function HomeScreen() {
     }
 
     const title = lobbyForm.title.trim() || `${selectedLobbyGame.title} Lobby`;
+    const meetupDetails = lobbyForm.meetupDetails.trim();
     let scheduledFor: string | null = null;
     let scheduledUntil: string | null = null;
+
+    if (isTooLong(title, LOBBY_TITLE_MAX_LENGTH)) {
+      setLobbiesError(`Event titles can be up to ${LOBBY_TITLE_MAX_LENGTH} characters long.`);
+      setLobbyMessage('');
+      return;
+    }
+
+    if (isTooLong(meetupDetails, LOBBY_MEETUP_DETAILS_MAX_LENGTH)) {
+      setLobbiesError(`Meetup details can be up to ${LOBBY_MEETUP_DETAILS_MAX_LENGTH} characters long.`);
+      setLobbyMessage('');
+      return;
+    }
 
     if (lobbyForm.timeMode === 'later') {
       const parsedDate = new Date(lobbyForm.startAt);
@@ -1476,7 +1520,7 @@ export default function HomeScreen() {
         p_title: title,
         p_scheduled_for: scheduledFor,
         p_scheduled_until: scheduledUntil,
-        p_meetup_details: lobbyForm.meetupDetails.trim() || null,
+        p_meetup_details: meetupDetails || null,
         p_is_private: lobbyForm.visibility === 'private',
         p_invited_profile_ids: invitedProfileIds,
         p_frequency: lobbyForm.repeatMode,
@@ -1492,7 +1536,7 @@ export default function HomeScreen() {
         p_title: title,
         p_scheduled_for: scheduledFor,
         p_scheduled_until: scheduledUntil,
-        p_meetup_details: lobbyForm.meetupDetails.trim() || null,
+        p_meetup_details: meetupDetails || null,
         p_is_private: lobbyForm.visibility === 'private',
         p_invited_profile_ids: invitedProfileIds,
       });
@@ -1722,13 +1766,20 @@ export default function HomeScreen() {
       return;
     }
 
+    const trimmedReason = lobbyCancellationReason.trim();
+    if (isTooLong(trimmedReason, LOBBY_CANCELLATION_REASON_MAX_LENGTH)) {
+      setLobbiesError(`Cancellation reasons can be up to ${LOBBY_CANCELLATION_REASON_MAX_LENGTH} characters long.`);
+      setLobbyMessage('');
+      return;
+    }
+
     setLobbyBusy(true);
     setLobbiesError('');
     setLobbyMessage('');
 
     const { error } = await supabase.rpc('cancel_lobby', {
       p_lobby_id: lobbyPendingCancellation.id,
-      p_reason: lobbyCancellationReason.trim() || null,
+      p_reason: trimmedReason || null,
     });
 
     if (error) {
@@ -1813,6 +1864,19 @@ export default function HomeScreen() {
       return;
     }
 
+    const editedTitle = recurringSeriesEditForm.title.trim() || targetLobby.title;
+    const editedMeetupDetails = recurringSeriesEditForm.meetupDetails.trim();
+
+    if (isTooLong(editedTitle, LOBBY_TITLE_MAX_LENGTH)) {
+      setLobbiesError(`Event titles can be up to ${LOBBY_TITLE_MAX_LENGTH} characters long.`);
+      return;
+    }
+
+    if (isTooLong(editedMeetupDetails, LOBBY_MEETUP_DETAILS_MAX_LENGTH)) {
+      setLobbiesError(`Meetup details can be up to ${LOBBY_MEETUP_DETAILS_MAX_LENGTH} characters long.`);
+      return;
+    }
+
     const parsedStartAt = new Date(recurringSeriesEditForm.startAt);
     const parsedEndAt = new Date(recurringSeriesEditForm.endAt);
 
@@ -1863,10 +1927,10 @@ export default function HomeScreen() {
     const { error } = await supabase.rpc('update_recurring_lobby_series_future', {
       p_lobby_id: targetLobby.id,
       p_game_id: recurringSeriesEditForm.gameId,
-      p_title: recurringSeriesEditForm.title.trim() || targetLobby.title,
+      p_title: editedTitle,
       p_scheduled_for: parsedStartAt.toISOString(),
       p_scheduled_until: recurringSeriesEditForm.hasExplicitEnd ? parsedEndAt.toISOString() : null,
-      p_meetup_details: recurringSeriesEditForm.meetupDetails.trim() || null,
+      p_meetup_details: editedMeetupDetails || null,
       p_is_private: recurringSeriesEditForm.visibility === 'private',
       p_frequency: recurringSeriesEditForm.repeatMode,
       p_end_mode: recurringSeriesEditForm.repeatEndMode,
@@ -2247,6 +2311,11 @@ export default function HomeScreen() {
       return;
     }
 
+    if (isTooLong(trimmedName, FRIEND_GROUP_NAME_MAX_LENGTH)) {
+      setFriendError(`Group names can be up to ${FRIEND_GROUP_NAME_MAX_LENGTH} characters long.`);
+      return;
+    }
+
     setFriendActionBusyId('create-friend-group');
     setFriendError('');
     setFriendMessage('');
@@ -2282,6 +2351,11 @@ export default function HomeScreen() {
     const trimmedName = editingFriendGroupName.trim();
     if (!trimmedName) {
       setFriendError('Enter a group name first.');
+      return;
+    }
+
+    if (isTooLong(trimmedName, FRIEND_GROUP_NAME_MAX_LENGTH)) {
+      setFriendError(`Group names can be up to ${FRIEND_GROUP_NAME_MAX_LENGTH} characters long.`);
       return;
     }
 
@@ -4350,7 +4424,7 @@ export default function HomeScreen() {
             <Card.Content style={styles.profileSummary}>
               <Text variant="titleMedium">Discord</Text>
               <Text style={styles.friendNote}>
-                Discord linking is optional. If you use it, the app only uses Discord for sign-in continuity and basic profile matching.
+                Discord is optional. If you connect it, the app uses your Discord identity for sign-in and profile matching.
               </Text>
               <Chip icon="discord" style={styles.statusChip}>
                 {profile?.discord_user_id
@@ -4359,8 +4433,8 @@ export default function HomeScreen() {
               </Chip>
               <Text style={styles.friendNote}>
                 {profile?.discord_user_id
-                  ? 'Discord is currently used for identity, avatar fallback, and account continuity. It does not sync servers or build a Discord-based friend graph.'
-                  : 'If you connect Discord, the app will use your Discord identity for sign-in continuity and avatar/profile matching. It will not sync servers or build a Discord-based friend graph.'}
+                  ? 'It does not read messages or presence, sync servers, or import a Discord friend list.'
+                  : 'If you connect Discord, it still will not read messages or presence, sync servers, or import a Discord friend list.'}
               </Text>
               <Text style={styles.friendNote}>
                 You can disconnect Discord at any time from here.
@@ -4399,6 +4473,32 @@ export default function HomeScreen() {
                   {discordMessage}
                 </HelperText>
               ) : null}
+            </Card.Content>
+          </Card>
+          <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
+            <Card.Content style={styles.profileSummary}>
+              <Text variant="titleMedium">Privacy & support</Text>
+              <Text style={styles.friendNote}>
+                Review how account, Discord, lobby, and schedule data are handled, or contact support directly if you need help.
+              </Text>
+              <View style={styles.cardActions}>
+                <Button
+                  mode="outlined"
+                  onPress={() => {
+                    void handleOpenPrivacyPolicy();
+                  }}
+                  testID="profile-privacy-policy-button">
+                  Privacy policy
+                </Button>
+                <Button
+                  mode="outlined"
+                  onPress={() => {
+                    void handleOpenSupport();
+                  }}
+                  testID="profile-support-button">
+                  Contact support
+                </Button>
+              </View>
             </Card.Content>
           </Card>
           {!showOnboardingSetup ? (
@@ -4619,6 +4719,26 @@ export default function HomeScreen() {
             testID="account-password-save-button">
             Change password
           </Button>
+          <Divider style={styles.divider} />
+          <View style={styles.destructiveSection}>
+            <Text variant="titleMedium">Delete account</Text>
+            <Text style={styles.friendNote}>
+              This permanently removes your login, profile, friend data, groups, library shortcuts,
+              availability, and lobby participation tied to this account.
+            </Text>
+            <Text style={styles.destructiveNote}>
+              If anything blocks automatic deletion, support can help at {SUPPORT_EMAIL}.
+            </Text>
+            <Button
+              mode="outlined"
+              textColor="#FFB8C2"
+              onPress={handleOpenDeleteAccountDialog}
+              disabled={accountBusy}
+              style={styles.destructiveButton}
+              testID="account-delete-button">
+              Delete account
+            </Button>
+          </View>
         </Card.Content>
       </Card>
 	      <Card style={[styles.panel, isDesktopWeb ? styles.desktopPanelTile : null]}>
@@ -4641,7 +4761,19 @@ export default function HomeScreen() {
   };
 
   const handleAuth = async () => {
-    if (!email || !password) {
+    const trimmedEmail = email.trim();
+
+    if (authMode === 'signup') {
+      if (!trimmedEmail || !password || !authConfirmPassword) {
+        setAuthError('Email, password, and confirm password are required.');
+        return;
+      }
+
+      if (password !== authConfirmPassword) {
+        setAuthError('Passwords do not match.');
+        return;
+      }
+    } else if (!trimmedEmail || !password) {
       setAuthError('Email and password are required.');
       return;
     }
@@ -4653,7 +4785,7 @@ export default function HomeScreen() {
     try {
       if (authMode === 'signin') {
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email: trimmedEmail,
           password,
         });
 
@@ -4668,7 +4800,7 @@ export default function HomeScreen() {
         }
 
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: trimmedEmail,
           password,
         });
 
@@ -4681,6 +4813,8 @@ export default function HomeScreen() {
         } else {
           setAuthMessage('Account created. Check Supabase email confirmation settings if sign-in does not continue automatically.');
         }
+
+        setAuthConfirmPassword('');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed.';
@@ -4712,6 +4846,112 @@ export default function HomeScreen() {
     setAuthMessage('Redirecting to Discord...');
   };
 
+  const resetSignedInState = React.useCallback((nextAuthMessage = '') => {
+    setSession(null);
+    setProfile(null);
+    setEmail('');
+    setPassword('');
+    setAuthConfirmPassword('');
+    setAuthMode('signin');
+    setAuthError('');
+    setAuthMessage(nextAuthMessage);
+    setAccountError('');
+    setAccountMessage('');
+    setDeleteAccountError('');
+    setDeleteAccountConfirmation('');
+    setDeleteAccountDialogVisible(false);
+    setAccountMenuVisible(false);
+    setMobileSectionMenuVisible(false);
+    setSection('dashboard');
+  }, []);
+
+  const openExternalUrl = React.useCallback(async (url: string) => {
+    if (Platform.OS === 'web' && globalThis.window?.open) {
+      globalThis.window.open(url, '_blank', 'noopener,noreferrer');
+      return true;
+    }
+
+    try {
+      await Linking.openURL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const handleOpenPrivacyPolicy = React.useCallback(async () => {
+    const didOpen = await openExternalUrl(privacyPolicyUrl);
+
+    if (didOpen) {
+      return;
+    }
+
+    if (session?.user) {
+      setAccountError('Unable to open the privacy policy right now.');
+      setAccountMessage('');
+    } else {
+      setAuthError('Unable to open the privacy policy right now.');
+    }
+  }, [openExternalUrl, privacyPolicyUrl, session]);
+
+  const handleOpenSupport = React.useCallback(async () => {
+    const didOpen = await openExternalUrl(supportMailtoUrl);
+
+    if (didOpen) {
+      return;
+    }
+
+    if (session?.user) {
+      setAccountError(`Unable to open email support right now. Reach us at ${SUPPORT_EMAIL}.`);
+      setAccountMessage('');
+    } else {
+      setAuthError(`Unable to open email support right now. Reach us at ${SUPPORT_EMAIL}.`);
+    }
+  }, [openExternalUrl, session, supportMailtoUrl]);
+
+  const handleOpenDeleteAccountDialog = React.useCallback(() => {
+    setDeleteAccountConfirmation('');
+    setDeleteAccountError('');
+    setAccountError('');
+    setAccountMessage('');
+    setDeleteAccountDialogVisible(true);
+  }, []);
+
+  const handleCloseDeleteAccountDialog = React.useCallback(() => {
+    if (accountBusy) {
+      return;
+    }
+
+    setDeleteAccountDialogVisible(false);
+    setDeleteAccountConfirmation('');
+    setDeleteAccountError('');
+  }, [accountBusy]);
+
+  const handleConfirmDeleteAccount = React.useCallback(async () => {
+    if (!session?.user || !deleteAccountReady) {
+      return;
+    }
+
+    setAccountBusy(true);
+    setDeleteAccountError('');
+    setAccountError('');
+    setAccountMessage('');
+
+    const { error } = await supabase.functions.invoke('delete-account', {
+      body: {},
+    });
+
+    if (error) {
+      setDeleteAccountError(`${error.message} If automatic deletion still fails, contact ${SUPPORT_EMAIL}.`);
+      setAccountBusy(false);
+      return;
+    }
+
+    await supabase.auth.signOut({ scope: 'local' });
+    resetSignedInState('Account deleted.');
+    setAccountBusy(false);
+  }, [deleteAccountReady, resetSignedInState, session]);
+
   const handleLogout = async () => {
     setAuthBusy(true);
     setAuthError('');
@@ -4722,13 +4962,7 @@ export default function HomeScreen() {
     if (error) {
       setAuthError(error.message);
     } else {
-      setSession(null);
-      setProfile(null);
-      setEmail('');
-      setPassword('');
-      setAuthError('');
-      setAuthMessage('');
-      setSection('dashboard');
+      resetSignedInState();
     }
 
     setAuthBusy(false);
@@ -5220,7 +5454,7 @@ export default function HomeScreen() {
           </Text>
           <Text style={styles.pageSubtitle}>
             {allowSignup
-              ? 'Social sign-in providers share identity data needed for authentication and basic profile setup. Email/password stays available as a fallback for testing.'
+              ? 'Sign in with Discord or use email and password.'
               : 'Public demo access is sign-in only. Use a shared demo account or one we provide for testing.'}
           </Text>
 
@@ -5235,15 +5469,26 @@ export default function HomeScreen() {
             Continue with Discord
           </Button>
           <Text style={styles.friendNote}>
-            Discord is used for sign-in, linked identity, and avatar/profile matching. It is not used for server syncing or friend discovery.
+            Discord is optional. If you connect it, the app uses your Discord identity for sign-in and profile matching. It does not read messages or presence, sync servers, or import a Discord friend list.
           </Text>
 
           <Divider style={styles.divider} />
-          <Text style={styles.friendNote}>Fallback: use email/password if you are testing or not ready to link Discord.</Text>
+          <View style={styles.trustLinkRow}>
+            <Button
+              mode="text"
+              compact
+              onPress={() => {
+                void handleOpenPrivacyPolicy();
+              }}
+              style={styles.trustLinkButton}
+              testID="auth-privacy-policy-button">
+              Privacy policy
+            </Button>
+          </View>
 
           <SegmentedButtons
             value={authMode}
-            onValueChange={(value) => setAuthMode(value as 'signin' | 'signup')}
+            onValueChange={(value) => handleAuthModeChange(value as 'signin' | 'signup')}
             buttons={[
               { value: 'signin', label: 'Sign in' },
               ...(allowSignup ? [{ value: 'signup', label: 'Sign up' }] : []),
@@ -5271,11 +5516,31 @@ export default function HomeScreen() {
             style={styles.input}
             testID="auth-password-input"
           />
-          <HelperText type="info" style={styles.helperText}>
-            {allowSignup
-              ? 'Use an existing Supabase user to sign in, or create one here for testing.'
-              : 'Self-signup is disabled in this deployment to keep the demo backend under control.'}
-          </HelperText>
+          {authMode === 'signup' ? (
+            <>
+              <TextInput
+                mode="outlined"
+                label="Confirm password"
+                value={authConfirmPassword}
+                onChangeText={setAuthConfirmPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+                style={styles.input}
+                testID="auth-password-confirm-input"
+              />
+              {authShowConfirmMismatch ? (
+                <HelperText type="error" visible>
+                  Passwords do not match.
+                </HelperText>
+              ) : null}
+            </>
+          ) : null}
+          {!allowSignup ? (
+            <HelperText type="info" style={styles.helperText}>
+              Self-signup is disabled in this deployment to keep the demo backend under control.
+            </HelperText>
+          ) : null}
           {authError ? (
             <HelperText type="error" visible>
               {authError}
@@ -5292,7 +5557,7 @@ export default function HomeScreen() {
             onPress={handleAuth}
             style={styles.loginButton}
             loading={authBusy}
-            disabled={authBusy}
+            disabled={authSubmitDisabled}
             testID="auth-submit-button">
             {authMode === 'signin' ? 'Sign in' : 'Create account'}
           </Button>
@@ -5813,6 +6078,56 @@ export default function HomeScreen() {
               disabled={lobbyBusy}
               testID="save-recurring-series-future-button">
               Save all future
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+        <Dialog
+          visible={deleteAccountDialogVisible}
+          style={[styles.compactDialog, compactDialogWidth > 0 ? { width: compactDialogWidth } : null]}
+          onDismiss={handleCloseDeleteAccountDialog}
+          testID="delete-account-dialog">
+          <Dialog.Title>Delete account?</Dialog.Title>
+          <Dialog.Content>
+            <View style={styles.sectionStack}>
+              <Text style={styles.friendNote}>
+                This permanently removes your login, profile, friend data, groups, game library shortcuts,
+                availability, and hosted or invited lobby participation tied to this account.
+              </Text>
+              <Text style={styles.friendNote}>
+                Type DELETE to confirm. If automatic deletion fails, support can help at {SUPPORT_EMAIL}.
+              </Text>
+              <TextInput
+                mode="outlined"
+                label="Type DELETE to confirm"
+                value={deleteAccountConfirmation}
+                onChangeText={setDeleteAccountConfirmation}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                style={styles.input}
+                testID="delete-account-confirmation-input"
+              />
+              {deleteAccountError ? (
+                <HelperText type="error" visible>
+                  {deleteAccountError}
+                </HelperText>
+              ) : null}
+            </View>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button
+              onPress={handleCloseDeleteAccountDialog}
+              disabled={accountBusy}
+              testID="cancel-delete-account-button">
+              Keep account
+            </Button>
+            <Button
+              onPress={() => {
+                void handleConfirmDeleteAccount();
+              }}
+              loading={accountBusy}
+              disabled={accountBusy || !deleteAccountReady}
+              testID="confirm-delete-account-button">
+              Delete account
             </Button>
           </Dialog.Actions>
         </Dialog>

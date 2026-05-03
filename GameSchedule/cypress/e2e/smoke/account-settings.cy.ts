@@ -236,6 +236,11 @@ const registerMockAccountSettings = (account: MockAccount) => {
     });
   }).as('updateUserRequest');
 
+  cy.intercept('POST', '**/functions/v1/delete-account', {
+    statusCode: 200,
+    body: { success: true },
+  }).as('deleteAccountRequest');
+
   cy.intercept('GET', '**/rest/v1/games*', {
     statusCode: 200,
     body: [],
@@ -327,7 +332,11 @@ describe('account settings', () => {
   });
 
   const signInAndOpenProfile = () => {
-    cy.visit('/');
+    cy.visit('/', {
+      onBeforeLoad(win) {
+        cy.stub(win, 'open').as('windowOpen');
+      },
+    });
     cy.signupUi(account.email, account.password);
     cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).click();
     cy.get('[data-testid="account-menu-profile-button"]', { timeout: 15000 }).click();
@@ -437,6 +446,16 @@ describe('account settings', () => {
     cy.contains(/email update requested/i).should('be.visible');
   });
 
+  it('shows privacy and support actions in Profile and opens the expected destinations', () => {
+    signInAndOpenProfile();
+
+    cy.contains(/^Privacy policy$/i).click();
+    cy.get('@windowOpen').should('have.been.calledWithMatch', /privacy-policy/);
+
+    cy.contains(/^Contact support$/i).click();
+    cy.get('@windowOpen').should('have.been.calledWithMatch', /^mailto:/);
+  });
+
   it('validates password changes locally and then sends the password update request', () => {
     signInAndOpenProfile();
 
@@ -469,11 +488,11 @@ describe('account settings', () => {
     signInAndOpenProfile();
 
     cy.contains(/^Discord$/).should('be.visible');
-    cy.contains(/discord linking is optional/i).should('be.visible');
-    cy.contains(/discord is currently used for identity, avatar fallback, and account continuity/i).should(
+    cy.contains(/discord is optional/i).should('be.visible');
+    cy.contains(/the app uses your discord identity for sign-in and profile matching/i).should('be.visible');
+    cy.contains(/it does not read messages or presence, sync servers, or import a discord friend list/i).should(
       'be.visible',
     );
-    cy.contains(/it does not sync servers or build a discord-based friend graph/i).should('be.visible');
     cy.contains(/you can disconnect discord at any time from here/i).should('be.visible');
     cy.get('[data-testid="discord-disconnect-button"]').should('be.visible');
     cy.get('[data-testid="discord-refresh-servers-button"]').should('not.exist');
@@ -491,30 +510,47 @@ describe('account settings', () => {
 
     cy.wait('@discordGuildCleanupRequest');
     cy.contains(/^Not connected$/).should('be.visible');
-    cy.contains(
-      /if you connect discord, the app will use your discord identity for sign-in continuity and avatar\/profile matching/i,
-    ).should('be.visible');
+    cy.contains(/if you connect discord, it still will not read messages or presence, sync servers, or import a discord friend list/i).should(
+      'be.visible',
+    );
     cy.get('[data-testid="discord-connect-button"]').should('be.visible');
+  });
+
+  it('requires typed confirmation before deleting the account and returns to auth after success', () => {
+    signInAndOpenProfile();
+
+    cy.get('[data-testid="account-delete-button"]').click();
+    cy.get('[data-testid="delete-account-dialog"]').should('be.visible');
+    cy.get('[data-testid="confirm-delete-account-button"]').should('be.disabled');
+    cy.get('[data-testid="delete-account-confirmation-input"]').type('DELETE');
+    cy.get('[data-testid="confirm-delete-account-button"]').should('not.be.disabled').click();
+
+    cy.wait('@deleteAccountRequest');
+    cy.get('[data-testid="auth-submit-button"]', { timeout: 15000 }).should('be.visible');
+    cy.contains(/account deleted/i).should('be.visible');
   });
 
   it('cleans oauth redirect params out of the URL query on load', () => {
     cy.clearCookies();
     cy.clearLocalStorage();
-    cy.visit('/?error=access_denied&error_description=Denied');
+    cy.visit('/?error=access_denied&error_description=Denied', {
+      onBeforeLoad(win) {
+        cy.stub(win, 'open').as('windowOpen');
+      },
+    });
 
     cy.location('search').should('eq', '');
     cy.location('href').should('not.include', 'error=');
     cy.contains(/friend management app/i).should('be.visible');
-    cy.contains(
-      /social sign-in providers share identity data needed for authentication and basic profile setup/i,
-    ).should('be.visible');
-    cy.contains(/discord is used for sign-in, linked identity, and avatar\/profile matching/i).should(
+    cy.contains(/^sign in with discord or use email and password\.$/i).should('be.visible');
+    cy.contains(/discord is optional/i).should('be.visible');
+    cy.contains(/the app uses your discord identity for sign-in and profile matching/i).should('be.visible');
+    cy.contains(/it does not read messages or presence, sync servers, or import a discord friend list/i).should(
       'be.visible',
     );
-    cy.contains(/it is not used for server syncing or friend discovery/i).should('be.visible');
-    cy.contains(/fallback: use email\/password if you are testing or not ready to link discord/i).should(
-      'be.visible',
-    );
+    cy.contains(/^Privacy policy$/i).click();
+    cy.get('@windowOpen').should('have.been.calledWithMatch', /privacy-policy/);
+    cy.contains(/^Contact support$/i).should('not.exist');
   });
 });
 

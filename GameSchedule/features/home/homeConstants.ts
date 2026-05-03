@@ -80,6 +80,14 @@ export const sections: { value: SectionKey; label: string }[] = [
 
 export const allowSignup = process.env.EXPO_PUBLIC_ALLOW_SIGNUP !== 'false';
 export const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
+export const SUPPORT_EMAIL = process.env.EXPO_PUBLIC_SUPPORT_EMAIL?.trim() ?? 'support@gameschedule.app';
+export const PRIVACY_POLICY_URL = process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL?.trim() ?? '';
 export const discordLinkIntentStorageKey = 'gameschedule-discord-link-intent';
+export const FRIEND_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const FRIEND_CODE_BODY_LENGTH = 8;
+export const FRIEND_GROUP_NAME_MAX_LENGTH = 40;
+export const LOBBY_TITLE_MAX_LENGTH = 80;
+export const LOBBY_MEETUP_DETAILS_MAX_LENGTH = 280;
+export const LOBBY_CANCELLATION_REASON_MAX_LENGTH = 280;
 export const profileSelectFields =
   'id, username, friend_code, avatar_url, display_name, onboarding_complete, birthday_month, birthday_day, birthday_visibility, busy_visibility, primary_community_id, discord_user_id, discord_username, discord_avatar_url, discord_connected_at';

@@ -690,7 +690,7 @@ describe('friends', () => {
     cy.wait('@lookupFriendCodeRpc')
       .its('request.body')
       .should((body) => {
-        expect(body.p_code).to.equal(typedCode.toUpperCase());
+        expect(body.p_code).to.equal(otherUser.profile.friend_code);
       });
 
     cy.contains('Nova Hex').should('be.visible');
@@ -742,7 +742,7 @@ describe('friends', () => {
   it('shows a friendly not-found state for unknown or no-longer-available codes', () => {
     signInAndOpenFriends();
 
-    cy.get('[data-testid="friend-code-input"]').type('GS-MISS-ING0-CODE');
+    cy.get('[data-testid="friend-code-input"]').type('GS-MSSG-ABCD');
     cy.get('[data-testid="friend-code-lookup-button"]').click();
     cy.wait('@lookupFriendCodeRpc');
     cy.contains(/no player found for that friend code/i).should('be.visible');
@@ -757,6 +757,17 @@ describe('friends', () => {
     cy.get('[data-testid="friend-code-lookup-button"]').click();
     cy.wait('@lookupFriendCodeRpc');
     cy.contains(/no player found for that friend code/i).should('be.visible');
+  });
+
+  it('rejects malformed friend codes on the client before lookup RPCs run', () => {
+    signInAndOpenFriends();
+
+    cy.get('[data-testid="friend-code-input"]').type('GS-OOOO-1111');
+    cy.get('[data-testid="friend-code-lookup-button"]').click();
+
+    cy.contains(/use a valid friend code like gs-abcd-efgh/i).should('be.visible');
+    cy.contains(/no player found for that friend code/i).should('not.exist');
+    cy.get('@lookupFriendCodeRpc.all').should('have.length', 0);
   });
 
   it('excludes self and pending requests from friend code lookup results', () => {
@@ -907,6 +918,34 @@ describe('friends', () => {
     cy.get(`[data-testid="friend-group-filter-${streamersGroupId}"]`).should('not.exist');
   });
 
+  it('blocks empty and overlong group names before create or rename RPCs run', () => {
+    signInAndOpenFriends();
+
+    let validGroupId = '';
+    const overlongName = 'X'.repeat(41);
+
+    cy.get('[data-testid="manage-friend-groups-button"]').click();
+    cy.get('[data-testid="create-friend-group-input"]').type('   ');
+    cy.get('[data-testid="create-friend-group-button"]').click();
+    cy.contains(/enter a group name first/i).should('be.visible');
+    cy.get('@friendGroupsInsert.all').should('have.length', 0);
+
+    cy.get('[data-testid="create-friend-group-input"]').clear().type('Squad');
+    cy.get('[data-testid="create-friend-group-button"]').click();
+    cy.wait('@friendGroupsInsert').then(({ response }) => {
+      validGroupId = response?.body.id as string;
+    });
+
+    cy.then(() => {
+      cy.get(`[data-testid="rename-friend-group-${validGroupId}"]`).click();
+      cy.get(`[data-testid="edit-friend-group-name-${validGroupId}"]`).clear().type(overlongName, { delay: 0 });
+      cy.get(`[data-testid="save-friend-group-${validGroupId}"]`).click();
+    });
+
+    cy.contains(/group names can be up to 40 characters long/i).should('be.visible');
+    cy.get('@friendGroupsUpdate.all').should('have.length', 0);
+  });
+
   it('removes an accepted friend, clears tied group memberships, and updates shared friend surfaces', () => {
     const groupId = 'group-league-night';
     const now = new Date().toISOString();
@@ -982,7 +1021,7 @@ describe('friends', () => {
     cy.wait('@lookupFriendCodeRpc')
       .its('request.body')
       .should((body) => {
-        expect(body.p_code).to.equal(typedCode.toUpperCase());
+        expect(body.p_code).to.equal(otherUser.profile.friend_code);
       });
 
     cy.get(`[data-testid="friend-code-request-${otherUser.userId}"]`).click();

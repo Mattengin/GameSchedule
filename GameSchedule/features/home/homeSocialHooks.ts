@@ -9,6 +9,7 @@ import type {
   FriendshipRecord,
   PublicProfileCard,
 } from './homeTypes';
+import { normalizeFriendCodeLookupInput } from './homeUtils';
 import { supabase } from '../../services/supabaseClient';
 
 export function useSocialState({
@@ -165,9 +166,17 @@ export function useSocialState({
       return;
     }
 
-    const normalizedCode = friendCodeInput.trim();
-    if (!normalizedCode) {
+    const trimmedInput = friendCodeInput.trim();
+    if (!trimmedInput) {
       setFriendError('Enter a friend code first.');
+      setFriendCodeLookupAttempted(false);
+      setFriendCodeLookupResult(null);
+      return;
+    }
+
+    const normalizedCode = normalizeFriendCodeLookupInput(trimmedInput);
+    if (!normalizedCode) {
+      setFriendError('Use a valid friend code like GS-ABCD-EFGH.');
       setFriendCodeLookupAttempted(false);
       setFriendCodeLookupResult(null);
       return;

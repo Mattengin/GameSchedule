@@ -1863,6 +1863,25 @@ describe('lobbies flow', () => {
     cy.contains(/private lobby/i).should('be.visible');
   });
 
+  it('blocks overlong lobby titles and meetup details before create RPCs run', () => {
+    signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    ensureLobbyGameReady();
+
+    cy.get('[data-testid="lobby-title-input"]').clear().type('X'.repeat(81), { delay: 0 });
+    cy.get('[data-testid="create-lobby-button"]').click();
+    cy.get('body').should('contain.text', 'Event titles can be up to 80 characters long.');
+    cy.get('@createLobbyRpc.all').should('have.length', 0);
+
+    cy.get('[data-testid="lobby-title-input"]').clear();
+    scrollToMeetupDetailsStep();
+    cy.get('[data-testid="lobby-meetup-details-input"]').type('Y'.repeat(281), { delay: 0 });
+    cy.get('[data-testid="create-lobby-button"]').click();
+    cy.get('body').should('contain.text', 'Meetup details can be up to 280 characters long.');
+    cy.get('@createLobbyRpc.all').should('have.length', 0);
+  });
+
   it('cancels a one-off lobby with a reason and keeps Home, Lobbies, and Schedule in sync for host and invitee', () => {
     signUpHost();
 
@@ -1953,6 +1972,20 @@ describe('lobbies flow', () => {
     cy.get('[data-testid="schedule-canceled-lobby-lobby-1"]').should('contain.text', 'Host canceled this lobby.');
   });
 
+  it('blocks overlong cancel reasons before the cancel RPC runs', () => {
+    signUpHost();
+
+    createLobbyWithInvitees([]);
+    cy.wait('@createLobbyRpc');
+
+    cy.get('[data-testid="cancel-lobby-button-lobby-1"]').click();
+    cy.get('[data-testid="cancel-lobby-reason-input"]').type('Z'.repeat(281), { delay: 0 });
+    cy.get('[data-testid="confirm-cancel-lobby-button"]').click();
+
+    cy.get('body').should('contain.text', 'Cancellation reasons can be up to 280 characters long.');
+    cy.get('@cancelLobbyRpc.all').should('have.length', 0);
+  });
+
   it('creates a weekly recurring lobby with an end date and shows it across Home, Lobbies, and Schedule', () => {
     signUpHost();
 
@@ -1981,6 +2014,26 @@ describe('lobbies flow', () => {
     cy.contains(/^Schedule$/).click({ force: true });
     cy.contains('Helix Arena Lobby').should('be.visible');
     cy.contains('Repeats: Weekly').should('be.visible');
+  });
+
+  it('blocks recurring series edits with an occurrence count below 1', () => {
+    signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    ensureLobbyGameReady();
+    cy.contains('Repeat').scrollIntoView();
+    cy.contains(/^Weekly$/).click({ force: true });
+    cy.get('[data-testid="create-lobby-button"]').click();
+    cy.wait('@createRecurringLobbySeriesRpc');
+
+    cy.get('[data-testid="edit-recurring-series-lobby-1"]').click();
+    cy.get('[data-testid="edit-recurring-series-dialog"]').should('be.visible');
+    cy.contains('End after N').click({ force: true });
+    cy.get('[data-testid="edit-recurring-series-repeat-occurrence-count-input"]').clear().type('0');
+    cy.get('[data-testid="save-recurring-series-future-button"]').click();
+
+    cy.get('body').should('contain.text', 'Enter a recurring occurrence count of at least 1.');
+    cy.get('@updateRecurringLobbySeriesFutureRpc.all').should('have.length', 0);
   });
 
   it('creates a biweekly recurring lobby with bounded future materialization from an occurrence count', () => {
@@ -2014,6 +2067,21 @@ describe('lobbies flow', () => {
     });
 
     cy.contains('Repeats: Every 2 weeks').should('be.visible');
+  });
+
+  it('blocks recurring lobbies from being created with an occurrence count below 1', () => {
+    signUpHost();
+
+    cy.contains(/^Lobbies$/).click({ force: true });
+    ensureLobbyGameReady();
+    cy.contains('Repeat').scrollIntoView();
+    cy.contains('Every 2 weeks').click({ force: true });
+    cy.contains('End after N').click({ force: true });
+    cy.get('[data-testid="lobby-repeat-occurrence-count-input"]').clear().type('0');
+    cy.get('[data-testid="create-lobby-button"]').click();
+
+    cy.get('body').should('contain.text', 'Enter a recurring occurrence count of at least 1.');
+    cy.get('@createRecurringLobbySeriesRpc.all').should('have.length', 0);
   });
 
   it('captures optional meetup details and carries them through hosted, incoming, and schedule views', () => {

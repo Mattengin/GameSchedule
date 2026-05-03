@@ -3,6 +3,12 @@ import { Platform, View } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { Button, Chip, Surface, Text } from 'react-native-paper';
 import { DatePickerInput, TimePickerModal } from 'react-native-paper-dates';
+import {
+  FRIEND_CODE_ALPHABET,
+  FRIEND_CODE_BODY_LENGTH,
+  PRIVACY_POLICY_URL,
+  SUPPORT_EMAIL,
+} from './homeConstants';
 import { styles } from './homeStyles';
 import type { BusyBlock, LobbyRecord, LobbySeriesFrequency } from './homeTypes';
 
@@ -26,6 +32,38 @@ export const getWebRedirectUrl = () => {
   }
 
   return `${currentLocation.origin}${getWebBasePath()}/`;
+};
+
+export const getPrivacyPolicyUrl = () => {
+  if (PRIVACY_POLICY_URL) {
+    return PRIVACY_POLICY_URL;
+  }
+
+  if (Platform.OS === 'web') {
+    const currentLocation = globalThis.window?.location;
+    if (currentLocation) {
+      return `${currentLocation.origin}${getWebBasePath()}/privacy-policy`;
+    }
+  }
+
+  return 'https://mattengin.github.io/GameSchedule/privacy-policy';
+};
+
+export const getSupportMailtoUrl = () =>
+  `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('GameSchedule support')}`;
+
+export const normalizeFriendCodeLookupInput = (value: string) => {
+  const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const codeBody = cleaned.startsWith('GS') ? cleaned.slice(2) : cleaned;
+
+  if (
+    codeBody.length !== FRIEND_CODE_BODY_LENGTH ||
+    !codeBody.split('').every((character) => FRIEND_CODE_ALPHABET.includes(character))
+  ) {
+    return '';
+  }
+
+  return `GS-${codeBody.slice(0, 4)}-${codeBody.slice(4, 8)}`;
 };
 
 export const clearOAuthRedirectParamsFromUrl = () => {
