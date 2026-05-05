@@ -34,6 +34,15 @@ export const getWebRedirectUrl = () => {
   return `${currentLocation.origin}${getWebBasePath()}/`;
 };
 
+export const isPhoneBrowserWeb = () => {
+  if (Platform.OS !== 'web') {
+    return false;
+  }
+
+  const userAgent = globalThis.navigator?.userAgent ?? '';
+  return /android.+mobile|iphone|ipod|windows phone|mobile/i.test(userAgent);
+};
+
 export const getPrivacyPolicyUrl = () => {
   if (PRIVACY_POLICY_URL) {
     return PRIVACY_POLICY_URL;

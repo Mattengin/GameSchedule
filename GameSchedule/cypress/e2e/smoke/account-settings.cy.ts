@@ -27,6 +27,8 @@ const authStore = new Map<string, MockAccount>();
 const profileUpdateBodies: Record<string, unknown>[] = [];
 const updateUserBodies: Record<string, unknown>[] = [];
 const friendCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const mobileSafariUserAgent =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 const makeDiscordStyleUsername = (seed: string) =>
   seed
     .toLowerCase()
@@ -331,15 +333,29 @@ describe('account settings', () => {
     registerMockAccountSettings(account);
   });
 
-  const signInAndOpenProfile = () => {
+  const signInAndOpenProfile = (options?: {
+    userAgent?: string;
+    useMobileNavigation?: boolean;
+  }) => {
     cy.visit('/', {
       onBeforeLoad(win) {
         cy.stub(win, 'open').as('windowOpen');
+        if (options?.userAgent) {
+          Object.defineProperty(win.navigator, 'userAgent', {
+            value: options.userAgent,
+            configurable: true,
+          });
+        }
       },
     });
     cy.signupUi(account.email, account.password);
-    cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).click();
-    cy.get('[data-testid="account-menu-profile-button"]', { timeout: 15000 }).click();
+    if (options?.useMobileNavigation) {
+      cy.get('[data-testid="section-nav-menu-button"]', { timeout: 15000 }).click();
+      cy.get('[data-testid="section-nav-profile"]', { timeout: 15000 }).click();
+    } else {
+      cy.get('[data-testid="profile-chip"]', { timeout: 15000 }).click();
+      cy.get('[data-testid="account-menu-profile-button"]', { timeout: 15000 }).click();
+    }
     cy.contains(/profile & settings/i).should('be.visible');
     cy.contains(/^Preferences$/).should('not.exist');
     cy.contains(/notifications ready for mobile and discord/i).should('not.exist');
@@ -350,7 +366,7 @@ describe('account settings', () => {
     signInAndOpenProfile();
 
     cy.contains(/use 2-32 lowercase letters, numbers, periods, or underscores/i).should('be.visible');
-    cy.get('[data-testid="profile-edit-username-input"]').clear().type('pro.player_2');
+    cy.get('[data-testid="profile-edit-username-input"]').type('{selectall}{backspace}pro.player_2');
     cy.get('[data-testid="profile-edit-display-name-input"]').clear().type('Pro Player');
     cy.get('[data-testid="profile-edit-avatar-url-input"]').clear().type('https://example.com/avatar.png');
     cy.get('[data-testid="profile-edit-save-button"]').click();
@@ -516,6 +532,36 @@ describe('account settings', () => {
     cy.get('[data-testid="discord-connect-button"]').should('be.visible');
   });
 
+  it('uses best-effort same-tab handoff for Discord connect on phone browsers', () => {
+    account.profile.discord_user_id = null;
+    account.profile.discord_username = null;
+    account.profile.discord_avatar_url = null;
+    account.profile.discord_connected_at = null;
+
+    cy.viewport('iphone-8');
+    cy.intercept('GET', '**/auth/v1/user/identities/authorize*', (req) => {
+      expect(req.url).to.include('provider=discord');
+      expect(req.url).to.include('skip_http_redirect=true');
+      req.reply({
+        statusCode: 200,
+        body: {
+          provider: 'discord',
+          url: '/?mobile_discord_link_handoff=1',
+        },
+      });
+    }).as('discordLinkAuthorize');
+
+    signInAndOpenProfile({
+      userAgent: mobileSafariUserAgent,
+      useMobileNavigation: true,
+    });
+
+    cy.contains(discordMobileHint()).should('be.visible');
+    cy.get('[data-testid="discord-connect-button"]').click();
+    cy.wait('@discordLinkAuthorize');
+    cy.get('@windowOpen').should('not.have.been.called');
+  });
+
   it('requires typed confirmation before deleting the account and returns to auth after success', () => {
     signInAndOpenProfile();
 
@@ -553,5 +599,9 @@ describe('account settings', () => {
     cy.contains(/^Contact support$/i).should('not.exist');
   });
 });
+
+function discordMobileHint() {
+  return "On phones, we'll try to hand off to Discord. If your browser keeps you on the web, continue there.";
+}
 
 export {};

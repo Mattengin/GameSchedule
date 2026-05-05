@@ -82,7 +82,7 @@ export const allowSignup = process.env.EXPO_PUBLIC_ALLOW_SIGNUP !== 'false';
 export const demoLabel = process.env.EXPO_PUBLIC_DEMO_LABEL?.trim() ?? '';
 export const SUPPORT_EMAIL = process.env.EXPO_PUBLIC_SUPPORT_EMAIL?.trim() ?? 'support@gameschedule.app';
 export const PRIVACY_POLICY_URL = process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL?.trim() ?? '';
-export const discordLinkIntentStorageKey = 'gameschedule-discord-link-intent';
+export const discordAuthIntentStorageKey = 'gameschedule-discord-auth-intent';
 export const FRIEND_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const FRIEND_CODE_BODY_LENGTH = 8;
 export const FRIEND_GROUP_NAME_MAX_LENGTH = 40;

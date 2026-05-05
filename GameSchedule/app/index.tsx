@@ -26,7 +26,7 @@ import {
   allowSignup,
   availabilityDays,
   demoLabel,
-  discordLinkIntentStorageKey,
+  discordAuthIntentStorageKey,
   FRIEND_GROUP_NAME_MAX_LENGTH,
   LOBBY_CANCELLATION_REASON_MAX_LENGTH,
   LOBBY_MEETUP_DETAILS_MAX_LENGTH,
@@ -91,8 +91,8 @@ import {
   hasExplicitLobbyEnd,
   getLobbyEndDate,
   getSupportMailtoUrl,
-  getWebBasePath,
   getWebRedirectUrl,
+  isPhoneBrowserWeb,
   parseDateInputValue,
   resolveAvatarUrl,
   setDatePart,
@@ -122,9 +122,25 @@ function isTooLong(value: string, maxLength: number) {
   return value.length > maxLength;
 }
 
+type DiscordAuthPurpose = 'signin' | 'link';
+
+const discordMobileWebHint =
+  "On phones, we'll try to hand off to Discord. If your browser keeps you on the web, continue there.";
+
+function getDiscordLaunchMessage(isPhoneWeb: boolean) {
+  return isPhoneWeb ? `Opening Discord. If your phone keeps you in the browser, continue there.` : 'Redirecting to Discord...';
+}
+
+function getDiscordReturnFailureMessage(isPhoneWeb: boolean) {
+  return isPhoneWeb
+    ? 'Discord authorization was canceled or failed. If your phone keeps the flow in the browser, continue there.'
+    : 'Discord authorization was canceled or failed.';
+}
+
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1100;
+  const isPhoneWeb = isPhoneBrowserWeb();
   const lobbyAddGameDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
   const recurringEditDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 760 : 560);
   const compactDialogWidth = Math.min(Math.max(width - 32, 0), isDesktopWeb ? 520 : 420);
@@ -222,6 +238,170 @@ export default function HomeScreen() {
     setAuthError('');
     setAuthMessage('');
   }, []);
+
+  const getDiscordAuthIntent = React.useCallback((): DiscordAuthPurpose | null => {
+    if (Platform.OS !== 'web') {
+      return null;
+    }
+
+    const pendingIntent = globalThis.window?.sessionStorage?.getItem(discordAuthIntentStorageKey);
+    return pendingIntent === 'signin' || pendingIntent === 'link' ? pendingIntent : null;
+  }, []);
+
+  const setDiscordAuthIntent = React.useCallback((purpose: DiscordAuthPurpose) => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    globalThis.window?.sessionStorage?.setItem(discordAuthIntentStorageKey, purpose);
+  }, []);
+
+  const clearDiscordAuthIntent = React.useCallback(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    globalThis.window?.sessionStorage?.removeItem(discordAuthIntentStorageKey);
+  }, []);
+
+  const openDiscordAuthUrl = React.useCallback(async (url: string) => {
+    if (Platform.OS === 'web') {
+      const currentLocation = globalThis.window?.location;
+      if (!currentLocation?.assign) {
+        return false;
+      }
+
+      currentLocation.assign(url);
+      return true;
+    }
+
+    try {
+      await Linking.openURL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const startDiscordAuth = React.useCallback(
+    async (purpose: DiscordAuthPurpose) => {
+      const isLinkFlow = purpose === 'link';
+      const launchMessage = getDiscordLaunchMessage(isPhoneWeb);
+
+      if (isLinkFlow) {
+        if (!profile || !session?.user) {
+          return;
+        }
+
+        setDiscordBusy(true);
+        setDiscordMessage('');
+      } else {
+        setAuthBusy(true);
+        setAuthError('');
+        setAuthMessage('');
+      }
+
+      if (isLinkFlow && Platform.OS !== 'web') {
+        setDiscordMessage(
+          'Discord linking is wired for the web flow first. Native phone linking will come next with the mobile callback setup.',
+        );
+        setDiscordBusy(false);
+        return;
+      }
+
+      const redirectTo = getWebRedirectUrl();
+
+      if (Platform.OS === 'web' && !redirectTo) {
+        const environmentMessage = 'Unable to start Discord auth from this environment.';
+        if (isLinkFlow) {
+          setDiscordMessage(environmentMessage);
+          setDiscordBusy(false);
+        } else {
+          setAuthError(environmentMessage);
+          setAuthBusy(false);
+        }
+        return;
+      }
+
+      setDiscordAuthIntent(purpose);
+
+      const authResponse = isLinkFlow
+        ? await supabase.auth.linkIdentity({
+            provider: 'discord',
+            options: {
+              redirectTo,
+              scopes: 'identify',
+              skipBrowserRedirect: true,
+            },
+          })
+        : await supabase.auth.signInWithOAuth({
+            provider: 'discord',
+            options: {
+              redirectTo,
+              scopes: 'identify email',
+              skipBrowserRedirect: true,
+            },
+          });
+
+      if (authResponse.error) {
+        clearDiscordAuthIntent();
+        if (isLinkFlow) {
+          setDiscordMessage(authResponse.error.message);
+          setDiscordBusy(false);
+        } else {
+          setAuthError(authResponse.error.message);
+          setAuthBusy(false);
+        }
+        return;
+      }
+
+      if (!authResponse.data?.url) {
+        clearDiscordAuthIntent();
+        const environmentMessage = 'Unable to start Discord auth from this environment.';
+        if (isLinkFlow) {
+          setDiscordMessage(environmentMessage);
+          setDiscordBusy(false);
+        } else {
+          setAuthError(environmentMessage);
+          setAuthBusy(false);
+        }
+        return;
+      }
+
+      if (isLinkFlow) {
+        setDiscordMessage(launchMessage);
+      } else {
+        setAuthMessage(launchMessage);
+      }
+
+      const didOpen = await openDiscordAuthUrl(authResponse.data.url);
+      if (didOpen) {
+        return;
+      }
+
+      clearDiscordAuthIntent();
+      const fallbackMessage = isPhoneWeb
+        ? 'Unable to open Discord right now. If your phone does not switch to Discord, continue in the browser instead.'
+        : 'Unable to open Discord right now.';
+
+      if (isLinkFlow) {
+        setDiscordMessage(fallbackMessage);
+        setDiscordBusy(false);
+      } else {
+        setAuthError(fallbackMessage);
+        setAuthMessage('');
+        setAuthBusy(false);
+      }
+    },
+    [
+      clearDiscordAuthIntent,
+      isPhoneWeb,
+      openDiscordAuthUrl,
+      profile,
+      session,
+      setDiscordAuthIntent,
+    ],
+  );
 
   const {
     favoriteGameIds,
@@ -371,26 +551,37 @@ export default function HomeScreen() {
     }
 
     const currentLocation = globalThis.window?.location;
-    const sessionStorage = globalThis.window?.sessionStorage;
-
-    if (!currentLocation || !sessionStorage) {
+    if (!currentLocation) {
       return;
     }
 
-    if (sessionStorage.getItem(discordLinkIntentStorageKey) !== 'pending') {
+    const pendingIntent = getDiscordAuthIntent();
+    if (!pendingIntent) {
       return;
     }
 
     const queryParams = new URLSearchParams(currentLocation.search);
-    if (!queryParams.get('error')) {
+    const hashParams = new URLSearchParams(currentLocation.hash.startsWith('#') ? currentLocation.hash.slice(1) : currentLocation.hash);
+    const hasOAuthError = Boolean(queryParams.get('error') || hashParams.get('error'));
+
+    if (!hasOAuthError) {
       return;
     }
 
-    sessionStorage.removeItem(discordLinkIntentStorageKey);
-    setDiscordBusy(false);
-    setDiscordMessage('Discord authorization was canceled or failed.');
-    setSection('profile');
-  }, []);
+    clearDiscordAuthIntent();
+    const failureMessage = getDiscordReturnFailureMessage(isPhoneWeb);
+
+    if (pendingIntent === 'link') {
+      setDiscordBusy(false);
+      setDiscordMessage(failureMessage);
+      setSection('profile');
+      return;
+    }
+
+    setAuthBusy(false);
+    setAuthMessage('');
+    setAuthError(failureMessage);
+  }, [clearDiscordAuthIntent, getDiscordAuthIntent, isPhoneWeb]);
 
   React.useEffect(() => {
     let active = true;
@@ -432,20 +623,32 @@ export default function HomeScreen() {
   }, []);
 
   React.useEffect(() => {
+    if (Platform.OS !== 'web' || !session?.user) {
+      return;
+    }
+
+    if (getDiscordAuthIntent() !== 'signin') {
+      return;
+    }
+
+    clearDiscordAuthIntent();
+    setAuthBusy(false);
+  }, [clearDiscordAuthIntent, getDiscordAuthIntent, session?.user]);
+
+  React.useEffect(() => {
     if (Platform.OS !== 'web' || !profile?.discord_user_id) {
       return;
     }
 
-    const sessionStorage = globalThis.window?.sessionStorage;
-    if (!sessionStorage || sessionStorage.getItem(discordLinkIntentStorageKey) !== 'pending') {
+    if (getDiscordAuthIntent() !== 'link') {
       return;
     }
 
-    sessionStorage.removeItem(discordLinkIntentStorageKey);
+    clearDiscordAuthIntent();
     setDiscordBusy(false);
     setDiscordMessage('Discord linked.');
     setSection('profile');
-  }, [profile?.discord_user_id]);
+  }, [clearDiscordAuthIntent, getDiscordAuthIntent, profile?.discord_user_id]);
 
   React.useEffect(() => {
     const syncProfile = async () => {
@@ -4426,6 +4629,7 @@ export default function HomeScreen() {
               <Text style={styles.friendNote}>
                 Discord is optional. If you connect it, the app uses your Discord identity for sign-in and profile matching.
               </Text>
+              {isPhoneWeb ? <Text style={styles.friendNote}>{discordMobileWebHint}</Text> : null}
               <Chip icon="discord" style={styles.statusChip}>
                 {profile?.discord_user_id
                   ? `Connected as ${profile.discord_username ?? 'Discord account'}`
@@ -4824,27 +5028,9 @@ export default function HomeScreen() {
     }
   };
 
-  const handleDiscordAuth = async () => {
-    setAuthBusy(true);
-    setAuthError('');
-    setAuthMessage('');
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'discord',
-      options: {
-        redirectTo: getWebRedirectUrl(),
-        scopes: 'identify email',
-      },
-    });
-
-    if (error) {
-      setAuthError(error.message);
-      setAuthBusy(false);
-      return;
-    }
-
-    setAuthMessage('Redirecting to Discord...');
-  };
+  const handleDiscordAuth = React.useCallback(async () => {
+    await startDiscordAuth('signin');
+  }, [startDiscordAuth]);
 
   const resetSignedInState = React.useCallback((nextAuthMessage = '') => {
     setSession(null);
@@ -5039,48 +5225,9 @@ export default function HomeScreen() {
     setProfileBusy(false);
   }
 
-  async function handleDiscordConnect() {
-    if (!profile || !session?.user) {
-      return;
-    }
-
-    setDiscordBusy(true);
-    setDiscordMessage('');
-
-    if (Platform.OS !== 'web') {
-      setDiscordMessage(
-        'Discord linking is wired for the web flow first. Native phone linking will come next with the mobile callback setup.',
-      );
-      setDiscordBusy(false);
-      return;
-    }
-
-    const currentLocation = globalThis.window?.location;
-    if (!currentLocation) {
-      setDiscordMessage('Unable to start Discord auth from this environment.');
-      setDiscordBusy(false);
-      return;
-    }
-
-    globalThis.window.sessionStorage?.setItem(discordLinkIntentStorageKey, 'pending');
-
-    const { error } = await supabase.auth.linkIdentity({
-      provider: 'discord',
-      options: {
-        redirectTo: `${currentLocation.origin}${getWebBasePath()}/`,
-        scopes: 'identify',
-      },
-    });
-
-    if (error) {
-      globalThis.window.sessionStorage?.removeItem(discordLinkIntentStorageKey);
-      setDiscordMessage(error.message);
-      setDiscordBusy(false);
-      return;
-    }
-
-    setDiscordMessage('Redirecting to Discord...');
-  }
+  const handleDiscordConnect = React.useCallback(async () => {
+    await startDiscordAuth('link');
+  }, [startDiscordAuth]);
 
   async function handleDiscordDisconnect() {
     if (!session?.user || !profile) {
@@ -5471,6 +5618,7 @@ export default function HomeScreen() {
           <Text style={styles.friendNote}>
             Discord is optional. If you connect it, the app uses your Discord identity for sign-in and profile matching. It does not read messages or presence, sync servers, or import a Discord friend list.
           </Text>
+          {isPhoneWeb ? <Text style={styles.friendNote}>{discordMobileWebHint}</Text> : null}
 
           <Divider style={styles.divider} />
           <View style={styles.trustLinkRow}>
